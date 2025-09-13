@@ -9,11 +9,12 @@
 #include "driver/i2c_master.h"
 
 /*spi pin source*/
-#define PIN_SCK  GPIO_NUM_4
-#define PIN_MISO GPIO_NUM_5
-#define PIN_MOSI GPIO_NUM_6
-#define PIN_CS   GPIO_NUM_7
+#define PIN_SCK    GPIO_NUM_4
+#define PIN_MISO   GPIO_NUM_5
+#define PIN_MOSI   GPIO_NUM_6
+#define PIN_CS     GPIO_NUM_7
 #define SPI_CHUNK  4092
+#define SPI_FREQ   8000000
 
 /*i2c pin source */
 #define PIN_SCL                    GPIO_NUM_8
@@ -26,7 +27,7 @@
 #define WRITE_BIT                  0x80
 
 /* uart pin source */
-# define UART_NUM UART_NUM_0
+#define UART_NUM UART_NUM_0
 #define BAUD_RATE 921600
 #define DATA_BITS 8
 #define STOP_BITS 1
@@ -34,6 +35,8 @@
 #define UART_TX_PIN GPIO_NUM_0
 #define UART_RX_PIN GPIO_NUM_1
 #define BUF_SIZE (256)
+#define QUEUE_DEPTH (20)
+#define RX_BUF_SIZE (BUF_SIZE*2)
 #define RD_BUF_SIZE (BUF_SIZE)
 
 #ifndef _SENSOR_
