@@ -39,13 +39,10 @@
 #define RX_BUF_SIZE (BUF_SIZE*2)
 #define RD_BUF_SIZE (BUF_SIZE)
 
-#ifndef _SENSOR_
-#define _SENSOR_
-    struct sensor_reg {
-        unsigned int reg;
-        unsigned int val;
-    };
-#endif
+typedef struct sensor_reg {
+    unsigned int reg;
+    unsigned int val;
+} sensor_reg;
 
 struct sensor_info{
     uint8_t sensor_slave_address;
@@ -107,4 +104,7 @@ uint8_t read_reg(uint8_t address);
 void singleCapture(void);
 void uart_event_task(void *pvParameters);
 void esp32c3_SystemInit(void);
+void ov2640_attach(void);
+void ov2640_configure_yuv_qvga(void);
+void ov2640_configure_jpeg_qvga(void);
 #endif

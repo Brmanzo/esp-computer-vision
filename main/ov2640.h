@@ -1,6 +1,7 @@
 #ifndef OV2640_REGS_H
 #define OV2640_REGS_H
 #include "arducam.h"
+#include "sensor.h"
 #define OV2640_CHIPID_HIGH 	0x0A
 #define OV2640_CHIPID_LOW 	0x0B
 const struct sensor_reg OV2640_QVGA[]  =
@@ -855,7 +856,5 @@ const struct sensor_reg OV2640_1600x1200_JPEG[]  =
                       
   	{0xff, 0xff},
 };  
-  
 
 #endif
-
