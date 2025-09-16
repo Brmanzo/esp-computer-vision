@@ -1,4 +1,3 @@
-// wifi_cam.c
 #include "wifi_cam.h"
 
 #include <string.h>
@@ -16,6 +15,9 @@
 #include "esp_wifi.h"
 #include "nvs_flash.h"
 
+// We call into your ArduCAM-side streaming helper for grayscale BMP.
+#include "arducam.h"   // must declare: esp_err_t arducam_stream_gray_bmp(httpd_req_t*, uint16_t, uint16_t);
+
 static const char *TAG = "wifi_cam";
 
 /* -------------------- Internal state -------------------- */
@@ -25,27 +27,60 @@ static uint8_t            *s_last_jpg  = NULL;
 static size_t              s_last_len  = 0;
 static bool                s_started   = false;
 
+// Frame size used by /gray (YUV->grayscale). Defaults to QVGA.
+static uint16_t s_frame_w = 320;
+static uint16_t s_frame_h = 240;
+
 /* -------------------- HTTP handlers -------------------- */
 static esp_err_t jpg_handler(httpd_req_t *req) {
+    if (!s_started) return httpd_resp_send_500(req);
+
     xSemaphoreTake(s_jpg_mutex, portMAX_DELAY);
-    if (!s_last_jpg || !s_last_len) {
-        xSemaphoreGive(s_jpg_mutex);
+    const uint8_t *buf = s_last_jpg;
+    const size_t   len = s_last_len;
+    xSemaphoreGive(s_jpg_mutex);
+
+    if (!buf || !len) {
         httpd_resp_send_404(req);
         return ESP_OK;
     }
     httpd_resp_set_type(req, "image/jpeg");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-    esp_err_t r = httpd_resp_send(req, (const char*)s_last_jpg, s_last_len);
-    xSemaphoreGive(s_jpg_mutex);
-    return r;
+    return httpd_resp_send(req, (const char*)buf, len);
+}
+
+static esp_err_t gray_handler(httpd_req_t *req) {
+    if (!s_started) return httpd_resp_send_500(req);
+    // Streams a top-down 8-bit BMP created from Y plane of current YUV422 frame.
+    // Make sure your camera is currently outputting YUV422.
+    return arducam_stream_gray_bmp(req, s_frame_w, s_frame_h);
 }
 
 static const char INDEX_HTML[] =
 "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
-"<style>body{margin:0;background:#111;display:grid;place-items:center;height:100vh}"
-"img{max-width:100vw;max-height:100vh;image-rendering:-webkit-optimize-contrast}</style>"
-"<img id=i src=/jpg>"
-"<script>setInterval(()=>{i.src='/jpg?'+Date.now()},1000)</script>";
+"<style>"
+"html,body{height:100%;margin:0;background:#0b0b0b;color:#ddd;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial}"
+".wrap{display:grid;grid-template-rows:auto 1fr;gap:12px;height:100%;}"
+"header{display:flex;gap:8px;align-items:center;justify-content:center;padding:10px;background:#111;box-shadow:0 2px 6px #0008}"
+"button{background:#1e1e1e;border:1px solid #333;color:#ddd;padding:8px 12px;border-radius:10px;cursor:pointer}"
+"button:hover{background:#252525}"
+"main{display:grid;place-items:center}"
+"img{max-width:95vw;max-height:80vh;image-rendering:pixelated;outline:1px solid #222;border-radius:8px}"
+"</style>"
+"<div class=wrap>"
+"<header>"
+" <button onclick=\"setSrc('jpg')\">JPEG</button>"
+" <button onclick=\"setSrc('gray')\">Grayscale</button>"
+" <span style='opacity:.7;padding-left:10px'>/jpg is your previous pipeline; /gray renders the Y plane as an 8-bit BMP.</span>"
+"</header>"
+"<main><img id=i src='/jpg'></main>"
+"</div>"
+"<script>"
+"let mode='jpg';"
+"function setSrc(m){mode=m;refresh()}"
+"function refresh(){document.getElementById('i').src='/' + mode + '?' + Date.now()}"
+"setInterval(refresh, 1000);"
+"</script>";
 
 static esp_err_t index_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/html");
@@ -53,16 +88,33 @@ static esp_err_t index_handler(httpd_req_t *req) {
     return httpd_resp_send(req, INDEX_HTML, HTTPD_RESP_USE_STRLEN);
 }
 
+static esp_err_t no_content_handler(httpd_req_t *req) {
+    httpd_resp_set_status(req, "204 No Content");
+    return httpd_resp_send(req, NULL, 0);
+}
+
+
 static httpd_handle_t start_webserver(void) {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable = true;   // reclaim handlers if OOM
+
     httpd_handle_t srv = NULL;
-    if (httpd_start(&srv, &cfg) == ESP_OK) {
-        httpd_uri_t u_idx = { .uri="/",   .method=HTTP_GET, .handler=index_handler };
-        httpd_uri_t u_jpg = { .uri="/jpg", .method=HTTP_GET, .handler=jpg_handler };
-        httpd_register_uri_handler(srv, &u_idx);
-        httpd_register_uri_handler(srv, &u_jpg);
-    }
+    if (httpd_start(&srv, &cfg) != ESP_OK) return NULL;
+
+    httpd_uri_t u_idx  = { .uri="/",     .method=HTTP_GET, .handler=index_handler };
+    httpd_uri_t u_jpg  = { .uri="/jpg",  .method=HTTP_GET, .handler=jpg_handler   };
+    httpd_uri_t u_gray = { .uri="/gray", .method=HTTP_GET, .handler=gray_handler  };
+    httpd_uri_t u_fav   = { .uri="/favicon.ico",         .method=HTTP_GET, .handler=no_content_handler };
+    httpd_uri_t u_apple = { .uri="/apple-touch-icon.png", .method=HTTP_GET, .handler=no_content_handler };
+    httpd_uri_t u_robot = { .uri="/robots.txt",           .method=HTTP_GET, .handler=no_content_handler };
+    httpd_register_uri_handler(srv, &u_fav);
+    httpd_register_uri_handler(srv, &u_apple);
+    httpd_register_uri_handler(srv, &u_robot);
+
+    httpd_register_uri_handler(srv, &u_idx);
+    httpd_register_uri_handler(srv, &u_jpg);
+    httpd_register_uri_handler(srv, &u_gray);
+
     return srv;
 }
 
@@ -80,10 +132,10 @@ static esp_err_t net_stack_once(void) {
 static void on_wifi_event(void* arg, esp_event_base_t base, int32_t id, void* data) {
     if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STACONNECTED) {
         wifi_event_ap_staconnected_t *e = (wifi_event_ap_staconnected_t*)data;
-        ESP_LOGI("wifi_cam", "STA connected: " MACSTR, MAC2STR(e->mac));
+        ESP_LOGI(TAG, "STA connected: " MACSTR, MAC2STR(e->mac));
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STADISCONNECTED) {
         wifi_event_ap_stadisconnected_t *e = (wifi_event_ap_stadisconnected_t*)data;
-        ESP_LOGI("wifi_cam", "STA disconnected: " MACSTR, MAC2STR(e->mac));
+        ESP_LOGI(TAG, "STA disconnected: " MACSTR, MAC2STR(e->mac));
     }
 }
 
@@ -174,4 +226,13 @@ void wifi_cam_publish(const uint8_t *jpeg, size_t len) {
     s_last_jpg = copy;
     s_last_len = len;
     xSemaphoreGive(s_jpg_mutex);
+}
+
+void wifi_cam_set_frame_dims(uint16_t w, uint16_t h) {
+    s_frame_w = w;
+    s_frame_h = h;
+}
+
+bool wifi_cam_started(void) {
+    return s_started;
 }

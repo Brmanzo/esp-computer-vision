@@ -14,6 +14,7 @@
 #include "arducam.h"
 #include "ov2640.h"
 #include "wifi_cam.h"
+#include "esp_http_server.h"
 
 #define BANK_SEL   0xFF
 #define BANK_DSP   0x00
@@ -46,8 +47,6 @@
 #define FIFO_CLEAR_MASK     0x01  // Bit to clear the FIFO
 #define CAP_DONE_MASK      0x08  // Bit that indicates capture is complete
 
-
-
 void set_bit(unsigned char addr, unsigned char bit);
 void clear_bit(unsigned char addr, unsigned char bit);
 
@@ -63,33 +62,28 @@ static uint8_t *dummy_tx;
 
 /* Write to device register using SPI. */
 void write_reg(uint8_t address, uint8_t value) {
-    // The data to be sent: register address with write bit, followed by the value
     uint8_t tx_buffer[2] = {address | WRITE_BIT, value};
     
-    spi_transaction_t trans = {
-        .length = 2 * 8, // Length is in bits
-        .tx_buffer = tx_buffer,
-    };
-    
-    // Use polling_transmit for a simple, blocking write operation
-    esp_err_t err = spi_device_polling_transmit(spi_device_handle, &trans);
-    ESP_ERROR_CHECK(err); // Or handle the error as needed
+    spi_transaction_t t = {0};
+    t.length = 16; // Length is in bits (2 bytes * 8 bits/byte)
+    t.tx_buffer = tx_buffer;
+    esp_err_t err = spi_device_polling_transmit(spi_device_handle, &t);
+    if (err!= ESP_OK) {
+        ESP_LOGE("SPI", "Failed to write to register 0x%02X", address);
+    }
 }
 
 /* Read from device register using SPI. */
 uint8_t read_reg(uint8_t address) {
-    // The data to be sent: register address with read bit, followed by a dummy byte
-    uint8_t tx[2] = { (uint8_t)(address & 0x7F), 0x00 };
+    uint8_t tx[2] = { (uint8_t)(address & 0x7F), 0x00 }; // bit7=0 => read
     uint8_t rx[2] = {0};
     spi_transaction_t t = {0};
-        t.length    = 16;
-        t.rxlength  = 16;
-        t.tx_buffer = tx;
-        t.rx_buffer = rx;
-    // Use polling_transmit for a simple, blocking read operation
-    esp_err_t err = spi_device_polling_transmit(spi_device_handle, &t);
-    ESP_ERROR_CHECK(err);
-    return rx[1];
+    t.length   = 16;            // total bits
+    t.rxlength = 16;            // receive full 2 bytes
+    t.tx_buffer = tx;
+    t.rx_buffer = rx;
+    ESP_ERROR_CHECK(spi_device_polling_transmit(spi_device_handle, &t));
+    return rx[1];               // second byte is the data
 }
 
 /* Set bit at address using SPI. */
@@ -132,7 +126,7 @@ void i2c_master_init(){ // peripherals/i2c/i2c_basic
     dev_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
     dev_config.scl_speed_hz = I2C_MASTER_FREQ_HZ;
 
-    dev_config.device_address = arducam.slave_address;
+    dev_config.device_address = I2C_SLAVE_ADDR;
     ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &dev_config, &camera_dev_handle));
 }
 
@@ -233,45 +227,91 @@ void uart_event_task(void *pvParameters) { // uart/events/example
 // }
 
 int rdSensorReg8_8(uint8_t regID, uint8_t* regDat) {
-    write_reg(SENSOR_REGISTER_ADDRESS, regID);
-    write_reg(SENSOR_OPERATION_START, 0x02); // Start read operation
-    while (read_reg(SENSOR_OPERATION_START) & OPERATION_WAIT_FLAG) {
-        vTaskDelay(pdMS_TO_TICKS(1));
+    esp_err_t err = i2c_master_transmit_receive(
+        camera_dev_handle, 
+        &regID, 1,          // Write the register address we want to read from
+        regDat, 1,          // Read one byte of data back
+        pdMS_TO_TICKS(I2C_TIMEOUT_MS)
+    );
+
+    if (err!= ESP_OK) {
+        ESP_LOGE("SCCB", "Read from reg 0x%02X failed: %s", regID, esp_err_to_name(err));
     }
-    *regDat = read_reg(SENSOR_DATA);
-    return 0; // Success
+    return err;
 }
 
 
 int wrSensorReg8_8(uint8_t regID, uint8_t regDat) {
-    write_reg(SENSOR_REGISTER_ADDRESS, regID);
-    write_reg(SENSOR_DATA, regDat);
-    write_reg(SENSOR_OPERATION_START, 0x01); // Start write operation
-    while (read_reg(SENSOR_OPERATION_START) & OPERATION_WAIT_FLAG) {
-        vTaskDelay(pdMS_TO_TICKS(1));
+    uint8_t buf[2] = {regID, regDat};
+    esp_err_t err = i2c_master_transmit(camera_dev_handle, buf, 2, pdMS_TO_TICKS(I2C_TIMEOUT_MS));
+    
+    if (err!= ESP_OK) {
+        ESP_LOGE("SCCB", "Write to reg 0x%02X failed: %s", regID, esp_err_to_name(err));
     }
-    return 0; // Success
+    return err;
 }
 
 /* Write multiple 8-bit values to 8-bit registers on the sensor. */
-int wrSensorRegs8_8(const struct sensor_reg reglist[]) {
+int wrSensorRegs8_8(const struct sensor_reg *reglist) {
     int err = 0;
     const struct sensor_reg *next = reglist;
-    
-    // Check the next entry before processing it.
-    while (next->reg != 0xff || next->val != 0xff) {
-        // Pass the register and value directly to your write function.
+    while (next->reg!= 0xff || next->val!= 0xff) {
         err = wrSensorReg8_8(next->reg, next->val);
-        
-        // If there's an error, stop and return it.
-        if (err != 0) {
+        if (err!= 0) {
             return err;
         }
-        // Move to the next entry in the list.
         next++;
     }
-    
-    return 0; // Return 0 for success
+    return 0;
+}
+
+static inline void bank_dsp(void){ wrSensorReg8_8(0xFF, 0x00); }  // BANK_DSP
+static inline void bank_sensor(void){ wrSensorReg8_8(0xFF, 0x01); }
+
+static inline esp_err_t bank(uint8_t b){
+    esp_err_t e = wrSensorReg8_8(0xFF, b);
+    vTaskDelay(pdMS_TO_TICKS(1));   // small settle
+    return e;
+}
+
+static void ov2640_force_yuv422_strict(void)
+{
+    bank(0x00);                    // DSP
+    wrSensorReg8_8(0xE0, 0x14);    // reset JPEG+DVP while changing
+    wrSensorReg8_8(0xDA, 0x00);    // JPEG_EN=0, Y-first (YUYV)
+    wrSensorReg8_8(0xD7, 0x03);
+    wrSensorReg8_8(0xE1, 0x67);
+    wrSensorReg8_8(0x05, 0x01);    // R_BYPASS: DSP enable
+    wrSensorReg8_8(0xD3, 0x04);    // very slow PCLK div
+    uint8_t c2=0; if (rdSensorReg8_8(0xC2,&c2)==ESP_OK) wrSensorReg8_8(0xC2, (uint8_t)(c2 & ~(1u<<4)));
+    wrSensorReg8_8(0xE0, 0x00);
+    vTaskDelay(pdMS_TO_TICKS(10));
+}
+
+static void sccb_verify(void)
+{
+    uint8_t v1=0, v2=0, v3=0, v4=0;
+    wrSensorReg8_8(0xFF, 0x00);
+    rdSensorReg8_8(0xDA, &v1);    // IMAGE_MODE
+    rdSensorReg8_8(0xC2, &v2);    // CTRL2
+    rdSensorReg8_8(0x05, &v3);    // R_BYPASS
+    rdSensorReg8_8(0xD3, &v4);    // R_DVP_SP
+    ESP_LOGI("OV2640","readback DA=%02X C2=%02X 05=%02X D3=%02X", v1, v2, v3, v4);
+}
+
+static void ov2640_dump_core_regs(void)
+{
+    uint8_t da=0, c2=0, r05=0, d3=0;
+    bank_dsp();
+    if (rdSensorReg8_8(0xDA, &da) != ESP_OK ||
+        rdSensorReg8_8(0xC2, &c2) != ESP_OK ||
+        rdSensorReg8_8(0x05, &r05) != ESP_OK ||
+        rdSensorReg8_8(0xD3, &d3) != ESP_OK) {
+        ESP_LOGE("OV2640","SCCB read failed (DA/C2/05/D3)");
+        return;
+    }
+    ESP_LOGI("OV2640","DA=0x%02X C2=0x%02X 05=0x%02X D3=0x%02X", da,c2,r05,d3);
+    ESP_LOGI("OV2640","Expect: JPEG_EN(DA[4])=0, Y-first(DA[0])=0, C2[4]=0, R_BYPASS(05)=1");
 }
 
 /* Read a byte from the SPI FIFO buffer. */
@@ -309,33 +349,42 @@ static inline void ensure_dummy(void) {
     }
 }
 /* Burst-read data from the SPI FIFO buffer into a provided buffer. */
-void set_fifo_burst(uint8_t *buffer, uint32_t length) {
+void set_fifo_burst(uint8_t *buffer, uint32_t length)
+{
     ensure_dummy();
-
-    // Keep the hardware bus exclusively during the whole burst
     ESP_ERROR_CHECK(spi_device_acquire_bus(spi_device_handle, portMAX_DELAY));
 
-    // Send BURST command, keep CS low
-    uint8_t cmd = BURST_FIFO_READ;
-    spi_transaction_t t0 = (spi_transaction_t){0};
-    t0.length    = 8;
+    uint8_t cmd = BURST_FIFO_READ;          // 0x3C
+    spi_transaction_t t0 = {0};
+    t0.length = 8;
     t0.tx_buffer = &cmd;
-    t0.flags     = SPI_TRANS_CS_KEEP_ACTIVE;
+    t0.flags = SPI_TRANS_CS_KEEP_ACTIVE;
     ESP_ERROR_CHECK(spi_device_polling_transmit(spi_device_handle, &t0));
 
-    // 2) Read all data in 4092-byte chunks; keep CS low until last
+    // *** Discard 1 dummy byte after entering burst ***
+    uint8_t trash = 0;
+    spi_transaction_t td = {0};
+    td.length   = 8;
+    td.rxlength = 8;
+    td.tx_buffer = dummy_tx;                // any byte
+    td.rx_buffer = &trash;
+    td.flags = SPI_TRANS_CS_KEEP_ACTIVE;
+    ESP_ERROR_CHECK(spi_device_polling_transmit(spi_device_handle, &td));
+
+    uint8_t trash2=0;
+    spi_transaction_t td2 = { .length=8, .rxlength=8, .tx_buffer=dummy_tx, .rx_buffer=&trash2, .flags=SPI_TRANS_CS_KEEP_ACTIVE };
+    ESP_ERROR_CHECK(spi_device_polling_transmit(spi_device_handle, &td2));
+
+    // Now read the real payload
     while (length > 0) {
         uint32_t n = (length > SPI_CHUNK) ? SPI_CHUNK : length;
-
-        spi_transaction_t t = (spi_transaction_t){0};
-        t.length    = n * 8;
-        t.rxlength  = n * 8;
+        spi_transaction_t t = {0};
+        t.length   = n * 8;
+        t.rxlength = n * 8;
         t.tx_buffer = dummy_tx;
         t.rx_buffer = buffer;
         t.flags     = (n == length) ? 0 : SPI_TRANS_CS_KEEP_ACTIVE;
-
         ESP_ERROR_CHECK(spi_device_polling_transmit(spi_device_handle, &t));
-
         buffer += n;
         length -= n;
     }
@@ -352,43 +401,6 @@ unsigned int read_fifo_length()
     len = ((len3 << 16) | (len2 << 8) | len1) & 0x07fffff;
 	return len;	
 }
-/* Set the JPEG size for the OV2640 camera. */
-void OV2640_set_JPEG_size(unsigned char size)
-{
-	switch(size)
-	{
-		case res_160x120:
-			wrSensorRegs8_8(OV2640_160x120_JPEG);
-			break;
-		case res_176x144:
-			wrSensorRegs8_8(OV2640_176x144_JPEG);
-			break;
-		case res_320x240:
-			wrSensorRegs8_8(OV2640_320x240_JPEG);
-			break;
-		case res_352x288:
-	  	wrSensorRegs8_8(OV2640_352x288_JPEG);
-			break;
-		case res_640x480:
-			wrSensorRegs8_8(OV2640_640x480_JPEG);
-			break;
-		case res_800x600:
-			wrSensorRegs8_8(OV2640_800x600_JPEG);
-			break;
-		case res_1024x768:
-			wrSensorRegs8_8(OV2640_1024x768_JPEG);
-			break;
-		case res_1280x1024:
-			wrSensorRegs8_8(OV2640_1280x1024_JPEG);
-			break;
-		case res_1600x1200:
-			wrSensorRegs8_8(OV2640_1600x1200_JPEG);
-			break;
-		default:
-			wrSensorRegs8_8(OV2640_320x240_JPEG);
-			break;
-	}
-}
 
 static void ov2640_dump_state(void)
 {
@@ -398,105 +410,36 @@ static void ov2640_dump_state(void)
     wrSensorReg8_8(0xFF, 0x01);
     uint8_t val;
     ESP_LOGI(TAG, "--- SENSOR BANK ---");
-    rdSensorReg8_8(0x0A, &val); ESP_LOGI(TAG, "PID [0x0A]: 0x%02X", val);
-    rdSensorReg8_8(0x0B, &val); ESP_LOGI(TAG, "VER: 0x%02X", val);
-    rdSensorReg8_8(0x11, &val); ESP_LOGI(TAG, "CLKRC [0x11]: 0x%02X", val);
-    rdSensorReg8_8(0x12, &val); ESP_LOGI(TAG, "COM7 [0x12]: 0x%02X", val);
-    rdSensorReg8_8(0x03, &val); ESP_LOGI(TAG, "COM1 [0x03]: 0x%02X", val);
-    rdSensorReg8_8(0x04, &val); ESP_LOGI(TAG, "COM1 [0x04]: 0x%02X", val);
-    rdSensorReg8_8(0x17, &val); ESP_LOGI(TAG, "HSTART [0x17]: 0x%02X", val);
-    rdSensorReg8_8(0x18, &val); ESP_LOGI(TAG, "HSIZE [0x18]: 0x%02X", val);
-    rdSensorReg8_8(0x19, &val); ESP_LOGI(TAG, "VSTART [0x19]: 0x%02X", val);
-    rdSensorReg8_8(0x1A, &val); ESP_LOGI(TAG, "VSIZE [0x1A]: 0x%02X", val);
+    bank(0x01); rdSensorReg8_8(0x0A, &val); ESP_LOGI(TAG, "PID [0x0A]: 0x%02X", val);
+    bank(0x01); rdSensorReg8_8(0x0B, &val); ESP_LOGI(TAG, "VER: 0x%02X", val);
+    bank(0x01); rdSensorReg8_8(0x11, &val); ESP_LOGI(TAG, "CLKRC [0x11]: 0x%02X", val);
+    bank(0x01); rdSensorReg8_8(0x12, &val); ESP_LOGI(TAG, "COM7 [0x12]: 0x%02X", val);
+    bank(0x01); rdSensorReg8_8(0x03, &val); ESP_LOGI(TAG, "COM1 [0x03]: 0x%02X", val);
+    bank(0x01); rdSensorReg8_8(0x04, &val); ESP_LOGI(TAG, "COM1 [0x04]: 0x%02X", val);
+    bank(0x01); rdSensorReg8_8(0x17, &val); ESP_LOGI(TAG, "HSTART [0x17]: 0x%02X", val);
+    bank(0x01); rdSensorReg8_8(0x18, &val); ESP_LOGI(TAG, "HSIZE [0x18]: 0x%02X", val);
+    bank(0x01); rdSensorReg8_8(0x19, &val); ESP_LOGI(TAG, "VSTART [0x19]: 0x%02X", val);
+    bank(0x01); rdSensorReg8_8(0x1A, &val); ESP_LOGI(TAG, "VSIZE [0x1A]: 0x%02X", val);
 
     // --- DSP BANK (0x00) ---
     wrSensorReg8_8(0xFF, 0x00);
     ESP_LOGI(TAG, "--- DSP BANK ---");
-    rdSensorReg8_8(0xDA, &val); ESP_LOGI(TAG, "IMAGE_MODE: 0x%02X", val);
-    rdSensorReg8_8(0xD3, &val); ESP_LOGI(TAG, "R_DVP_SP: 0x%02X", val);
-    rdSensorReg8_8(0xC2, &val); ESP_LOGI(TAG, "CTRL2 [0xC2]: 0x%02X", val);
-    rdSensorReg8_8(0x05, &val); ESP_LOGI(TAG, "R_BYPASS [0x05]: 0x%02X", val);
-    rdSensorReg8_8(0x5A, &val); ESP_LOGI(TAG, "Y_SIZE [0x5A]: 0x%02X", val);
-    rdSensorReg8_8(0x5B, &val); ESP_LOGI(TAG, "X_SIZE: 0x%02X", val);
+    bank(0x00); rdSensorReg8_8(0xDA, &val); ESP_LOGI(TAG, "IMAGE_MODE: 0x%02X", val);
+    bank(0x00); rdSensorReg8_8(0xD3, &val); ESP_LOGI(TAG, "R_DVP_SP: 0x%02X", val);
+    bank(0x00); rdSensorReg8_8(0xC2, &val); ESP_LOGI(TAG, "CTRL2 [0xC2]: 0x%02X", val);
+    bank(0x00); rdSensorReg8_8(0x05, &val); ESP_LOGI(TAG, "R_BYPASS [0x05]: 0x%02X", val);
+    bank(0x00); rdSensorReg8_8(0x5A, &val); ESP_LOGI(TAG, "Y_SIZE [0x5A]: 0x%02X", val);
+    bank(0x00); rdSensorReg8_8(0x5B, &val); ESP_LOGI(TAG, "X_SIZE: 0x%02X", val);
 
+
+    uint8_t v;
+    esp_err_t e;
+    bank(0x00);
+    e = rdSensorReg8_8(0xDA,&v);
+    ESP_LOGI("OV2640","rd DA e=%d v=%02X", (int)e, v);
     ESP_LOGI(TAG, "--- End of Dump ---");
 }
 
-// /* Initialize the OV2640 camera sensor. */
-// void ov2640Init(void) {
-//     // 1. Tell the ArduChip to clear its FIFO buffer in preparation for a new format
-//     write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK);
-
-//     // 2. Now, send the full configuration sequence to the OV2640 sensor
-//     // This list should be the complete YUV list from my first response,
-//     // which includes the sensor software reset.
-//     wrSensorRegs8_8(ov2640_yuv_qvga_config_regs);
-//     vTaskDelay(pdMS_TO_TICKS(10));
-
-//     ESP_LOGI("OV2640", "Initialization complete. Dumping final state.");
-//     ov2640_dump_state();
-// }
-
-/* Prepares ESP for communication and initiates image capture. */
-// This single function performs the entire initialization sequence correctly.
-void arducam_yuv_init(void) {
-    // 1. Initialize hardware peripherals (SPI and I2C)
-    spi_master_init();
-    i2c_master_init();
-    uart_init();
-
-    // 2. Test SPI communication with the ArduChip controller
-    write_reg(ARDUCHIP_TEST1, 0x55);
-    uint8_t test_val = read_reg(ARDUCHIP_TEST1);
-    if (test_val!= 0x55) {
-        ESP_LOGE("ARDUCAM", "SPI interface test failed! Halting.");
-        while(1);
-    }
-    ESP_LOGI("ARDUCAM", "SPI interface OK.");
-
-    // 3. Reset the ArduChip (CPLD) using the CTRL register (0x07).
-    // This is the critical step for reliably changing image formats.
-    write_reg(ARDUCHIP_GPIO_CTRL_REG, GPIO_CPLD_RESET_MASK);
-    vTaskDelay(pdMS_TO_TICKS(100));
-    write_reg(ARDUCHIP_GPIO_CTRL_REG, 0x00);
-    vTaskDelay(pdMS_TO_TICKS(100));
-    ESP_LOGI("ARDUCAM", "ArduChip reset complete.");
-
-    // 4. Power up the OV2640 sensor using the GPIO WRITE register (0x06)
-    ESP_LOGI("ARDUCAM", "Powering up sensor...");
-    // Enable sensor LDO (power enable)
-    write_reg(ARDUCHIP_GPIO_WRITE_REG, read_reg(ARDUCHIP_GPIO_WRITE_REG) | GPIO_PWREN_MASK);
-    vTaskDelay(pdMS_TO_TICKS(10));
-    // Ensure sensor is NOT in power-down mode (PWDN is active-high, so clear the bit)
-    write_reg(ARDUCHIP_GPIO_WRITE_REG, read_reg(ARDUCHIP_GPIO_WRITE_REG) & ~GPIO_PWDN_MASK);
-    vTaskDelay(pdMS_TO_TICKS(10));
-    // Toggle sensor reset (RESETB is active-low)
-    write_reg(ARDUCHIP_GPIO_WRITE_REG, read_reg(ARDUCHIP_GPIO_WRITE_REG) & ~GPIO_RESET_MASK);
-    vTaskDelay(pdMS_TO_TICKS(10));
-    write_reg(ARDUCHIP_GPIO_WRITE_REG, read_reg(ARDUCHIP_GPIO_WRITE_REG) | GPIO_RESET_MASK);
-    vTaskDelay(pdMS_TO_TICKS(20));
-    ESP_LOGI("ARDUCAM", "Sensor power up sequence complete.");
-
-    // 5. Probe for the OV2640 sensor using the direct I2C bus
-    wrSensorReg8_8(0xFF, 0x01); // Select SENSOR bank
-    uint8_t idh = 0, idl = 0;
-    rdSensorReg8_8(0x0A, &idh);
-    rdSensorReg8_8(0x0B, &idl);
-    if (idh == 0x26 && (idl == 0x41 || idl == 0x42)) {
-        ESP_LOGI("OV2640", "OV2640 detected. ID=%02X%02X", idh, idl);
-    } else {
-        ESP_LOGE("OV2640", "OV2640 not found. ID=%02X%02X", idh, idl);
-        while(1); // Halt on critical failure
-    }
-
-    // 6. Apply the full YUV configuration to the sensor via the direct I2C bus
-    wrSensorRegs8_8(ov2640_yuv_qvga_init_regs);
-    vTaskDelay(pdMS_TO_TICKS(10));
-
-    ESP_LOGI("OV2640", "YUV initialization complete.");
-}
-
-/* Reset the SPI FIFO buffer. */
 static inline void fifo_reset_all(void) {
     // Clear + reset read/write pointers
     write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK | FIFO_RDPTR_RST_MASK | FIFO_WRPTR_RST_MASK);
@@ -540,6 +483,74 @@ void singleCapture(void) {
     free(image_buffer);
 }
 
+static void camera_preroll(int frames)
+{
+    for (int i=0; i<frames; ++i) {
+        fifo_reset_all();
+        start_capture();
+        while (!get_bit(ARDUCHIP_TRIG, CAP_DONE_MASK)) { vTaskDelay(pdMS_TO_TICKS(1)); }
+        // Just reset again; no need to read out
+        fifo_reset_all();
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+/* Prepares ESP for communication and initiates image capture. */
+// This single function performs the entire initialization sequence correctly.
+void arducam_yuv_init(void) {
+    // 1) Peripherals
+    spi_master_init();
+    i2c_master_init();     // direct SCCB to OV2640
+    uart_init();
+
+    // 2) ArduCHIP GPIO direction, then power sequence
+    write_reg(0x05, 0x07);                                 // GPIO dir: RESET/PWDN/PWREN = outputs
+    write_reg(0x06, read_reg(0x06) | 0x04);                // PWREN=1
+    vTaskDelay(pdMS_TO_TICKS(5));
+    write_reg(0x06, read_reg(0x06) & ~0x02);               // PWDN=0
+    vTaskDelay(pdMS_TO_TICKS(5));
+    write_reg(0x06, read_reg(0x06) & ~0x01);               // RESET=0 (active-low)
+    vTaskDelay(pdMS_TO_TICKS(5));
+    write_reg(0x06, read_reg(0x06) | 0x01);                // RESET=1 (release)
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    // 3) SPI sanity: Test register should echo 0x55
+    write_reg(0x03, 0x00); // Set timing
+    write_reg(0x00, 0x55);
+    uint8_t t = read_reg(0x00);
+    if (t != 0x55) { ESP_LOGE("ARDUCHIP","SPI test failed: 0x%02X", t); return; }
+
+    // 4) Sensor ID over I²C (SCCB)
+    write_reg(ARDUCHIP_MODE, MCU2LCD_MODE);
+    wrSensorReg8_8(0xFF, 0x01); // BANK_SENSOR
+    uint8_t idh=0, idl=0;
+    rdSensorReg8_8(0x0A, &idh);
+    rdSensorReg8_8(0x0B, &idl);
+    ESP_LOGI("OV2640","ID=%02X%02X", idh, idl);
+    // Expect 26 40/41/42; if not, fix I2C address/wiring/pullups
+    ov2640_dump_state();
+    // 5) Sensor init for YUV (direct I²C)
+    // (Your ov2640_yuv_qvga_init_regs[] is fine; it’s a typical YUV+QVGA base)
+    wrSensorReg8_8(0xFF, 0x01);
+    wrSensorReg8_8(0x12, 0x80);            // reset
+    vTaskDelay(pdMS_TO_TICKS(10));
+    wrSensorRegs8_8(ov2640_yuv_qvga_init_regs);
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    // 6) (Optional) assert DSP path & easy PCLK on DSP bank
+    wrSensorReg8_8(0xFF, 0x00);            // BANK_DSP
+    wrSensorReg8_8(0x05, 0x01);            // R_BYPASS: DSP enable
+    wrSensorReg8_8(0xD3, 0x82);            // R_DVP_SP: small divider
+
+    // 7) Force YUV422 mode (just in case)
+    ov2640_force_yuv422_strict();
+    sccb_verify();
+    ov2640_dump_core_regs();
+    camera_preroll(2);
+
+    ESP_LOGI("OV2640","YUV init done.");
+}
+
+
 /* Detect the SPI bus operational state. */
 uint8_t spiBusDetect(void){
     write_reg(0x00, 0x55);
@@ -579,59 +590,159 @@ uint8_t ov2640Probe(void) {
     }
 }
 
-// This function will help us isolate the problem.
-// void arducam_minimal_test(void) {
-//     // 1. Initialize hardware peripherals
-//     spi_master_init();
-//     uart_init();
+// --- little-endian writers for BMP header ---
+static inline void put_le16(uint8_t *p, uint16_t v){ p[0]=v&0xFF; p[1]=v>>8; }
+static inline void put_le32(uint8_t *p, uint32_t v){
+    p[0]=v&0xFF; p[1]=(v>>8)&0xFF; p[2]=(v>>16)&0xFF; p[3]=(v>>24)&0xFF;
+}
 
-//     // 2. Test SPI communication with the ArduChip controller
-//     write_reg(ARDUCHIP_TEST1, 0x55);
-//     uint8_t test_val = read_reg(ARDUCHIP_TEST1);
-//     if (test_val!= 0x55) {
-//         ESP_LOGE("ARDUCAM", "SPI interface test failed! Halting.");
-//         while(1);
-//     }
-//     ESP_LOGI("ARDUCAM", "SPI interface OK.");
+static SemaphoreHandle_t s_cam_mutex;
 
-//     // 3. Power up the OV260 sensor using the GPIO WRITE register (0x06)
-//     // We are using longer delays here for stability testing.
-//     ESP_LOGI("ARDUCAM", "Powering up sensor...");
-//     uint8_t gpio_val = 0;
+void arducam_camlock_take(void){
+    if (!s_cam_mutex) s_cam_mutex = xSemaphoreCreateMutex();
+    xSemaphoreTake(s_cam_mutex, portMAX_DELAY);
+}
+void arducam_camlock_give(void){
+    if (s_cam_mutex) xSemaphoreGive(s_cam_mutex);
+}
 
-//     // Enable sensor LDO (power enable)
-//     gpio_val = read_reg(ARDUCHIP_GPIO_WRITE_REG);
-//     write_reg(ARDUCHIP_GPIO_WRITE_REG, gpio_val | GPIO_PWREN_MASK);
-//     vTaskDelay(pdMS_TO_TICKS(100));
+#define TAG_OV "OV2640"
+#define CHUNK  4092  // keep even
 
-//     // Ensure sensor is NOT in power-down mode (PWDN is active-high, so clear the bit)
-//     gpio_val = read_reg(ARDUCHIP_GPIO_WRITE_REG);
-//     write_reg(ARDUCHIP_GPIO_WRITE_REG, gpio_val & ~GPIO_PWDN_MASK);
-//     vTaskDelay(pdMS_TO_TICKS(100));
-//     ESP_LOGI("ARDUCAM", "Sensor power up sequence complete.");
+static uint8_t s_chunk[CHUNK];
+static uint8_t s_yrow[640];   // up to VGA width
 
-//     // 4. Attempt to read the sensor ID.
-//     // This is the most critical test.
-//     ESP_LOGI("OV2640", "Attempting to read sensor ID...");
-//     wrSensorReg8_8(0xFF, 0x01); // Select SENSOR bank
-//     uint8_t idh = 0, idl = 0;
-//     rdSensorReg8_8(0x0A, &idh);
-//     rdSensorReg8_8(0x0B, &idl);
+// little-endian writers for BMP header
+static inline void le16(uint8_t *p, uint16_t v){ p[0]=v; p[1]=v>>8; }
+static inline void le32(uint8_t *p, uint32_t v){ p[0]=v; p[1]=v>>8; p[2]=v>>16; p[3]=v>>24; }
 
-//     if (idh == 0x26 && (idl == 0x41 || idl == 0x42)) {
-//         ESP_LOGI("OV2640", "SUCCESS! OV2640 detected. ID=%02X%02X", idh, idl);
-//     } else {
-//         ESP_LOGE("OV2640", "FAILURE. OV2640 not found. ID=%02X%02X", idh, idl);
-//     }
+/**
+ * Stream a single grayscale BMP built from the Y component of a YUV422 frame.
+ * Assumes sensor is configured for YUV422 and ArduCAM FIFO contains W*H*2 bytes.
+ */
+// Return 0 if even bytes look like Y, 1 if odd bytes look like Y
+static int autodetect_y_index(const uint8_t *buf, size_t n)
+{
+    if (n < 512) return 0; // default
+    // compute variance of even vs odd
+    double sumE=0, sumO=0, sum2E=0, sum2O=0; size_t cntE=0, cntO=0;
+    // sample first ~2 KB for speed
+    size_t limit = n < 2048 ? n : 2048;
+    // only look at pairs to avoid crossing chunk oddities
+    for (size_t i=0; i+1<limit; i+=2) {
+        uint8_t e = buf[i], o = buf[i+1];
+        sumE += e; sum2E += (double)e*e; cntE++;
+        sumO += o; sum2O += (double)o*o; cntO++;
+    }
+    double varE = (sum2E / (cntE?cntE:1)) - (sumE/cntE)*(sumE/cntE);
+    double varO = (sum2O / (cntO?cntO:1)) - (sumO/cntO)*(sumO/cntO);
+    // Y has larger variance than chroma (which hovers near ~128)
+    return (varO > varE) ? 1 : 0;
+}
 
-//     // We will stop here. The program will do nothing further.
-//     while(1) {
-//         vTaskDelay(pdMS_TO_TICKS(1000));
-//     }
-// }
+esp_err_t arducam_stream_gray_bmp(httpd_req_t *req, uint16_t W, uint16_t H)
+{
+    if (W > sizeof s_yrow) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "frame too wide");
 
-struct camera_operate arducam = {
-   .slave_address = 0x30,
-   .init          = arducam_yuv_init, // Point the single init function here
-   .setJpegSize   = OV2640_set_JPEG_size,
-};
+    arducam_camlock_take();
+
+    // 1) Capture into FIFO
+    fifo_reset_all();
+    start_capture();
+    while (!get_bit(ARDUCHIP_TRIG, CAP_DONE_MASK)) { vTaskDelay(pdMS_TO_TICKS(1)); }
+
+    uint32_t fifo_len = read_fifo_length();
+    uint32_t expected = (uint32_t)W * H * 2;
+    if (fifo_len != expected) {
+        // Normal for YUV (size regs are JPEG-oriented) — we’ll read 'expected'
+        ESP_LOGW("OV2640","fifo_len=%u expected=%u (ignoring size regs for YUV)",
+                 (unsigned)fifo_len, (unsigned)expected);
+    }
+
+    // ALWAYS read the expected amount for YUV:
+    size_t remaining = expected;
+
+    // 2) HTTP headers (8-bit top-down BMP)
+    httpd_resp_set_type(req, "image/bmp");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+
+    const uint32_t offBits   = 14 + 40 + 1024;
+    const uint32_t img_bytes = (uint32_t)W * H;
+    const uint32_t file_size = offBits + img_bytes;
+
+    uint8_t hdr[14+40] = {0};
+    hdr[0]='B'; hdr[1]='M';
+    le32(&hdr[ 2], file_size);
+    le32(&hdr[10], offBits);
+    le32(&hdr[14], 40);
+    le32(&hdr[18], W);
+    le32(&hdr[22], (uint32_t)(-(int32_t)H));   // top-down
+    le16(&hdr[26], 1);
+    le16(&hdr[28], 8);
+    le32(&hdr[34], img_bytes);
+    ESP_ERROR_CHECK(httpd_resp_send_chunk(req, (const char*)hdr, sizeof hdr));
+
+    // grayscale palette
+    uint8_t pal[1024];
+    for (int i=0;i<256;i++){ pal[i*4+0]=i; pal[i*4+1]=i; pal[i*4+2]=i; pal[i*4+3]=0; }
+    ESP_ERROR_CHECK(httpd_resp_send_chunk(req, (const char*)pal, sizeof pal));
+
+    // 3) Begin BURST read and stream rows
+    ensure_dummy();
+    ESP_ERROR_CHECK(spi_device_acquire_bus(spi_device_handle, portMAX_DELAY));
+    uint8_t cmd = BURST_FIFO_READ;
+    spi_transaction_t t0 = { .length=8, .tx_buffer=&cmd, .flags=SPI_TRANS_CS_KEEP_ACTIVE };
+    ESP_ERROR_CHECK(spi_device_polling_transmit(spi_device_handle, &t0));
+
+    size_t y_fill = 0;
+    int y_index = 0;
+    bool decided = false;
+    bool dumped  = false;
+
+    while (remaining) {
+        size_t n = remaining > CHUNK ? CHUNK : remaining;
+
+        spi_transaction_t t = {0};
+        t.length   = n * 8;
+        t.rxlength = n * 8;
+        t.tx_buffer= dummy_tx;
+        t.rx_buffer= s_chunk;
+        t.flags    = (n == remaining) ? 0 : SPI_TRANS_CS_KEEP_ACTIVE;
+        ESP_ERROR_CHECK(spi_device_polling_transmit(spi_device_handle, &t));
+
+        if (!decided) {
+            y_index = autodetect_y_index(s_chunk, n);
+            ESP_LOGI("OV2640", "Y auto-detect: using %s bytes as Y", y_index==0 ? "even" : "odd");
+            decided = true;
+        }
+
+        // Extract Y from this chunk
+        for (size_t i = y_index; i + 1 < n; i += 2) {
+            s_yrow[y_fill++] = s_chunk[i];     // if UYVY, use s_chunk[i+1]
+            if (y_fill == W) {
+                ESP_ERROR_CHECK(httpd_resp_send_chunk(req, (const char*)s_yrow, W));
+                y_fill = 0;
+            }
+        }
+
+        // Optional: dump first 32 bytes only for debug
+        if (!dumped) {
+            for (int k=0; k<32 && k<(int)n; k++) {
+                printf("%02X%s", s_chunk[k], ((k&15)==15) ? "\n" : " ");
+            }
+            dumped = true;
+        }
+
+        remaining -= n;
+    }
+    spi_device_release_bus(spi_device_handle);
+
+    if (y_fill) { // flush partial row (shouldn’t happen if expected is correct)
+        memset(s_yrow + y_fill, s_yrow[y_fill-1], W - y_fill);
+        ESP_ERROR_CHECK(httpd_resp_send_chunk(req, (const char*)s_yrow, W));
+    }
+
+    ESP_ERROR_CHECK(httpd_resp_send_chunk(req, NULL, 0));
+    arducam_camlock_give();
+    return ESP_OK;
+}

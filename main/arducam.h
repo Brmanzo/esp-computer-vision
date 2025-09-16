@@ -20,11 +20,12 @@
 #define PIN_SCL                    GPIO_NUM_8
 #define PIN_SDA                    GPIO_NUM_10
 #define I2C_MASTER_NUM             I2C_NUM_0
-#define I2C_MASTER_FREQ_HZ         400000
+#define I2C_MASTER_FREQ_HZ         100000
 #define I2C_MASTER_TX_BUF_DISABLE  0
 #define I2C_MASTER_RX_BUF_DISABLE  0
 #define I2C_TIMEOUT_MS             1000
 #define WRITE_BIT                  0x80
+#define I2C_SLAVE_ADDR             0x30
 
 /* uart pin source */
 #define UART_NUM UART_NUM_0
@@ -53,11 +54,7 @@ struct sensor_info{
     uint8_t data_size; 
     uint16_t sensor_id;
 };
-struct camera_operate {
-    uint8_t slave_address;
-    void (*init)(void); // This replaces systemInit, busDetect, cameraProbe, and cameraInit
-    void (*setJpegSize)(uint8_t size);
-};
+
 #define res_160x120 		0	//160x120
 #define res_176x144 		1	//176x144
 #define res_320x240 		2	//320x240
@@ -92,8 +89,20 @@ struct camera_operate {
 #define FIFO_SIZE2				0x43  //Camera write FIFO size[15:8]
 #define FIFO_SIZE3				0x44  //Camera write FIFO size[18:16]
 
+#define ARDUCHIP_MODE 0x02
+#define MCU2LCD_MODE  0x00  // “BMP/RAW” path
+#define CAM2LCD_MODE  0x01  // JPEG path
+
+#pragma once
+#include <stdint.h>
+#include "esp_http_server.h"
+
+esp_err_t arducam_stream_gray_bmp(httpd_req_t *req, uint16_t W, uint16_t H);
+
+void arducam_camlock_take(void);
+void arducam_camlock_give(void);
+
 extern volatile uint8_t cameraCommand;
-extern struct camera_operate arducam;
 extern uint8_t slave_addr;
 int rdSensorReg8_8(uint8_t regID, uint8_t* regDat );
 int wrSensorReg8_8(uint8_t regID, uint8_t regDat );
@@ -102,6 +111,5 @@ void write_reg(uint8_t address, uint8_t value);
 uint8_t read_reg(uint8_t address);
 void singleCapture(void);
 void uart_event_task(void *pvParameters);
-void esp32c3_SystemInit(void);
-void arducam_minimal_test(void);
+void arducam_yuv_init(void);
 #endif
