@@ -20,22 +20,25 @@ static void camera_task(void *arg) {
 }
 
 void app_main(void) {
-    // 1) Board bring-up
-    arducam.systemInit();
+    // 1) Initialize the entire Arducam system.
+    // This single function handles SPI bus checks, CPLD reset, sensor power-up,
+    // camera probing, and the final YUV configuration.
+    arducam_minimal_test();
+    arducam.init();
 
     // 2) (Optional) UART RX task — keep priority modest (e.g., 5–7)
     xTaskCreate(uart_event_task, "uart_event_task", 4096, NULL, 5, NULL);
 
-    // 3) Probe/init camera
-    if (arducam.busDetect() != 0) { ESP_LOGE("main","SPI bus test failed."); return; }
-    if (arducam.cameraProbe() != 0){ ESP_LOGE("main","Camera sensor probe failed."); return; }
-    arducam.cameraInit();
+    // 3) Set the desired image size.
+    // Note: The arducam.init() function already configures the camera for QVGA (320x240).
+    // This line is only necessary if you intend to immediately switch to a different JPEG size.
+    // For YUV processing, this line can be removed.
     arducam.setJpegSize(res_320x240);
 
     // 4) Bring up SoftAP + HTTP ONCE
     ESP_ERROR_CHECK(wifi_cam_init("esp-cam", "12345678"));
-    vTaskDelay(pdMS_TO_TICKS(800));  // grace period so AP/HTTP are ready
+    vTaskDelay(pdMS_TO_TICKS(800));  // Grace period so AP/HTTP are ready
 
-    // 5) Start capture loop task (priority 6 is usually safe)
+    // 5) Start the main capture loop task
     xTaskCreate(camera_task, "camera_task", 6144, NULL, 6, NULL);
 }

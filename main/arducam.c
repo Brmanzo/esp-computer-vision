@@ -15,6 +15,36 @@
 #include "ov2640.h"
 #include "wifi_cam.h"
 
+#define BANK_SEL   0xFF
+#define BANK_DSP   0x00
+#define IMAGE_MODE 0xDA
+#define R_BYPASS   0x05
+#define R_DVP_SP   0xD3
+
+// ArduChip Register Addresses
+#define ARDUCHIP_TEST1      0x00  // Test Register
+#define ARDUCHIP_FIFO       0x04  // FIFO Control Register
+#define ARDUCHIP_GPIO_WRITE_REG     0x06  // GPIO Write Register (for sensor power/reset)
+#define ARDUCHIP_GPIO_CTRL_REG      0x07  // GPIO Control Register (for CPLD reset)
+#define ARDUCHIP_TRIG       0x41  // Capture Trigger Register
+
+// Bitmasks for GPIO Control Register (0x07)
+#define GPIO_CPLD_RESET_MASK 0x80 // Bit to reset the CPLD/ArduChip
+#define GPIO_PWREN_MASK      0x04 // 0 = Sensor LDO disable, 1 = sensor LDO enable [1, 2]
+#define GPIO_PWDN_MASK       0x02 // 0 = Sensor normal operation, 1 = Sensor standby (power down) [1, 2]
+
+#define SENSOR_REGISTER_ADDRESS 0x7C
+#define SENSOR_DATA             0x7D
+#define SENSOR_OPERATION_START  0x7E
+#define OPERATION_WAIT_FLAG     0x08
+
+// ArduChip Bitmasks
+#define FIFO_CLEAR_MASK     0x01  // Bit to clear the FIFO
+#define GPIO_CPLD_RESET_MASK 0x80  // Bit to reset the CPLD/ArduChip
+#define CAP_DONE_MASK      0x08  // Bit that indicates capture is complete
+
+
+
 void set_bit(unsigned char addr, unsigned char bit);
 void clear_bit(unsigned char addr, unsigned char bit);
 
@@ -182,57 +212,49 @@ void uart_event_task(void *pvParameters) { // uart/events/example
     vTaskDelete(NULL);
 }
 
-/* Initialization sequence for the ArduCAM-M-2MP device. */
-static void arducam_power_up_sensor(void) {
-    // Enable sensor LDO
-    set_bit(ARDUCHIP_GPIO, GPIO_PWREN_MASK);
-    vTaskDelay(pdMS_TO_TICKS(5));
+// /* Initialization sequence for the ArduCAM-M-2MP device. */
+// static void arducam_power_up_sensor(void) {
+//     // Enable sensor LDO
+//     set_bit(ARDUCHIP_GPIO, GPIO_PWREN_MASK);
+//     vTaskDelay(pdMS_TO_TICKS(5));
 
-    // Ensure NOT in power-down
-    clear_bit(ARDUCHIP_GPIO, GPIO_PWDN_MASK);
-    vTaskDelay(pdMS_TO_TICKS(5));
+//     // Ensure NOT in power-down
+//     clear_bit(ARDUCHIP_GPIO, GPIO_PWDN_MASK);
+//     vTaskDelay(pdMS_TO_TICKS(5));
 
-    // Toggle reset: 0 = reset, 1 = normal operation
-    clear_bit(ARDUCHIP_GPIO, GPIO_RESET_MASK);
-    vTaskDelay(pdMS_TO_TICKS(5));
-    set_bit(ARDUCHIP_GPIO, GPIO_RESET_MASK);
-    vTaskDelay(pdMS_TO_TICKS(10));  // let it come up
-}
+//     // Toggle reset: 0 = reset, 1 = normal operation
+//     clear_bit(ARDUCHIP_GPIO, GPIO_RESET_MASK);
+//     vTaskDelay(pdMS_TO_TICKS(5));
+//     set_bit(ARDUCHIP_GPIO, GPIO_RESET_MASK);
+//     vTaskDelay(pdMS_TO_TICKS(10));  // let it come up
+// }
 
-/* Prepares ESP for communication and initiates image capture. */
-void esp32c3_SystemInit(void) {
-    i2c_master_init();
-    spi_master_init();
-    uart_init();
-    arducam_power_up_sensor();
-}
-
-/* Read a 8-bit register from the sensor. */
 int rdSensorReg8_8(uint8_t regID, uint8_t* regDat) {
-    esp_err_t err = i2c_master_transmit_receive(
-        camera_dev_handle, &regID, 1, regDat, 1, pdMS_TO_TICKS(I2C_TIMEOUT_MS)
-    );
-    if (err != ESP_OK) {
-        ESP_LOGE("SCCB", "Read reg 0x%02X failed: %s", regID, esp_err_to_name(err));
+    write_reg(SENSOR_REGISTER_ADDRESS, regID);
+    write_reg(SENSOR_OPERATION_START, 0x02); // Start read operation
+    while (read_reg(SENSOR_OPERATION_START) & OPERATION_WAIT_FLAG) {
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
-    return err;
+    *regDat = read_reg(SENSOR_DATA);
+    return 0; // Success
 }
 
-/* Write an 8-bit value to an 8-bit register on the sensor. */
+
 int wrSensorReg8_8(uint8_t regID, uint8_t regDat) {
-    uint8_t buf[2] = {regID, regDat};
-    esp_err_t err = i2c_master_transmit(camera_dev_handle, buf, 2, pdMS_TO_TICKS(I2C_TIMEOUT_MS));
-    if (err != ESP_OK) {
-        ESP_LOGE("SCCB", "Write reg 0x%02X=0x%02X failed: %s", regID, regDat, esp_err_to_name(err));
+    write_reg(SENSOR_REGISTER_ADDRESS, regID);
+    write_reg(SENSOR_DATA, regDat);
+    write_reg(SENSOR_OPERATION_START, 0x01); // Start write operation
+    while (read_reg(SENSOR_OPERATION_START) & OPERATION_WAIT_FLAG) {
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
-    return err;
+    return 0; // Success
 }
 
 /* Write multiple 8-bit values to 8-bit registers on the sensor. */
 int wrSensorRegs8_8(const struct sensor_reg reglist[]) {
     int err = 0;
     const struct sensor_reg *next = reglist;
-
+    
     // Check the next entry before processing it.
     while (next->reg != 0xff || next->val != 0xff) {
         // Pass the register and value directly to your write function.
@@ -364,17 +386,118 @@ void OV2640_set_JPEG_size(unsigned char size)
 			break;
 	}
 }
-/* Initialize the OV2640 camera sensor. */
-void ov2640Init(){
-    wrSensorReg8_8(0xff, 0x01);
-    wrSensorReg8_8(0x12, 0x80);
-    wrSensorRegs8_8(OV2640_JPEG_INIT);
-    wrSensorRegs8_8(OV2640_YUV422);
-    wrSensorRegs8_8(OV2640_JPEG);
-    wrSensorReg8_8(0xff, 0x01);
-    wrSensorReg8_8(0x15, 0x00);
-    wrSensorRegs8_8(OV2640_320x240_JPEG);
+
+static void ov2640_dump_state(void)
+{
+    ESP_LOGI(TAG, "--- Dumping OV2640 Register State ---");
+
+    // --- SENSOR BANK (0x01) ---
+    wrSensorReg8_8(0xFF, 0x01);
+    uint8_t val;
+    ESP_LOGI(TAG, "--- SENSOR BANK ---");
+    rdSensorReg8_8(0x0A, &val); ESP_LOGI(TAG, "PID [0x0A]: 0x%02X", val);
+    rdSensorReg8_8(0x0B, &val); ESP_LOGI(TAG, "VER: 0x%02X", val);
+    rdSensorReg8_8(0x11, &val); ESP_LOGI(TAG, "CLKRC [0x11]: 0x%02X", val);
+    rdSensorReg8_8(0x12, &val); ESP_LOGI(TAG, "COM7 [0x12]: 0x%02X", val);
+    rdSensorReg8_8(0x03, &val); ESP_LOGI(TAG, "COM1 [0x03]: 0x%02X", val);
+    rdSensorReg8_8(0x04, &val); ESP_LOGI(TAG, "COM1 [0x04]: 0x%02X", val);
+    rdSensorReg8_8(0x17, &val); ESP_LOGI(TAG, "HSTART [0x17]: 0x%02X", val);
+    rdSensorReg8_8(0x18, &val); ESP_LOGI(TAG, "HSIZE [0x18]: 0x%02X", val);
+    rdSensorReg8_8(0x19, &val); ESP_LOGI(TAG, "VSTART [0x19]: 0x%02X", val);
+    rdSensorReg8_8(0x1A, &val); ESP_LOGI(TAG, "VSIZE [0x1A]: 0x%02X", val);
+
+    // --- DSP BANK (0x00) ---
+    wrSensorReg8_8(0xFF, 0x00);
+    ESP_LOGI(TAG, "--- DSP BANK ---");
+    rdSensorReg8_8(0xDA, &val); ESP_LOGI(TAG, "IMAGE_MODE: 0x%02X", val);
+    rdSensorReg8_8(0xD3, &val); ESP_LOGI(TAG, "R_DVP_SP: 0x%02X", val);
+    rdSensorReg8_8(0xC2, &val); ESP_LOGI(TAG, "CTRL2 [0xC2]: 0x%02X", val);
+    rdSensorReg8_8(0x05, &val); ESP_LOGI(TAG, "R_BYPASS [0x05]: 0x%02X", val);
+    rdSensorReg8_8(0x5A, &val); ESP_LOGI(TAG, "Y_SIZE [0x5A]: 0x%02X", val);
+    rdSensorReg8_8(0x5B, &val); ESP_LOGI(TAG, "X_SIZE: 0x%02X", val);
+
+    ESP_LOGI(TAG, "--- End of Dump ---");
 }
+
+/* Initialize the OV2640 camera sensor. */
+void ov2640Init(void) {
+    // 1. Tell the ArduChip to clear its FIFO buffer in preparation for a new format
+    write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK);
+
+    // 2. Now, send the full configuration sequence to the OV2640 sensor
+    // This list should be the complete YUV list from my first response,
+    // which includes the sensor software reset.
+    wrSensorRegs8_8(ov2640_yuv_qvga_config_regs);
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    ESP_LOGI("OV2640", "Initialization complete. Dumping final state.");
+    ov2640_dump_state();
+}
+
+/* Prepares ESP for communication and initiates image capture. */
+// This single function performs the entire initialization sequence correctly.
+void arducam_full_init(void) {
+    // 1. Initialize hardware peripherals
+    spi_master_init();
+    uart_init();
+
+    // 2. Test SPI communication with the ArduChip controller
+    write_reg(ARDUCHIP_TEST1, 0x55);
+    uint8_t test_val = read_reg(ARDUCHIP_TEST1);
+    if (test_val!= 0x55) {
+        ESP_LOGE("ARDUCAM", "SPI interface test failed! Halting.");
+        while(1);
+    }
+    ESP_LOGI("ARDUCAM", "SPI interface OK.");
+
+    // 3. Reset the ArduChip (CPLD) using the CTRL register (0x07).
+    write_reg(ARDUCHIP_GPIO_CTRL_REG, GPIO_CPLD_RESET_MASK);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    write_reg(ARDUCHIP_GPIO_CTRL_REG, 0x00);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    ESP_LOGI("ARDUCAM", "ArduChip reset complete.");
+
+    // 4. Power up the OV2640 sensor using the GPIO WRITE register (0x06)
+    ESP_LOGI("ARDUCAM", "Powering up sensor...");
+    uint8_t gpio_val = 0;
+    // Enable sensor LDO
+    gpio_val = read_reg(ARDUCHIP_GPIO_WRITE_REG);
+    write_reg(ARDUCHIP_GPIO_WRITE_REG, gpio_val | GPIO_PWREN_MASK);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    // Ensure sensor is NOT in power-down mode (PWDN is active-high, so clear the bit)
+    gpio_val = read_reg(ARDUCHIP_GPIO_WRITE_REG);
+    write_reg(ARDUCHIP_GPIO_WRITE_REG, gpio_val & ~GPIO_PWDN_MASK);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    // Toggle sensor reset (RESETB is active-low)
+    gpio_val = read_reg(ARDUCHIP_GPIO_WRITE_REG);
+    write_reg(ARDUCHIP_GPIO_WRITE_REG, gpio_val & ~GPIO_RESET_MASK); // Pull low to reset
+    vTaskDelay(pdMS_TO_TICKS(10));
+    gpio_val = read_reg(ARDUCHIP_GPIO_WRITE_REG);
+    write_reg(ARDUCHIP_GPIO_WRITE_REG, gpio_val | GPIO_RESET_MASK);  // Pull high for normal operation
+    vTaskDelay(pdMS_TO_TICKS(20)); // Allow sensor to stabilize
+    ESP_LOGI("ARDUCAM", "Sensor power up sequence complete.");
+
+    // 5. Check for the OV2640 sensor on the I2C bus (via the ArduChip)
+    wrSensorReg8_8(0xFF, 0x01); // Select SENSOR bank
+    uint8_t idh = 0, idl = 0;
+    rdSensorReg8_8(0x0A, &idh);
+    rdSensorReg8_8(0x0B, &idl);
+    if (idh == 0x26 && (idl == 0x41 || idl == 0x42)) {
+        ESP_LOGI("OV2640", "OV2640 detected. ID=%02X%02X", idh, idl);
+    } else {
+        ESP_LOGE("OV2640", "OV2640 not found. ID=%02X%02X", idh, idl);
+        while(1); // Halt on critical failure
+    }
+
+    // 6. Clear FIFO and apply the full YUV configuration to the sensor
+    write_reg(ARDUCHIP_FIFO, 0x01); // FIFO_CLEAR_MASK
+    wrSensorRegs8_8(ov2640_yuv_qvga_config_regs); // Use the full list from my first response
+    vTaskDelay(pdMS_TO_TICKS(10));
+
+    ESP_LOGI("OV2640", "Initialization complete. Dumping final state.");
+    ov2640_dump_state(); // This should now succeed
+}
+
 /* Reset the SPI FIFO buffer. */
 static inline void fifo_reset_all(void) {
     // Clear + reset read/write pointers
@@ -458,11 +581,59 @@ uint8_t ov2640Probe(void) {
     }
 }
 
+// This function will help us isolate the problem.
+void arducam_minimal_test(void) {
+    // 1. Initialize hardware peripherals
+    spi_master_init();
+    uart_init();
+
+    // 2. Test SPI communication with the ArduChip controller
+    write_reg(ARDUCHIP_TEST1, 0x55);
+    uint8_t test_val = read_reg(ARDUCHIP_TEST1);
+    if (test_val!= 0x55) {
+        ESP_LOGE("ARDUCAM", "SPI interface test failed! Halting.");
+        while(1);
+    }
+    ESP_LOGI("ARDUCAM", "SPI interface OK.");
+
+    // 3. Power up the OV2640 sensor using the GPIO WRITE register (0x06)
+    // We are using longer delays here for stability testing.
+    ESP_LOGI("ARDUCAM", "Powering up sensor...");
+    uint8_t gpio_val = 0;
+
+    // Enable sensor LDO (power enable)
+    gpio_val = read_reg(ARDUCHIP_GPIO_WRITE_REG);
+    write_reg(ARDUCHIP_GPIO_WRITE_REG, gpio_val | GPIO_PWREN_MASK);
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    // Ensure sensor is NOT in power-down mode (PWDN is active-high, so clear the bit)
+    gpio_val = read_reg(ARDUCHIP_GPIO_WRITE_REG);
+    write_reg(ARDUCHIP_GPIO_WRITE_REG, gpio_val & ~GPIO_PWDN_MASK);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    ESP_LOGI("ARDUCAM", "Sensor power up sequence complete.");
+
+    // 4. Attempt to read the sensor ID.
+    // This is the most critical test.
+    ESP_LOGI("OV2640", "Attempting to read sensor ID...");
+    wrSensorReg8_8(0xFF, 0x01); // Select SENSOR bank
+    uint8_t idh = 0, idl = 0;
+    rdSensorReg8_8(0x0A, &idh);
+    rdSensorReg8_8(0x0B, &idl);
+
+    if (idh == 0x26 && (idl == 0x41 || idl == 0x42)) {
+        ESP_LOGI("OV2640", "SUCCESS! OV2640 detected. ID=%02X%02X", idh, idl);
+    } else {
+        ESP_LOGE("OV2640", "FAILURE. OV2640 not found. ID=%02X%02X", idh, idl);
+    }
+
+    // We will stop here. The program will do nothing further.
+    while(1) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
 struct camera_operate arducam = {
-    .slave_address = 0x30,
-    .systemInit    = esp32c3_SystemInit, // Point to your new ESP32 init function
-    .busDetect     = spiBusDetect,
-    .cameraProbe   = ov2640Probe,
-    .cameraInit    = ov2640Init,
-    .setJpegSize   = OV2640_set_JPEG_size,
+   .slave_address = 0x30,
+   .init          = arducam_full_init, // Point the single init function here
+   .setJpegSize   = OV2640_set_JPEG_size,
 };

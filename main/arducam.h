@@ -14,7 +14,7 @@
 #define PIN_MOSI   GPIO_NUM_6
 #define PIN_CS     GPIO_NUM_7
 #define SPI_CHUNK  4092
-#define SPI_FREQ   8000000
+#define SPI_FREQ   4000000
 
 /*i2c pin source */
 #define PIN_SCL                    GPIO_NUM_8
@@ -53,12 +53,9 @@ struct sensor_info{
     uint8_t data_size; 
     uint16_t sensor_id;
 };
-struct camera_operate{
+struct camera_operate {
     uint8_t slave_address;
-    void (*systemInit)(void);
-    uint8_t (*busDetect) (void);
-    uint8_t (*cameraProbe) (void);
-    void  (*cameraInit) (void);
+    void (*init)(void); // This replaces systemInit, busDetect, cameraProbe, and cameraInit
     void (*setJpegSize)(uint8_t size);
 };
 #define res_160x120 		0	//160x120
@@ -75,7 +72,6 @@ struct camera_operate{
 #define FIFO_START_MASK    		0x02
 #define FIFO_RDPTR_RST_MASK     0x10
 #define FIFO_WRPTR_RST_MASK     0x20
-#define ARDUCHIP_GPIO			0x06  //GPIO Write Register
 #define GPIO_RESET_MASK			0x01  //0 = Sensor reset,							1 =  Sensor normal operation
 #define GPIO_PWDN_MASK			0x02  //0 = Sensor normal operation, 	1 = Sensor standby
 #define GPIO_PWREN_MASK			0x04	//0 = Sensor LDO disable, 			1 = sensor LDO enable
@@ -107,4 +103,5 @@ uint8_t read_reg(uint8_t address);
 void singleCapture(void);
 void uart_event_task(void *pvParameters);
 void esp32c3_SystemInit(void);
+void arducam_minimal_test(void);
 #endif
