@@ -23,7 +23,6 @@ void app_main(void) {
     // 1) Initialize the entire Arducam system.
     // This single function handles SPI bus checks, CPLD reset, sensor power-up,
     // camera probing, and the final YUV configuration.
-    arducam_minimal_test();
     arducam.init();
 
     // 2) (Optional) UART RX task — keep priority modest (e.g., 5–7)
