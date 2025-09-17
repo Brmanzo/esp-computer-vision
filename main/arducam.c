@@ -2,14 +2,17 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
+#include <time.h>
 #include "sdkconfig.h"
 
 #include "driver/gpio.h"
+#include "driver/usb_serial_jtag.h"
 #include "driver/i2c_master.h"
 #include "driver/spi_master.h"
 #include "driver/uart.h"
 
 #include "esp_check.h"
+#include "esp_crc.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h"
 
@@ -21,6 +24,8 @@
 #include "arducam.h"
 #include "ov2640.h"
 #include "wifi_cam.h"
+
+bool debug = false;
 
 /* ---------------------------- Semaphore Task Isolation ---------------------------- */
 static SemaphoreHandle_t s_cam_mutex = NULL;
@@ -217,7 +222,7 @@ int i2c_read_reg(uint8_t regID, uint8_t* regDat) {
         camera_dev_handle, &regID, 1, regDat, 1, pdMS_TO_TICKS(I2C_TIMEOUT_MS)
     );
     if (err != ESP_OK) {
-        ESP_LOGE("SCCB", "Read reg 0x%02X failed: %s", regID, esp_err_to_name(err));
+        if (debug) { ESP_LOGE("SCCB", "Read reg 0x%02X failed: %s", regID, esp_err_to_name(err)); }
     }
     return err;
 }
@@ -227,7 +232,7 @@ int i2c_write_reg(uint8_t regID, uint8_t regDat) {
     uint8_t buf[2] = {regID, regDat};
     esp_err_t err = i2c_master_transmit(camera_dev_handle, buf, 2, pdMS_TO_TICKS(I2C_TIMEOUT_MS));
     if (err != ESP_OK) {
-        ESP_LOGE("SCCB", "Write reg 0x%02X=0x%02X failed: %s", regID, regDat, esp_err_to_name(err));
+        if (debug) { ESP_LOGE("SCCB", "Write reg 0x%02X=0x%02X failed: %s", regID, regDat, esp_err_to_name(err)); }
     }
     return err;
 }
@@ -255,63 +260,130 @@ int i2c_write_regs(const struct sensor_reg reglist[]) {
 /* -------------------------------------- UART -------------------------------------- */
 /* Initialize UART for streaming images to interfaces. */
 volatile uint8_t cameraCommand = 0;
-static QueueHandle_t uart_queue_handle;
+// static QueueHandle_t uart_queue_handle;
+static uint8_t *build_gray8_bmp(const uint8_t *gray, uint16_t W, uint16_t H, size_t *out_len);
+// Little-endian writers
+static inline void le16(uint8_t *p, uint16_t v){ p[0]=v; p[1]=v>>8; }
+static inline void le32(uint8_t *p, uint32_t v){ p[0]=v; p[1]=v>>8; p[2]=v>>16; p[3]=v>>24; }
 
-void uart_init(void) {
-    uart_config_t uart_config  = {};
-        uart_config.baud_rate  = BAUD_RATE;
-        uart_config.data_bits  = UART_DATA_8_BITS;
-        uart_config.parity     = UART_PARITY_DISABLE;
-        uart_config.stop_bits  = UART_STOP_BITS_1;
-        uart_config.flow_ctrl  = UART_HW_FLOWCTRL_DISABLE;
-        uart_config.source_clk = UART_SCLK_DEFAULT;
+// void uart_init(void) {
+//     uart_driver_install(UART_NUM, 1024*2, 0, 0, NULL, 0);
+//     uart_config_t uart_config  = {};
+//         uart_config.baud_rate = BAUD_RATE;
+//         uart_config.data_bits = UART_DATA_8_BITS;
+//         uart_config.parity    = UART_PARITY_DISABLE;
+//         uart_config.stop_bits = UART_STOP_BITS_1;
+//         uart_config.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
+//         uart_config.source_clk= UART_SCLK_DEFAULT;
+//     // Install driver and ask it to create an event queue of 20 items
+//     ESP_ERROR_CHECK(uart_driver_install(UART_NUM, RX_BUF_SIZE, 0, QUEUE_DEPTH, &uart_queue_handle, 0));
+//     ESP_ERROR_CHECK(uart_param_config(UART_NUM, &uart_config));
+//     ESP_ERROR_CHECK(uart_set_pin(UART_NUM, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE,
+//                                   UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+// }
 
-    // Install driver and ask it to create an event queue of 20 items
-    ESP_ERROR_CHECK(uart_driver_install(UART_NUM, RX_BUF_SIZE, 0, QUEUE_DEPTH, &uart_queue_handle, 0));
-    ESP_ERROR_CHECK(uart_param_config(UART_NUM, &uart_config));
-    ESP_ERROR_CHECK(uart_set_pin(UART_NUM, UART_TX_PIN, UART_RX_PIN,
-                                 UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-}
-
-/* Task to handle UART events, such as receiving data. */
-void uart_event_task(void *pvParameters) { // uart/events/example
-    uart_event_t event;
-    uint8_t* dtmp = (uint8_t*) malloc(RD_BUF_SIZE);
+// /* Task to handle UART events, such as receiving data. */
+// void uart_event_task(void *pvParameters) { // uart/events/example
+//     uart_event_t event;
+//     uint8_t* dtmp = (uint8_t*) malloc(RD_BUF_SIZE);
     
-    for(;;) {
-        // Wait for the next event in the queue
-        if(xQueueReceive(uart_queue_handle, (void * )&event, (TickType_t)portMAX_DELAY)) {
-            bzero(dtmp, RD_BUF_SIZE);
-            switch(event.type) {
-                // Event when UART data is received
-                case UART_DATA:
-                ESP_LOGI("UART_HANDLER", "[UART DATA]: %d", event.size);
-                    // Read the received data from the UART buffer
-                    int len = uart_read_bytes(UART_NUM, dtmp, event.size, portMAX_DELAY);
+//     for(;;) {
+//         // Wait for the next event in the queue
+//         if(xQueueReceive(uart_queue_handle, (void * )&event, (TickType_t)portMAX_DELAY)) {
+//             bzero(dtmp, RD_BUF_SIZE);
+//             switch(event.type) {
+//                 // Event when UART data is received
+//                 case UART_DATA:
+//                 if (debug) { ESP_LOGI("UART_HANDLER", "[UART DATA]: %d", event.size); }
+//                     // Read the received data from the UART buffer
+//                     int len = uart_read_bytes(UART_NUM, dtmp, event.size, portMAX_DELAY);
                     
-                    // Echo the data back to the sender
-                    uart_write_bytes(UART_NUM, (const char*) dtmp, len);
+//                     // Echo the data back to the sender
+//                     uart_write_bytes(UART_NUM, (const char*) dtmp, len);
 
-                    if (len > 0) {
-                        cameraCommand = dtmp[0];
-                        ESP_LOGI("UART_HANDLER", "Received new command: %c", cameraCommand);
-                    }
-                    break;
+//                     if (len > 0) {
+//                         cameraCommand = dtmp[0];
+//                         if (debug) { ESP_LOGI("UART_HANDLER", "Received new command: %c", cameraCommand); }
+//                     }
+//                     break;
                 
-                // Other event types can be handled here
-                default:
-                    // Log other event types
-                    ESP_LOGI("UART_HANDLER", "uart event type: %d", event.type);
-                    break;
-            }
-        }
+//                 // Other event types can be handled here
+//                 default:
+//                     // Log other event types
+//                     if (debug) { ESP_LOGI("UART_HANDLER", "uart event type: %d", event.type); }
+//                     break;
+//             }
+//         }
+//     }
+//     free(dtmp);
+//     dtmp = NULL;
+//     vTaskDelete(NULL);
+// }
+
+static void usbcdc_init(void) {
+    static bool inited = false;
+    if (inited) return;
+
+    usb_serial_jtag_driver_config_t cfg = {
+        .tx_buffer_size = 4096,   // or 2048/1024; must be > 0
+        .rx_buffer_size = 256,    // you can keep this small if you only TX
+    };
+    esp_err_t err = usb_serial_jtag_driver_install(&cfg);
+    if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
+        // ESP_ERR_INVALID_STATE means it's already installed — OK to proceed
+        inited = true;
+        return;
     }
-    free(dtmp);
-    dtmp = NULL;
-    vTaskDelete(NULL);
+    ESP_ERROR_CHECK(err);
 }
+
+static void usbcdc_write_all(const uint8_t *p, size_t n) {
+    size_t off = 0;
+    while (off < n) {
+        int w = usb_serial_jtag_write_bytes(p + off, n - off, pdMS_TO_TICKS(50));
+        if (w <= 0) { vTaskDelay(1); continue; }  // yield on congestion
+        off += (size_t)w;
+    }
+}
+
+static uint16_t crc16_modbus(const uint8_t* p, size_t n){
+    uint16_t crc = 0xFFFF;
+    for (size_t i=0;i<n;i++){
+        crc ^= p[i];
+        for (int b=0;b<8;b++)
+            crc = (crc & 1) ? (uint16_t)((crc>>1) ^ 0xA001) : (uint16_t)(crc>>1);
+    }
+    return crc;
+}
+
+void send_bmp_over_usbcdc(const uint8_t *gray, uint16_t w, uint16_t h) {
+    size_t bmp_len = 0;
+    uint8_t *bmp = build_gray8_bmp(gray, w, h, &bmp_len);
+    if (!bmp) return;
+
+    uint8_t hdr[8] = { 'U','B','M','P', 0,0,0,0 };
+    uint32_t L = (uint32_t)bmp_len;
+    hdr[4] = (uint8_t)(L      );
+    hdr[5] = (uint8_t)(L >>  8);
+    hdr[6] = (uint8_t)(L >> 16);
+    hdr[7] = (uint8_t)(L >> 24);
+
+    uint16_t crc = crc16_modbus(bmp, bmp_len);
+    uint8_t crc_le[2] = { (uint8_t)crc, (uint8_t)(crc >> 8) };
+
+    usbcdc_write_all(hdr, sizeof hdr);
+    usbcdc_write_all(bmp, bmp_len);
+    usbcdc_write_all(crc_le, 2);
+
+    ESP_LOGI("usbcdc","UBMP sent %ux%u (%u bytes + 10B framing)",
+             (unsigned)w,(unsigned)h,(unsigned)bmp_len);
+
+    free(bmp);
+}
+
 
 /* -------------------------------------- Image Capture -------------------------------------- */
+timer_t last_publish = 0;
 esp_err_t arducam_read_jpeg(uint8_t *dst, size_t max_len, size_t *out_len)
 {
     *out_len = 0;
@@ -480,9 +552,65 @@ static void rgb565_to_gray8_with_probe(const uint16_t *src, uint8_t *dst, uint16
         dst[i] = y;
 
         if (i == center_idx) {
-            ESP_LOGI("main","Center RGB=(%u,%u,%u) Gray=%u", r,g,b,y);
+            if (debug) { ESP_LOGI("main","Center RGB=(%u,%u,%u) Gray=%u", r,g,b,y); }
         }
     }
+}
+
+static uint8_t *build_gray8_bmp(const uint8_t *gray, uint16_t W, uint16_t H, size_t *out_len)
+{
+    // Row stride must be padded to 4 bytes
+    uint32_t stride = (W + 3) & ~3U;
+    uint32_t img_bytes = stride * H;
+
+    const uint32_t file_hdr = 14;
+    const uint32_t dib_hdr  = 40;
+    const uint32_t palette  = 256 * 4; // BGRA
+    const uint32_t offBits  = file_hdr + dib_hdr + palette;
+    const uint32_t file_sz  = offBits + img_bytes;
+
+    uint8_t *bmp = (uint8_t*)malloc(file_sz);
+    if (!bmp) return NULL;
+
+    // ----- FILE HEADER (14) -----
+    memset(bmp, 0, file_sz);
+    bmp[0]='B'; bmp[1]='M';
+    le32(&bmp[ 2], file_sz);
+    le32(&bmp[10], offBits);
+
+    // ----- DIB (BITMAPINFOHEADER, 40) -----
+    uint8_t *dib = bmp + 14;
+    le32(&dib[ 0], 40);             // header size
+    le32(&dib[ 4], W);              // width
+    le32(&dib[ 8], (uint32_t)(-(int32_t)H)); // height (negative = top-down)
+    le16(&dib[12], 1);              // planes
+    le16(&dib[14], 8);              // bpp
+    le32(&dib[16], 0);              // BI_RGB
+    le32(&dib[20], img_bytes);      // image size
+    // ppm fields can be zero
+    le32(&dib[32], 256);            // colors used
+
+    // ----- PALETTE (256 * BGRA) -----
+    uint8_t *pal = bmp + offBits - palette;
+    for (int i=0;i<256;i++){
+        pal[i*4 + 0] = i; // B
+        pal[i*4 + 1] = i; // G
+        pal[i*4 + 2] = i; // R
+        pal[i*4 + 3] = 0; // A
+    }
+
+    // ----- PIXELS -----
+    uint8_t *dst = bmp + offBits;
+    for (uint32_t y=0; y<H; ++y) {
+        // copy one row
+        memcpy(dst, gray + (size_t)y*W, W);
+        // pad to stride
+        if (stride > W) memset(dst + W, 0, stride - W);
+        dst += stride;
+    }
+
+    if (out_len) *out_len = file_sz;
+    return bmp;
 }
 
 /* Capture a single jpeg from the camera, decode and convert to gray bmp, and publish to server. */
@@ -507,7 +635,7 @@ void singleCapture(void)
     while (!spi_get_bit(ARDUCHIP_TRIG, CAP_DONE_MASK)) {
         vTaskDelay(pdMS_TO_TICKS(1));
         if ((xTaskGetTickCount() - t0) > pdMS_TO_TICKS(250)) {
-            ESP_LOGW("cam","CAP_DONE timeout");
+            if (debug) { ESP_LOGW("cam","CAP_DONE timeout"); }
             spi_reset_fifo();
             // Give back when camera HW is in a known state (fifo reset)
             arducam_camlock_give();
@@ -517,14 +645,14 @@ void singleCapture(void)
 
     // Size hint only (don’t trust for JPEG), choose a safe cap
     uint32_t hint = spi_read_fifo_len();
-    ESP_LOGW("cam","FIFO length hint: %u", (unsigned)hint);
+    if (debug) { ESP_LOGW("cam","FIFO length hint: %u", (unsigned)hint); }
     if (hint == 0 || hint > WIFI_CAM_MAX_JPEG) hint = WIFI_CAM_MAX_JPEG;
     size_t max_len = hint + 32;
     if (max_len > WIFI_CAM_MAX_JPEG) max_len = WIFI_CAM_MAX_JPEG;
 
     jpg = heap_caps_malloc(max_len, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
     if (!jpg) {
-        ESP_LOGE("cam","OOM %u", (unsigned)max_len);
+        if (debug) { ESP_LOGE("cam","OOM %u", (unsigned)max_len); }
         spi_reset_fifo();
         // If out of memory, hold camera hardware until in a known state (fifo reset)
         arducam_camlock_give();
@@ -532,12 +660,15 @@ void singleCapture(void)
     }
 
     // Read out the frame
+    timer_t t_start = clock();
+    if (debug) { ESP_LOGI("cam", "downtime: %u ms", (unsigned)((t_start - last_publish) * 1000 / CLOCKS_PER_SEC)); }
     e = arducam_read_jpeg(jpg, max_len, &actual);
-
+    timer_t t_read_end = clock();
+    if (debug) { ESP_LOGI("cam","read_jpeg time: %u ms", (unsigned)((t_read_end - t_start) * 1000 / CLOCKS_PER_SEC)); }
     // Capture successfully completed! Now give back the camera HW.
     arducam_camlock_give();
 
-    ESP_LOGI("cam","read_jpeg: %s, len=%u", esp_err_to_name(e), (unsigned)actual);
+    if (debug) { ESP_LOGI("cam","read_jpeg: %s, len=%u", esp_err_to_name(e), (unsigned)actual); }
 
     if (e == ESP_OK && actual >= 4 &&
         jpg[0] == MARKER_PREFIX && jpg[1] == SOI &&
@@ -546,32 +677,40 @@ void singleCapture(void)
         // Decode outside the lock (heavy)
         uint16_t *pix = NULL; uint16_t w=0, h=0;
         esp_err_t d = jpeg_decode_from_buffer(jpg, actual, &pix, &w, &h, JPEG_IMAGE_SCALE_1);
+        timer_t t_decode_end = clock();
+        if (debug) { ESP_LOGI("cam","jpeg_decode time: %u ms", (unsigned)((t_decode_end - t_read_end) * 1000 / CLOCKS_PER_SEC)); }
         if (d == ESP_OK) {
-            ESP_LOGI("main","decoded %ux%u", w, h);
+            if (debug) { ESP_LOGI("main","decoded %ux%u", w, h); }
 
             uint8_t *gray = (uint8_t*)heap_caps_malloc((size_t)w*h, MALLOC_CAP_8BIT);
             if (gray) {
+                timer_t t_convert_begin = clock();
                 rgb565_to_gray8_with_probe(pix, gray, w, h);
-                wifi_cam_publish_gray8_as_bmp(gray, w, h);
+                timer_t t_convert_end = clock();
+                send_bmp_over_usbcdc(gray, w, h);
+                timer_t t_publish_end = clock();
+                if (debug) { ESP_LOGI("cam","rgb565_to_gray8 time: %u ms", (unsigned)((t_convert_end - t_convert_begin) * 1000 / CLOCKS_PER_SEC)); }
+                if (debug) { ESP_LOGI("cam","publish_gray8_as_bmp time: %u ms", (unsigned)((t_publish_end - t_convert_end) * 1000 / CLOCKS_PER_SEC)); }
+                last_publish = clock();
                 free(gray);
             } else {
-                ESP_LOGW("main","OOM gray %u bytes", (unsigned)((size_t)w*h));
+                if (debug) { ESP_LOGW("main","OOM gray %u bytes", (unsigned)((size_t)w*h)); }
             }
             free(pix);
         } else {
-            ESP_LOGW("main","decode failed: %s", esp_err_to_name(d));
+            if (debug) { ESP_LOGW("main","decode failed: %s", esp_err_to_name(d)); }
         }
     } else {
         if (actual >= 2) {
-            ESP_LOGW("cam",
+            if (debug) { ESP_LOGW("cam",
                     "EOI missing. len=%u head=%02X %02X tail=%02X %02X",
                     (unsigned)actual,
                     jpg[0], jpg[1],
-                    jpg[actual-2], jpg[actual-1]);
+                    jpg[actual-2], jpg[actual-1]); }
         } else {
-            ESP_LOGW("cam",
+            if (debug) { ESP_LOGW("cam",
                     "EOI missing. len=%u (too short for tail bytes)",
-                    (unsigned)actual);
+                    (unsigned)actual); }
 }
     }
 
@@ -580,6 +719,8 @@ void singleCapture(void)
     // Give Wi-Fi/httpd some breathing room between frames
     vTaskDelay(pdMS_TO_TICKS(10));
 }
+
+/* ----------------------------------- Image Processing ----------------------------------- */
 
 
 /* -------------------------------------- Device Init -------------------------------------- */
@@ -604,7 +745,8 @@ static void arducam_power_up_sensor(void) {
 void esp32c3_SystemInit(void) {
     i2c_master_init();
     spi_master_init();
-    uart_init();
+    // uart_init();
+    usbcdc_init();
     arducam_power_up_sensor();
 }
 

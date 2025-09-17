@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 #include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -13,6 +14,8 @@
 #include "arducam.h"
 #include "wifi_cam.h"
 
+bool debug_main = false;
+
 static void camera_task(void *arg) {
     for (;;) {
         singleCapture();                 // this calls wifi_cam_publish(...)
@@ -24,12 +27,12 @@ void app_main(void) {
     // 1) Board bring-up
     arducam.systemInit();
 
-    // 2) (Optional) UART RX task — keep priority modest (e.g., 5–7)
-    xTaskCreate(uart_event_task, "uart_event_task", 4096, NULL, 5, NULL);
+    // // 2) (Optional) UART RX task — keep priority modest (e.g., 5–7)
+    // xTaskCreate(uart_event_task, "uart_event_task", 4096, NULL, 5, NULL);
 
     // 3) Probe/init camera
-    if (arducam.busDetect() != 0) { ESP_LOGE("main","SPI bus test failed."); return; }
-    if (arducam.cameraProbe() != 0){ ESP_LOGE("main","Camera sensor probe failed."); return; }
+    if (arducam.busDetect() != 0 && debug_main) { ESP_LOGE("main","SPI bus test failed."); return; }
+    if (arducam.cameraProbe() != 0 && debug_main) { ESP_LOGE("main","Camera sensor probe failed."); return; }
     arducam.cameraInit();
     arducam.setJpegSize(res_160x120);
 

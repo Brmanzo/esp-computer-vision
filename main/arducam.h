@@ -28,7 +28,7 @@
 
 /* uart pin source */
 #define UART_NUM    UART_NUM_0
-#define BAUD_RATE   921600
+#define BAUD_RATE   921600 
 #define DATA_BITS   8
 #define STOP_BITS   1
 #define PARITY      UART_PARITY_NONE
@@ -84,15 +84,8 @@ struct camera_operate{
 #define GPIO_PWREN_MASK			0x04	//0 = Sensor LDO disable, 			1 = sensor LDO enable
 
 #define BURST_FIFO_READ			0x3C  //Burst FIFO read operation
-#define SINGLE_FIFO_READ		0x3D  //Single FIFO read operation
-
-#define ARDUCHIP_REV       		0x40  //ArduCHIP revision
-#define VER_LOW_MASK       		0x3F
-#define VER_HIGH_MASK      		0xC0
 
 #define ARDUCHIP_TRIG      		0x41  //Trigger source
-#define VSYNC_MASK         		0x01
-#define SHUTTER_MASK       		0x02
 #define CAP_DONE_MASK      		0x08
 
 #define FIFO_SIZE1				0x42  //Camera write FIFO size[7:0] for burst to read
