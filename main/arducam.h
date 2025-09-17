@@ -21,27 +21,31 @@
 #define PIN_SDA                    GPIO_NUM_10
 #define I2C_MASTER_NUM             I2C_NUM_0
 #define I2C_MASTER_FREQ_HZ         400000
-#define I2C_MASTER_TX_BUF_DISABLE  0
-#define I2C_MASTER_RX_BUF_DISABLE  0
 #define I2C_TIMEOUT_MS             1000
 #define WRITE_BIT                  0x80
+#define ARDUCAM_ADDR               0x30
+
 
 /* uart pin source */
-#define UART_NUM UART_NUM_0
-#define BAUD_RATE 921600
-#define DATA_BITS 8
-#define STOP_BITS 1
-#define PARITY    UART_PARITY_NONE
+#define UART_NUM    UART_NUM_0
+#define BAUD_RATE   921600
+#define DATA_BITS   8
+#define STOP_BITS   1
+#define PARITY      UART_PARITY_NONE
 #define UART_TX_PIN GPIO_NUM_0
 #define UART_RX_PIN GPIO_NUM_1
-#define BUF_SIZE (256)
+#define BUF_SIZE    (256)
 #define QUEUE_DEPTH (20)
 #define RX_BUF_SIZE (BUF_SIZE*2)
 #define RD_BUF_SIZE (BUF_SIZE)
 
-// Add with your other ArduCHIP regs:
+/* jpeg markers*/
+#define MARKER_PREFIX 0xFF
+#define SOI           0xD8
+#define EOI           0xD9
+
+/* camera registers */
 #define ARDUCHIP_MODE 0x02
-#define MCU2LCD_MODE  0x00  // “BMP/RAW” path
 #define CAM2LCD_MODE  0x01  // JPEG path
 
 #ifndef _SENSOR_
@@ -52,12 +56,6 @@
     };
 #endif
 
-struct sensor_info{
-    uint8_t sensor_slave_address;
-    uint8_t address_size;
-    uint8_t data_size; 
-    uint16_t sensor_id;
-};
 struct camera_operate{
     uint8_t slave_address;
     void (*systemInit)(void);
@@ -100,6 +98,9 @@ struct camera_operate{
 #define FIFO_SIZE1				0x42  //Camera write FIFO size[7:0] for burst to read
 #define FIFO_SIZE2				0x43  //Camera write FIFO size[15:8]
 #define FIFO_SIZE3				0x44  //Camera write FIFO size[18:16]
+
+#define RJPEG_PULL_CHUNK   1024   // bytes per SPI xfer (512..2048 are reasonable)
+#define RJPEG_YIELD_EVERY  1      // yield after this many chunks (1 = yield each chunk)
 
 // Scale constants aren't always defined — cast integers instead.
 #ifndef JPEG_IMAGE_SCALE_0

@@ -8,6 +8,7 @@
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include "driver/uart.h"
+#include "esp_task_wdt.h"  // Add this header for esp_task_wdt_add
 
 #include "arducam.h"
 #include "wifi_cam.h"
