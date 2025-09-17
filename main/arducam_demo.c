@@ -30,7 +30,7 @@ void app_main(void) {
     if (arducam.busDetect() != 0) { ESP_LOGE("main","SPI bus test failed."); return; }
     if (arducam.cameraProbe() != 0){ ESP_LOGE("main","Camera sensor probe failed."); return; }
     arducam.cameraInit();
-    arducam.setJpegSize(res_320x240);
+    arducam.setJpegSize(res_160x120);
 
     // 4) Bring up SoftAP + HTTP ONCE
     ESP_ERROR_CHECK(wifi_cam_init("esp-cam", "12345678"));

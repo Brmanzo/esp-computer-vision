@@ -12,6 +12,7 @@
 #include "esp_rom_sys.h"
 #include "driver/uart.h"
 #include "jpeg_decoder.h"
+#include "freertos/semphr.h"
 
 #include "arducam.h"
 #include "ov2640.h"
@@ -32,6 +33,26 @@ volatile uint8_t cameraCommand = 0;
 static QueueHandle_t uart_queue_handle;
 static const char* TAG = "UART_HANDLER";
 static uint8_t *dummy_tx;
+
+static SemaphoreHandle_t s_cam_mutex = NULL;
+
+void arducam_camlock_take(void)
+{
+    if (s_cam_mutex == NULL) {
+        SemaphoreHandle_t m = xSemaphoreCreateRecursiveMutex();
+        if (m) s_cam_mutex = m;
+    }
+    if (s_cam_mutex) {
+        xSemaphoreTakeRecursive(s_cam_mutex, portMAX_DELAY);
+    }
+}
+
+void arducam_camlock_give(void)
+{
+    if (s_cam_mutex) {
+        xSemaphoreGiveRecursive(s_cam_mutex);
+    }
+}
 
 /* Write to device register using SPI. */
 void spi_write_reg(uint8_t address, uint8_t value) {
@@ -552,31 +573,64 @@ static void rgb565_to_gray8_with_probe(const uint16_t *src, uint8_t *dst, uint16
     }
 }
 
-/* Perform a single image capture and publish to the esp's server.*/
 void singleCapture(void)
 {
-    spi_write_reg(ARDUCHIP_MODE, CAM2LCD_MODE); // JPEG path
+    esp_err_t e;
+    size_t    actual = 0;
+    uint8_t  *jpg = NULL;
+
+    // ---- CRITICAL SECTION: camera HW only ----
+    arducam_camlock_take();
+
+    // Select JPEG path in CPLD *before* capture
+    spi_write_reg(ARDUCHIP_MODE, CAM2LCD_MODE);
 
     fifo_reset_all();
     start_capture();
-    while (!spi_get_bit(ARDUCHIP_TRIG, CAP_DONE_MASK)) vTaskDelay(pdMS_TO_TICKS(1));
 
+    // Short wait loop with yield (prevents WDT while holding the lock)
+    TickType_t t0 = xTaskGetTickCount();
+    while (!spi_get_bit(ARDUCHIP_TRIG, CAP_DONE_MASK)) {
+        vTaskDelay(pdMS_TO_TICKS(1));
+        if ((xTaskGetTickCount() - t0) > pdMS_TO_TICKS(250)) {
+            ESP_LOGW("cam","CAP_DONE timeout");
+            fifo_reset_all();
+            arducam_camlock_give();   // <-- never forget to release
+            return;
+        }
+    }
+
+    // Size hint only (don’t trust for JPEG), choose a safe cap
     uint32_t hint = read_fifo_length();
     if (hint == 0 || hint > WIFI_CAM_MAX_JPEG) hint = WIFI_CAM_MAX_JPEG;
+    size_t max_len = hint + 32;
+    if (max_len > WIFI_CAM_MAX_JPEG) max_len = WIFI_CAM_MAX_JPEG;
 
-    size_t max_len = hint + 32; if (max_len > WIFI_CAM_MAX_JPEG) max_len = WIFI_CAM_MAX_JPEG;
-    uint8_t *jpg = heap_caps_malloc(max_len, MALLOC_CAP_DMA);
-    if (!jpg) { ESP_LOGE("cam","OOM %u", (unsigned)max_len); return; }
+    jpg = heap_caps_malloc(max_len, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    if (!jpg) {
+        ESP_LOGE("cam","OOM %u", (unsigned)max_len);
+        fifo_reset_all();
+        arducam_camlock_give();
+        return;
+    }
 
-    size_t actual = 0;
-    esp_err_t e = arducam_read_jpeg(jpg, max_len, &actual);
+    // Read out the frame (your existing reader). If you have an
+    // “exact until EOI” reader, use it here instead.
+    e = arducam_read_jpeg(jpg, max_len, &actual);
+
+    // We’re done with camera HW → release the lock ASAP
+    arducam_camlock_give();
+    // ---- END CRITICAL SECTION ----
+
     ESP_LOGI("cam","read_jpeg: %s, len=%u", esp_err_to_name(e), (unsigned)actual);
 
-    if (e == ESP_OK && actual >= 4 && jpg[0]==0xFF && jpg[1]==0xD8 && jpg[actual-2]==0xFF && jpg[actual-1]==0xD9) {
-
-        // Decode to RGB565 at half scale to avoid OOM on C3
+    if (e == ESP_OK && actual >= 4 &&
+        jpg[0] == 0xFF && jpg[1] == 0xD8 &&
+        jpg[actual-2] == 0xFF && jpg[actual-1] == 0xD9)
+    {
+        // Decode outside the lock (heavy)
         uint16_t *pix = NULL; uint16_t w=0, h=0;
-        esp_err_t d = jpeg_decode_from_buffer(jpg, actual, &pix, &w, &h, JPEG_IMAGE_SCALE_1 /* 1/2 */);
+        esp_err_t d = jpeg_decode_from_buffer(jpg, actual, &pix, &w, &h, JPEG_IMAGE_SCALE_1);
         if (d == ESP_OK) {
             ESP_LOGI("main","decoded %ux%u", w, h);
 
@@ -585,20 +639,24 @@ void singleCapture(void)
                 rgb565_to_gray8_with_probe(pix, gray, w, h);
                 wifi_cam_publish_gray8_as_bmp(gray, w, h);
                 free(gray);
+            } else {
+                ESP_LOGW("main","OOM gray %u bytes", (unsigned)((size_t)w*h));
             }
-
             free(pix);
         } else {
             ESP_LOGW("main","decode failed: %s", esp_err_to_name(d));
+            // (Optional) publish JPEG preview:
+            // wifi_cam_publish_jpeg(jpg, actual);
         }
-
-        // Optionally publish the JPEG for preview
-        // wifi_cam_publish_jpeg(jpg, actual);
     } else {
         ESP_LOGW("cam","EOI not found — dropping frame");
+        // (Optional) you can still publish partial JPEG for debugging
     }
 
     free(jpg);
+
+    // Give Wi-Fi/httpd some breathing room between frames
+    vTaskDelay(pdMS_TO_TICKS(10));
 }
 
 /* Detect the SPI bus operational state. */
