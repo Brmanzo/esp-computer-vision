@@ -39,6 +39,11 @@
 #define RX_BUF_SIZE (BUF_SIZE*2)
 #define RD_BUF_SIZE (BUF_SIZE)
 
+// Add with your other ArduCHIP regs:
+#define ARDUCHIP_MODE 0x02
+#define MCU2LCD_MODE  0x00  // “BMP/RAW” path
+#define CAM2LCD_MODE  0x01  // JPEG path
+
 #ifndef _SENSOR_
 #define _SENSOR_
     struct sensor_reg {
@@ -96,14 +101,36 @@ struct camera_operate{
 #define FIFO_SIZE2				0x43  //Camera write FIFO size[15:8]
 #define FIFO_SIZE3				0x44  //Camera write FIFO size[18:16]
 
+// Scale constants aren't always defined — cast integers instead.
+#ifndef JPEG_IMAGE_SCALE_0
+#  define JPEG_IMAGE_SCALE_0 ((esp_jpeg_image_scale_t)0)  // 1/1
+#endif
+#ifndef JPEG_IMAGE_SCALE_1
+#  define JPEG_IMAGE_SCALE_1 ((esp_jpeg_image_scale_t)1)  // 1/2
+#endif
+#ifndef JPEG_IMAGE_SCALE_2
+#  define JPEG_IMAGE_SCALE_2 ((esp_jpeg_image_scale_t)2)  // 1/4
+#endif
+#ifndef JPEG_IMAGE_SCALE_3
+#  define JPEG_IMAGE_SCALE_3 ((esp_jpeg_image_scale_t)3)  // 1/8
+#endif
+
+// Not all builds expose a gray output format. Fallback to RGB565.
+#ifndef JPEG_IMAGE_FORMAT_GRAY
+#  define JPEG_IMAGE_FORMAT_GRAY JPEG_IMAGE_FORMAT_RGB565
+#  define JPEG_NEEDS_GRAY_FALLBACK 1
+#else
+#  define JPEG_NEEDS_GRAY_FALLBACK 0
+#endif
+
 extern volatile uint8_t cameraCommand;
 extern struct camera_operate arducam;
 extern uint8_t slave_addr;
-int rdSensorReg8_8(uint8_t regID, uint8_t* regDat );
-int wrSensorReg8_8(uint8_t regID, uint8_t regDat );
-int wrSensorRegs8_8(const struct sensor_reg reglist[]);
-void write_reg(uint8_t address, uint8_t value);
-uint8_t read_reg(uint8_t address);
+int i2c_read_reg(uint8_t regID, uint8_t* regDat );
+int i2c_write_reg(uint8_t regID, uint8_t regDat );
+int i2c_write_regs(const struct sensor_reg reglist[]);
+void spi_write_reg(uint8_t address, uint8_t value);
+uint8_t spi_read_reg(uint8_t address);
 void singleCapture(void);
 void uart_event_task(void *pvParameters);
 void esp32c3_SystemInit(void);

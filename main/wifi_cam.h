@@ -9,4 +9,5 @@
 #endif
 
 esp_err_t wifi_cam_init(const char *ssid, const char *pass);
-void wifi_cam_publish(const uint8_t *jpeg, size_t len);
+void wifi_cam_publish_jpeg(const uint8_t *jpeg, size_t len);          // optional (existing flow)
+void wifi_cam_publish_gray8_as_bmp(const uint8_t *gray, uint16_t w, uint16_t h);
