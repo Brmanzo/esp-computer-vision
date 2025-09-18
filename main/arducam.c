@@ -485,6 +485,36 @@ static void rgb565_to_gray8_with_probe(const uint16_t *src, uint8_t *dst, uint16
     }
 }
 
+/* 3x3 convolution using unsigned ints to leverage ESP32c3's multipliers. */
+void convolution_3x3(const uint8_t *src, uint8_t *dst,
+                     uint16_t w, uint16_t h,
+                     const int8_t k[3][3], int divisor, int offset)
+{
+    if (!src || !dst || !w || !h || divisor == 0) return;
+
+    // Zero / copy borders (simple choice)
+    memset(dst, 0, (size_t)w * h);
+
+    for (uint16_t y = 1; y < h - 1; y++) {
+        const uint8_t *row_p = src + (y - 1) * w;
+        const uint8_t *row_c = src + (y     ) * w;
+        const uint8_t *row_n = src + (y + 1) * w;
+        uint8_t *drow = dst + y * w;
+
+        for (uint16_t x = 1; x < w - 1; x++) {
+            int sum =
+                row_p[x-1]*k[0][0] + row_p[x]*k[0][1] + row_p[x+1]*k[0][2] +
+                row_c[x-1]*k[1][0] + row_c[x]*k[1][1] + row_c[x+1]*k[1][2] +
+                row_n[x-1]*k[2][0] + row_n[x]*k[2][1] + row_n[x+1]*k[2][2];
+
+            sum = sum / divisor + offset;
+            if (sum < 0)   sum = 0;
+            if (sum > 255) sum = 255;
+            drow[x] = (uint8_t)sum;
+        }
+    }
+}
+
 /* Capture a single jpeg from the camera, decode and convert to gray bmp, and publish to server. */
 void singleCapture(void)
 {
@@ -545,19 +575,26 @@ void singleCapture(void)
     {
         // Decode outside the lock (heavy)
         uint16_t *pix = NULL; uint16_t w=0, h=0;
-        esp_err_t d = jpeg_decode_from_buffer(jpg, actual, &pix, &w, &h, JPEG_IMAGE_SCALE_1);
+        esp_err_t d = jpeg_decode_from_buffer(jpg, actual, &pix, &w, &h, JPEG_IMAGE_SCALE_0);
         if (d == ESP_OK) {
             ESP_LOGI("main","decoded %ux%u", w, h);
 
-            uint8_t *gray = (uint8_t*)heap_caps_malloc((size_t)w*h, MALLOC_CAP_8BIT);
-            if (gray) {
+            size_t npix = (size_t)w * h;
+            uint8_t *gray  = (uint8_t*)heap_caps_malloc(npix, MALLOC_CAP_8BIT);
+            uint8_t *gray2 = (uint8_t*)heap_caps_malloc(npix, MALLOC_CAP_8BIT);
+            if (gray && gray2) {
+                // RGB565 -> gray
                 rgb565_to_gray8_with_probe(pix, gray, w, h);
-                wifi_cam_publish_gray8_as_bmp(gray, w, h);
-                free(gray);
+                convolution_3x3(gray, gray2, w, h, SOBEL_FILTER_Y, /*divisor=*/1, /*offset=*/0);
+                // Publish (publisher builds/stores BMP; we keep ownership of gray/gray2)
+                wifi_cam_publish_gray8_as_bmp(gray2, w, h);
             } else {
-                ESP_LOGW("main","OOM gray %u bytes", (unsigned)((size_t)w*h));
+                ESP_LOGW("main","OOM gray buffers (%u bytes each)", (unsigned)npix);
             }
-            free(pix);
+
+            if (gray2) free(gray2);
+            if (gray)  free(gray);
+            free(pix);         // free the JPEG decode output
         } else {
             ESP_LOGW("main","decode failed: %s", esp_err_to_name(d));
         }

@@ -39,6 +39,9 @@
 #define RX_BUF_SIZE (BUF_SIZE*2)
 #define RD_BUF_SIZE (BUF_SIZE)
 
+static const int8_t SOBEL_FILTER_Y[3][3] = { {-1, -2, -1}, {0, 0, 0}, {1, 2, 1} };
+static const int8_t SOBEL_FILTER_X[3][3] = { {-1, 0, 1}, {-2, 0, 2}, {-1, 0, 1} };
+
 /* jpeg markers*/
 #define MARKER_PREFIX 0xFF
 #define SOI           0xD8

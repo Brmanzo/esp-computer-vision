@@ -26,73 +26,6 @@ static size_t              s_last_len   = 0;
 static const char         *s_last_mime  = "application/octet-stream"; // "image/jpeg" or "image/bmp"
 static bool                s_started    = false;
 
-/* -------------------- Helpers: build 8-bit GRAY BMP -------------------- */
-// Little-endian writers
-static inline void le16(uint8_t *p, uint16_t v){ p[0]=v; p[1]=v>>8; }
-static inline void le32(uint8_t *p, uint32_t v){ p[0]=v; p[1]=v>>8; p[2]=v>>16; p[3]=v>>24; }
-
-/*
- * Build an 8-bit grayscale BMP with a 256-entry grayscale palette.
- * Top-down orientation (negative height) so we can dump buffer as-is.
- * Rows are padded to 4 bytes per BMP spec.
- * Returns malloc'd buffer you must free.
- */
-static uint8_t *build_gray8_bmp(const uint8_t *gray, uint16_t W, uint16_t H, size_t *out_len)
-{
-    // Row stride must be padded to 4 bytes
-    uint32_t stride = (W + 3) & ~3U;
-    uint32_t img_bytes = stride * H;
-
-    const uint32_t file_hdr = 14;
-    const uint32_t dib_hdr  = 40;
-    const uint32_t palette  = 256 * 4; // BGRA
-    const uint32_t offBits  = file_hdr + dib_hdr + palette;
-    const uint32_t file_sz  = offBits + img_bytes;
-
-    uint8_t *bmp = (uint8_t*)malloc(file_sz);
-    if (!bmp) return NULL;
-
-    // ----- FILE HEADER (14) -----
-    memset(bmp, 0, file_sz);
-    bmp[0]='B'; bmp[1]='M';
-    le32(&bmp[ 2], file_sz);
-    le32(&bmp[10], offBits);
-
-    // ----- DIB (BITMAPINFOHEADER, 40) -----
-    uint8_t *dib = bmp + 14;
-    le32(&dib[ 0], 40);             // header size
-    le32(&dib[ 4], W);              // width
-    le32(&dib[ 8], (uint32_t)(-(int32_t)H)); // height (negative = top-down)
-    le16(&dib[12], 1);              // planes
-    le16(&dib[14], 8);              // bpp
-    le32(&dib[16], 0);              // BI_RGB
-    le32(&dib[20], img_bytes);      // image size
-    // ppm fields can be zero
-    le32(&dib[32], 256);            // colors used
-
-    // ----- PALETTE (256 * BGRA) -----
-    uint8_t *pal = bmp + offBits - palette;
-    for (int i=0;i<256;i++){
-        pal[i*4 + 0] = i; // B
-        pal[i*4 + 1] = i; // G
-        pal[i*4 + 2] = i; // R
-        pal[i*4 + 3] = 0; // A
-    }
-
-    // ----- PIXELS -----
-    uint8_t *dst = bmp + offBits;
-    for (uint32_t y=0; y<H; ++y) {
-        // copy one row
-        memcpy(dst, gray + (size_t)y*W, W);
-        // pad to stride
-        if (stride > W) memset(dst + W, 0, stride - W);
-        dst += stride;
-    }
-
-    if (out_len) *out_len = file_sz;
-    return bmp;
-}
-
 /* -------------------- HTTP handlers -------------------- */
 static esp_err_t frame_handler(httpd_req_t *req) {
     xSemaphoreTake(s_img_mutex, portMAX_DELAY);
@@ -251,14 +184,82 @@ void wifi_cam_publish_jpeg(const uint8_t *jpeg, size_t len) {
     xSemaphoreGive(s_img_mutex);
 }
 
+
+/*
+ * Build an 8-bit grayscale BMP with a 256-entry grayscale palette.
+ * Top-down orientation (negative height) so we can dump buffer as-is.
+ * Rows are padded to 4 bytes per BMP spec.
+ * Returns malloc'd buffer you must free.
+ */
+
+ // Little-endian writers
+static inline void le16(uint8_t *p, uint16_t v){ p[0]=v; p[1]=v>>8; }
+static inline void le32(uint8_t *p, uint32_t v){ p[0]=v; p[1]=v>>8; p[2]=v>>16; p[3]=v>>24; }
+
+static uint8_t *build_gray8_bmp(const uint8_t *gray, uint16_t W, uint16_t H, size_t *out_len)
+{
+    // Row stride must be padded to 4 bytes
+    uint32_t stride = (W + 3) & ~3U;
+    uint32_t img_bytes = stride * H;
+
+    const uint32_t file_hdr = 14;
+    const uint32_t dib_hdr  = 40;
+    const uint32_t palette  = 256 * 4; // BGRA
+    const uint32_t offBits  = file_hdr + dib_hdr + palette;
+    const uint32_t file_sz  = offBits + img_bytes;
+
+    uint8_t *bmp = (uint8_t*)malloc(file_sz);
+    if (!bmp) return NULL;
+
+    // ----- FILE HEADER (14) -----
+    memset(bmp, 0, file_sz);
+    bmp[0]='B'; bmp[1]='M';
+    le32(&bmp[ 2], file_sz);
+    le32(&bmp[10], offBits);
+
+    // ----- DIB (BITMAPINFOHEADER, 40) -----
+    uint8_t *dib = bmp + 14;
+    le32(&dib[ 0], 40);             // header size
+    le32(&dib[ 4], W);              // width
+    le32(&dib[ 8], (uint32_t)(-(int32_t)H)); // height (negative = top-down)
+    le16(&dib[12], 1);              // planes
+    le16(&dib[14], 8);              // bpp
+    le32(&dib[16], 0);              // BI_RGB
+    le32(&dib[20], img_bytes);      // image size
+    // ppm fields can be zero
+    le32(&dib[32], 256);            // colors used
+
+    // ----- PALETTE (256 * BGRA) -----
+    uint8_t *pal = bmp + offBits - palette;
+    for (int i=0;i<256;i++){
+        pal[i*4 + 0] = i; // B
+        pal[i*4 + 1] = i; // G
+        pal[i*4 + 2] = i; // R
+        pal[i*4 + 3] = 0; // A
+    }
+
+    // ----- PIXELS -----
+    uint8_t *dst = bmp + offBits;
+    for (uint32_t y=0; y<H; ++y) {
+        // copy one row
+        memcpy(dst, gray + (size_t)y*W, W);
+        // pad to stride
+        if (stride > W) memset(dst + W, 0, stride - W);
+        dst += stride;
+    }
+
+    if (out_len) *out_len = file_sz;
+    return bmp;
+}
+
 /* Old name kept as alias */
 void wifi_cam_publish(const uint8_t *jpeg, size_t len) {
     wifi_cam_publish_jpeg(jpeg, len);
 }
 
-/* Publish a grayscale 8-bit image as a BMP */
-void wifi_cam_publish_gray8_as_bmp(const uint8_t *gray, uint16_t w, uint16_t h) {
-    if (!gray || w == 0 || h == 0 || !s_started) return;
+void wifi_cam_publish_gray8_as_bmp(const uint8_t *gray, uint16_t w, uint16_t h)
+{
+    if (!gray || !w || !h || !s_started) return;
 
     size_t bmp_len = 0;
     uint8_t *bmp = build_gray8_bmp(gray, w, h, &bmp_len);
@@ -268,8 +269,8 @@ void wifi_cam_publish_gray8_as_bmp(const uint8_t *gray, uint16_t w, uint16_t h) 
     }
 
     xSemaphoreTake(s_img_mutex, portMAX_DELAY);
-    if (s_last_buf) free(s_last_buf);
-    s_last_buf  = bmp;
+    if (s_last_buf) free(s_last_buf);     // free the previous PUBLISHED buffer
+    s_last_buf  = bmp;                    // store the newly allocated BMP
     s_last_len  = bmp_len;
     s_last_mime = "image/bmp";
     xSemaphoreGive(s_img_mutex);
