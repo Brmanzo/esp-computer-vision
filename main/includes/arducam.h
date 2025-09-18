@@ -1,4 +1,4 @@
-#ifndef ARDUCAM_H_ // "Guard" starts here
+#ifndef ARDUCAM_H_ 
 #define ARDUCAM_H_
 
 #include <stdio.h>
@@ -7,6 +7,7 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "driver/i2c_master.h"
+#include "jpeg_decoder.h"
 
 /*spi pin source*/
 #define PIN_SCK    GPIO_NUM_4
@@ -129,15 +130,22 @@ struct camera_operate{
 #  define JPEG_NEEDS_GRAY_FALLBACK 0
 #endif
 
-extern volatile uint8_t cameraCommand;
 extern struct camera_operate arducam;
-extern uint8_t slave_addr;
-int i2c_read_reg(uint8_t regID, uint8_t* regDat );
-int i2c_write_reg(uint8_t regID, uint8_t regDat );
-int i2c_write_regs(const struct sensor_reg reglist[]);
-void spi_write_reg(uint8_t address, uint8_t value);
-uint8_t spi_read_reg(uint8_t address);
-void singleCapture(void);
-void uart_event_task(void *pvParameters);
+
+void arducam_power_up_sensor(void);
+
+/* Prepares ESP for communication and initiates image capture. */
 void esp32c3_SystemInit(void);
+
+/* Detect the SPI bus operational state. */
+uint8_t spiBusDetect(void);
+
+/* Probe the state of the OV2640 camera sensor. */
+uint8_t ov2640Probe(void);
+
+/* Initialize the OV2640 camera sensor. */
+void ov2640Init();
+
+/* Set the JPEG size for the OV2640 camera. */
+void OV2640_set_JPEG_size(unsigned char size);
 #endif

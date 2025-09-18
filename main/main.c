@@ -1,17 +1,12 @@
 #include <stdio.h>
-#include <string.h>
-#include "sdkconfig.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-#include "driver/i2c_master.h"
-#include "driver/spi_master.h"
-#include "driver/gpio.h"
-#include "driver/uart.h"
-#include "esp_task_wdt.h"  // Add this header for esp_task_wdt_add
 
-#include "arducam.h"
-#include "wifi_cam.h"
+#include "includes/arducam.h"
+#include "includes/wifi_cam.h"
+#include "includes/capture.h"
+#include "includes/uart.h"
 
 static void camera_task(void *arg) {
     for (;;) {

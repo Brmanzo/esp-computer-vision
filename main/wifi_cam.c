@@ -1,5 +1,5 @@
 // wifi_cam.c
-#include "wifi_cam.h"
+#include "includes/wifi_cam.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -183,7 +183,6 @@ void wifi_cam_publish_jpeg(const uint8_t *jpeg, size_t len) {
     s_last_mime = "image/jpeg";
     xSemaphoreGive(s_img_mutex);
 }
-
 
 /*
  * Build an 8-bit grayscale BMP with a 256-entry grayscale palette.
