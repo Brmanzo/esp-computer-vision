@@ -515,106 +515,170 @@ void convolution_3x3(const uint8_t *src, uint8_t *dst,
     }
 }
 
-/* Capture a single jpeg from the camera, decode and convert to gray bmp, and publish to server. */
+#define MOTION_MIN_FRAC_NUM 1
+#define MOTION_MIN_FRAC_DEN 200   // >=0.5% pixels must be “hot”
+#define BORDER_MARGIN        2     // ignore 2px border
+
+extern void arducam_camlock_take(void);
+extern void arducam_camlock_give(void);
+
+// persistent “previous frame” (declare once in the file, not inside the function)
+static uint8_t  *prev_gray  = NULL;
+static size_t    prev_bytes = 0;
+static uint16_t  prev_w = 0, prev_h = 0;
+static bool      have_prev = false;
+
 void singleCapture(void)
 {
-    esp_err_t e;
-    size_t    actual = 0;
-    uint8_t  *jpg = NULL;
-
-    // Reserve camera HW for capture
+    // ----------- 1) Capture into FIFO -----------
     arducam_camlock_take();
-
-    // Select JPEG path in CPLD *before* capture
-    // Complex Programmable Logic Device to realize nontrivial logic functions
-    spi_write_reg(ARDUCHIP_MODE, CAM2LCD_MODE);
-
+    spi_write_reg(ARDUCHIP_MODE, CAM2LCD_MODE);  // JPEG path
     spi_reset_fifo();
     start_capture();
 
-    // Short wait loop with yield (prevents WDT while holding the lock)
-    TickType_t t0 = xTaskGetTickCount();
+    // wait CAP_DONE with a safety timeout
+    const TickType_t t0 = xTaskGetTickCount();
     while (!spi_get_bit(ARDUCHIP_TRIG, CAP_DONE_MASK)) {
         vTaskDelay(pdMS_TO_TICKS(1));
         if ((xTaskGetTickCount() - t0) > pdMS_TO_TICKS(250)) {
             ESP_LOGW("cam","CAP_DONE timeout");
             spi_reset_fifo();
-            // Give back when camera HW is in a known state (fifo reset)
             arducam_camlock_give();
+            vTaskDelay(1);
             return;
         }
     }
 
-    // Size hint only (don’t trust for JPEG), choose a safe cap
+    // pick a safe upper bound from the hint
     uint32_t hint = spi_read_fifo_len();
     ESP_LOGW("cam","FIFO length hint: %u", (unsigned)hint);
     if (hint == 0 || hint > WIFI_CAM_MAX_JPEG) hint = WIFI_CAM_MAX_JPEG;
-    size_t max_len = hint + 32;
-    if (max_len > WIFI_CAM_MAX_JPEG) max_len = WIFI_CAM_MAX_JPEG;
+    size_t cap = hint + 32; if (cap > WIFI_CAM_MAX_JPEG) cap = WIFI_CAM_MAX_JPEG;
 
-    jpg = heap_caps_malloc(max_len, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    uint8_t *jpg = (uint8_t*)heap_caps_malloc(cap, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
     if (!jpg) {
-        ESP_LOGE("cam","OOM %u", (unsigned)max_len);
+        ESP_LOGE("cam","OOM %u", (unsigned)cap);
         spi_reset_fifo();
-        // If out of memory, hold camera hardware until in a known state (fifo reset)
         arducam_camlock_give();
         return;
     }
 
-    // Read out the frame
-    e = arducam_read_jpeg(jpg, max_len, &actual);
-
-    // Capture successfully completed! Now give back the camera HW.
-    arducam_camlock_give();
+    size_t actual = 0;
+    esp_err_t e = arducam_read_jpeg(jpg, cap, &actual);
+    arducam_camlock_give();     // hardware no longer needed
 
     ESP_LOGI("cam","read_jpeg: %s, len=%u", esp_err_to_name(e), (unsigned)actual);
 
-    if (e == ESP_OK && actual >= 4 &&
-        jpg[0] == MARKER_PREFIX && jpg[1] == SOI &&
-        jpg[actual-2] == MARKER_PREFIX && jpg[actual-1] == EOI)
+    if (!(e == ESP_OK && actual >= 4 &&
+          jpg[0] == 0xFF && jpg[1] == 0xD8 &&
+          jpg[actual-2] == 0xFF && jpg[actual-1] == 0xD9))
     {
-        // Decode outside the lock (heavy)
-        uint16_t *pix = NULL; uint16_t w=0, h=0;
-        esp_err_t d = jpeg_decode_from_buffer(jpg, actual, &pix, &w, &h, JPEG_IMAGE_SCALE_0);
-        if (d == ESP_OK) {
-            ESP_LOGI("main","decoded %ux%u", w, h);
-
-            size_t npix = (size_t)w * h;
-            uint8_t *gray  = (uint8_t*)heap_caps_malloc(npix, MALLOC_CAP_8BIT);
-            uint8_t *gray2 = (uint8_t*)heap_caps_malloc(npix, MALLOC_CAP_8BIT);
-            if (gray && gray2) {
-                // RGB565 -> gray
-                rgb565_to_gray8_with_probe(pix, gray, w, h);
-                convolution_3x3(gray, gray2, w, h, SOBEL_FILTER_Y, /*divisor=*/1, /*offset=*/0);
-                // Publish (publisher builds/stores BMP; we keep ownership of gray/gray2)
-                wifi_cam_publish_gray8_as_bmp(gray2, w, h);
-            } else {
-                ESP_LOGW("main","OOM gray buffers (%u bytes each)", (unsigned)npix);
-            }
-
-            if (gray2) free(gray2);
-            if (gray)  free(gray);
-            free(pix);         // free the JPEG decode output
-        } else {
-            ESP_LOGW("main","decode failed: %s", esp_err_to_name(d));
-        }
-    } else {
         if (actual >= 2) {
-            ESP_LOGW("cam",
-                    "EOI missing. len=%u head=%02X %02X tail=%02X %02X",
-                    (unsigned)actual,
-                    jpg[0], jpg[1],
-                    jpg[actual-2], jpg[actual-1]);
+            ESP_LOGW("cam","EOI missing. len=%u head=%02X %02X tail=%02X %02X",
+                     (unsigned)actual, jpg[0], jpg[1], jpg[actual-2], jpg[actual-1]);
         } else {
-            ESP_LOGW("cam",
-                    "EOI missing. len=%u (too short for tail bytes)",
-                    (unsigned)actual);
-}
+            ESP_LOGW("cam","EOI missing. len=%u (too short)", (unsigned)actual);
+        }
+        free(jpg);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        return;
     }
 
-    free(jpg);
+    // ----------- 2) Decode JPEG to RGB565 -----------
+    uint16_t *pix = NULL; uint16_t w=0, h=0;
+    esp_err_t d = jpeg_decode_from_buffer(jpg, actual, &pix, &w, &h, JPEG_IMAGE_SCALE_0);
+    free(jpg);   // jpg buffer not needed after decode
 
-    // Give Wi-Fi/httpd some breathing room between frames
+    if (d != ESP_OK || !pix) {
+        ESP_LOGW("main","decode failed: %s", esp_err_to_name(d));
+        vTaskDelay(pdMS_TO_TICKS(10));
+        return;
+    }
+    ESP_LOGI("main","decoded %ux%u", w, h);
+
+    const size_t npix = (size_t)w * h;
+
+    // ----------- 3) Convert to GRAY 8-bit -----------
+    uint8_t *cur_gray = (uint8_t*)heap_caps_malloc(npix, MALLOC_CAP_8BIT);
+    if (!cur_gray) {
+        ESP_LOGW("main","OOM gray %u bytes", (unsigned)npix);
+        free(pix);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        return;
+    }
+    rgb565_to_gray8_with_probe(pix, cur_gray, w, h);
+    free(pix);
+
+    // ----------- 4) Motion detect + draw box -----------
+    bool   draw_box = false;
+    uint16_t minx=0, miny=0, maxx=0, maxy=0;
+
+    if (have_prev && prev_w == w && prev_h == h && prev_gray) {
+        const uint8_t  tol        = DIFF_TOL;
+        const uint16_t margin     = BORDER_MARGIN;
+        const uint32_t min_pixels = (w*h) * MOTION_MIN_FRAC_NUM / MOTION_MIN_FRAC_DEN;
+
+        uint16_t bx = w, by = h, ex = 0, ey = 0;  // bbox accumulator
+        uint32_t hot = 0;
+
+        for (uint32_t i = 0; i < npix; i++) {
+            int diff = (int)cur_gray[i] - (int)prev_gray[i];
+            if (diff < 0) diff = -diff;
+            if ((uint8_t)diff > tol) {
+                uint16_t x = (uint16_t)(i % w);
+                uint16_t y = (uint16_t)(i / w);
+                if (x <= margin || x >= (w-1-margin) || y <= margin || y >= (h-1-margin)) continue;
+
+                if (x < bx) bx = x;
+                if (y < by) by = y;
+                if (x > ex) ex = x;
+                if (y > ey) ey = y;
+                hot++;
+            }
+        }
+
+        if (hot >= min_pixels && bx < ex && by < ey) {
+            // box is plausible; clamp a hair away from borders
+            if (bx < margin) bx = margin;
+            if (by < margin) by = margin;
+            if (ex > w-1-margin) ex = w-1-margin;
+            if (ey > h-1-margin) ey = h-1-margin;
+
+            draw_box = true;
+            minx = bx; miny = by; maxx = ex; maxy = ey;
+        }
+    }
+
+    // ----------- 5) Update prev_gray (RAW) BEFORE drawing -----------
+    if (prev_bytes < npix || prev_w != w || prev_h != h || !prev_gray) {
+        free(prev_gray);
+        prev_gray  = (uint8_t*)heap_caps_malloc(npix, MALLOC_CAP_8BIT);
+        prev_bytes = prev_gray ? npix : 0;
+        prev_w = w; prev_h = h;
+    }
+    if (prev_gray) {
+        memcpy(prev_gray, cur_gray, npix);   // COPY RAW — no drawings
+        have_prev = true;
+    }
+
+    // ----------- 6) Draw (if any) directly on cur_gray and publish -----------
+    if (draw_box) {
+        // horizontal edges
+        for (uint16_t x = minx; x <= maxx; x++) {
+            cur_gray[(size_t)miny * w + x] = 255;
+            cur_gray[(size_t)maxy * w + x] = 255;
+        }
+        // vertical edges
+        for (uint16_t y = miny; y <= maxy; y++) {
+            cur_gray[(size_t)y * w + minx] = 255;
+            cur_gray[(size_t)y * w + maxx] = 255;
+        }
+    }
+
+    wifi_cam_publish_gray8_as_bmp(cur_gray, w, h);
+    free(cur_gray);
+
+    // ----------- 7) Small yield for Wi-Fi/httpd -----------
     vTaskDelay(pdMS_TO_TICKS(10));
 }
 
