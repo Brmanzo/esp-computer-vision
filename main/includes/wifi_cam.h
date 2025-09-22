@@ -8,6 +8,8 @@
 #define WIFI_CAM_MAX_JPEG (200 * 1024)
 #endif
 
+#define DEFAULT_SSID "esp-cam"
+#define DEFAULT_PASS "12345678"
+
 esp_err_t wifi_cam_init(const char *ssid, const char *pass);
-void wifi_cam_publish_jpeg(const uint8_t *jpeg, size_t len);          // optional (existing flow)
-void wifi_cam_publish_gray8_as_bmp(const uint8_t *gray, uint16_t w, uint16_t h);
+esp_err_t publish_frame(const uint8_t *data, size_t len);

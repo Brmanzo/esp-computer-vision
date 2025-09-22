@@ -23,6 +23,18 @@ static size_t    prev_bytes = 0;
 static uint16_t  prev_w = 0, prev_h = 0;
 static bool      have_prev = false;
 
+enum packet_contents {
+    HEADER_START_H,
+    HEADER_START_L,
+    IMAGE_HEIGHT_H,
+    IMAGE_HEIGHT_L,
+    IMAGE_WIDTH_H,
+    IMAGE_WIDTH_L,
+    HEADER_END_H,
+    HEADER_END_L,
+    DATA_START,
+};
+
 /* ---------------------------- Semaphore Task Isolation ---------------------------- */
 static SemaphoreHandle_t s_cam_mutex;              // camera HW lock
 
@@ -200,6 +212,7 @@ esp_err_t jpeg_decode_from_buffer(const uint8_t *jpg_buf, size_t jpg_len,
     }
 
     // Decode config to pass to Espressif's jpeg decoder helper
+    // Row-Major Order
     esp_jpeg_image_cfg_t dcfg = {0};
         dcfg.indata      = (uint8_t*)jpg_buf;
         dcfg.indata_size = jpg_len;
@@ -220,23 +233,53 @@ esp_err_t jpeg_decode_from_buffer(const uint8_t *jpg_buf, size_t jpg_len,
     return ESP_OK;
 }
 
+static inline size_t pixels_to_bytes(size_t pixels) {
+    return (pixels + 3) / 4; // 4 pixels per byte
+}
 
 /* Converts returned JPEG into grayscale bitmap and reports RGB of center pixel. */
-void rgb565_to_gray8_with_probe(const uint16_t *src, uint8_t *dst, uint16_t w, uint16_t h){
-    const size_t n = (size_t)w*h;
-    const size_t center_idx = (size_t)(h/2) * w + (w/2);
-    for (size_t i=0;i<n;i++){
-        uint16_t p = src[i];
-        uint8_t r = (p >> 11) & 0x1F; r = (r*527 + 23) >> 6;
-        uint8_t g = (p >>  5) & 0x3F; g = (g*259 + 33) >> 6;
-        uint8_t b =  p        & 0x1F; b = (b*527 + 23) >> 6;
-        uint8_t y = (uint8_t)((77*r + 150*g + 29*b) >> 8);
-        dst[i] = y;
+size_t rgb565_to_packet(const uint16_t *src, uint8_t *dst_gray, uint8_t *packet,
+                             size_t packet_cap, uint16_t w, uint16_t h)
+{
+    const size_t pixels = (size_t)w * h;
+    const size_t pixel_bytes = pixels_to_bytes(pixels);
+    const size_t header_len = DATA_START;
+    const size_t footer_len = 2; // EOI 0xFF, 0xFD
+    const size_t needed = header_len + pixel_bytes + footer_len;
 
-        if (i == center_idx) {
-            ESP_LOGI("main","Center RGB=(%u,%u,%u) Gray=%u", r,g,b,y);
-        }
+    if (packet_cap < needed) {
+        ESP_LOGE("packing rgb565", "packet buffer too small: cap=%u need=%u", (unsigned)packet_cap, (unsigned)needed);
+        return 0;
     }
+
+    // zero payload area (important before ORing)
+    memset(packet + header_len, 0, pixel_bytes);
+
+    for (size_t i = 0; i < pixels; ++i) {
+        uint16_t p = src[i];
+        // expand RGB565 -> 8-bit components
+        uint8_t r = (p >> 11) & 0x1F; r = (r * 527 + 23) >> 6;
+        uint8_t g = (p >> 5)  & 0x3F; g = (g * 259 + 33) >> 6;
+        uint8_t b =  p        & 0x1F; b = (b * 527 + 23) >> 6;
+
+        uint8_t y = (uint8_t)((77 * r + 150 * g + 29 * b) >> 8);
+        // quantize to 4 levels by selecting 2 MSBs
+        uint8_t q = (y >> 6) & 0x03; // 0..3
+
+        if (dst_gray) dst_gray[i] = (uint8_t)(q * 85); // optional gray8 store
+
+        const size_t byte_index = header_len + (i / 4);    // which payload byte
+        const unsigned pos_within_byte = i % 4;           // 0..3
+        const unsigned shift = (3 - pos_within_byte) * 2; // MSB-first: pixel0 -> bits 7..6
+
+        packet[byte_index] |= (uint8_t)(q << shift);
+    }
+
+    // footer (end-of-image)
+    packet[header_len + pixel_bytes + 0] = 0xFF;
+    packet[header_len + pixel_bytes + 1] = 0xFD;
+
+    return header_len + pixel_bytes + footer_len;
 }
 
 /* 3x3 convolution using unsigned ints to leverage ESP32c3's multipliers. */
@@ -395,8 +438,9 @@ void singleCapture(void)
         return;
     }
 
-    // Decode JPEG to RGB565
+    // Decode JPEG from raw data into matrix of RGB565 pixels
     uint16_t *pix = NULL; uint16_t w=0, h=0;
+
     esp_err_t d = jpeg_decode_from_buffer(jpg, actual, &pix, &w, &h, JPEG_IMAGE_SCALE_0);
     free(jpg);   // jpg buffer not needed after decode
 
@@ -417,13 +461,43 @@ void singleCapture(void)
         vTaskDelay(pdMS_TO_TICKS(10));
         return;
     }
-    rgb565_to_gray8_with_probe(pix, cur_gray, w, h);
+
+    size_t pixels = (size_t)w * h;
+    size_t payload_bytes = pixels_to_bytes(pixels);
+    size_t packet_cap = DATA_START + payload_bytes + 2; // header + payload + footer
+
+    // Embed image dimensions in packet header for receiver
+    uint8_t *packet = (uint8_t*)heap_caps_malloc((h*w)/4 + 1 + DATA_START, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    if (!packet) {
+        ESP_LOGE("main", "packet malloc failed (len=%u)", (unsigned)packet_cap);
+        free(pix);
+        free(cur_gray);
+        return; // or handle error
+    }
+    packet[HEADER_START_H] = 0xFF;
+    packet[HEADER_START_L] = 0x01;
+    packet[IMAGE_HEIGHT_H] = (uint8_t)(h >> 8);
+    packet[IMAGE_HEIGHT_L] = (uint8_t)(h & 0xFF);
+    packet[IMAGE_WIDTH_H]  = (uint8_t)(w >> 8);
+    packet[IMAGE_WIDTH_L]  = (uint8_t)(w & 0xFF);
+    packet[HEADER_END_H]    = 0xFF;
+    packet[HEADER_END_L]    = 0x02; 
+    
+    // Convert RGB565 to GRAY8 and pack into packet
+    size_t packet_len = rgb565_to_packet(pix, cur_gray, packet, packet_cap, w, h);
+    
     free(pix);
     // Processing decoded JPEG
-    motion_detect(npix, cur_gray, w, h);
+    // motion_detect(npix, cur_gray, w, h);
+    esp_err_t rc = publish_frame(packet, packet_len);
+    if (rc == ESP_OK) {
+        ESP_LOGI("main", "published %u bytes", (unsigned)packet_len);
+    } else {
+        ESP_LOGW("main", "publish failed: %d", rc);
+    }
 
-    wifi_cam_publish_gray8_as_bmp(cur_gray, w, h);
     free(cur_gray);
+    free(packet);
 
     // Small yield for Wi-Fi/httpd 
     vTaskDelay(pdMS_TO_TICKS(10));

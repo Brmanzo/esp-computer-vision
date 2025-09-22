@@ -29,7 +29,7 @@ void app_main(void) {
     arducam.setJpegSize(res_160x120);
 
     // 4) Bring up SoftAP + HTTP ONCE
-    ESP_ERROR_CHECK(wifi_cam_init("esp-cam", "12345678"));
+    ESP_ERROR_CHECK(wifi_cam_init(DEFAULT_SSID, DEFAULT_PASS));
     vTaskDelay(pdMS_TO_TICKS(800));  // grace period so AP/HTTP are ready
 
     // 5) Start capture loop task (priority 6 is usually safe)

@@ -1,0 +1,113 @@
+<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body{margin:0;background:#111;display:grid;place-items:center;height:100vh}
+  canvas{image-rendering:pixelated; /* keep pixels crisp when scaled */ 
+          max-width:100vw; max-height:100vh; display:block}
+</style>
+
+<canvas id="c"></canvas>
+
+<script>
+(async function(){
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    ctx.imageSmoothingEnabled = false;
+
+    // palette: map 0..3 -> [r,g,b]
+    // change these colors to whatever 4-color map you publish
+    const PALETTE = [
+        [0,   0,   0  ], // value 0 -> black
+        [85,  85,  85 ], // value 1 -> dark gray
+        [170, 170, 170], // value 2 -> light gray
+        [255, 255, 255]  // value 3 -> white
+    ];
+
+    // fetch, decode and draw once; returns a Promise
+    async function fetchAndDraw() {
+        // Timestamp to avoid caching like your original
+        const resp = await fetch('/frame?' + Date.now());
+        if (!resp.ok) throw new Error('Fetch failed: ' + resp.status);
+        const buf = await resp.arrayBuffer();
+        const view = new Uint8Array(buf);
+
+        // header layout we assumed:
+        // 0: HEADER_START_H  = 0xFF
+        // 1: HEADER_START_L  = 0x01
+        // 2: IMAGE_HEIGHT_H
+        // 3: IMAGE_HEIGHT_L
+        // 4: IMAGE_WIDTH_H
+        // 5: IMAGE_WIDTH_L
+        // 6: HEADER_END_H    = 0xFF
+        // 7: HEADER_END_L    = 0x02
+        if (view.length < 8) throw new Error('Frame missing header');
+
+        if (view[0] !== 0xFF || view[1] !== 0x01 || view[6] !== 0xFF || view[7] !== 0x02) {
+            throw new Error('Header mismatch or corrupted: ' + 
+                [view[0],view[1],view[6],view[7]].map(x=>x.toString(16)).join(' '));
+        }
+        
+        // Reconstruct width/height from big-endian u16
+        const h = (view[2] << 8) | view[3];
+        const w = (view[4] << 8) | view[5];
+
+        // pixel data starts at offset 8
+        const pixelOffset = 8;
+        const pixels = w * h;
+        const expectedBytes = Math.ceil(pixels / 4); // 4 pixels per byte (2 bits each)
+        if (view.length < pixelOffset + expectedBytes) {
+            throw new Error(`Not enough pixel data: need ${expectedBytes} bytes, have ${view.length - pixelOffset}`);
+        }
+
+        // Prepare canvas / ImageData
+        canvas.width = w;
+        canvas.height = h;
+        const imageData = ctx.createImageData(w, h);
+        const out = imageData.data; // RGBA Uint8ClampedArray, length = w*h*4
+
+        // Unpack 2-bit pixels (MSB-first: bits 7..6 = first pixel, then 5..4, 3..2, 1..0)
+        // If your encoder uses LSB-first, see comment below to flip bit order.
+        for (let i = 0; i < pixels; ++i) {
+            const byteIndex = pixelOffset + Math.floor(i / 4);
+            const withinByte = i % 4;
+            // MSB-first extraction:
+            const shift = (3 - withinByte) * 2;
+            // Select 2 LSB of interest
+            const value = (view[byteIndex] >> shift) & 0x03;
+
+            const base = i * 4;
+            const RGB = PALETTE[value];
+            out[base + 0] = RGB[0];
+            out[base + 1] = RGB[1];
+            out[base + 2] = RGB[2];
+            out[base + 3] = 255; // opaque
+        }
+
+        ctx.putImageData(imageData, 0, 0);
+
+        // Scale it visually to fit viewport while preserving pixel look (auto-fit.)
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        // scale by integer to avoid blur, compute largest integer scale that fits both dimensions
+        const scaleX = Math.floor(vw / w) || 1;
+        const scaleY = Math.floor(vh / h) || 1;
+        const scale = Math.max(1, Math.min(scaleX, scaleY));
+        canvas.style.width = (w * scale) + 'px';
+        canvas.style.height = (h * scale) + 'px';
+    }
+
+
+    // initial draw + periodic refresh like your original index.html
+    async function tick() {
+        try {
+            await fetchAndDraw();
+        } catch (err) {
+            console.error('frame decode error:', err);
+        }
+    }
+
+    // refresh every second (match your original). Adjust interval as needed.
+    await tick();
+    setInterval(tick, 1000);
+})();
+</script>
