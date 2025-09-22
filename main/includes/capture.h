@@ -32,8 +32,11 @@ esp_err_t jpeg_decode_from_buffer(const uint8_t *jpg_buf, size_t jpg_len,
                                   esp_jpeg_image_scale_t scale);
 
 
+void rgb_to_gray(const uint16_t *src_rgb, uint8_t *dst_gray, uint16_t w, uint16_t h);
+
 /* Converts returned JPEG into grayscale bitmap and reports RGB of center pixel. */
-void rgb565_to_gray8(const uint16_t *src, uint8_t *dst, uint8_t *packet, uint16_t w, uint16_t h);
+size_t quantize(const uint8_t *src_gray, uint8_t *packet,
+                             size_t packet_cap, uint16_t w, uint16_t h);
 
 /* 3x3 convolution using unsigned ints to leverage ESP32c3's multipliers. */
 void convolution_3x3(const uint8_t *src, uint8_t *dst,

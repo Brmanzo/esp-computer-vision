@@ -30,9 +30,11 @@ enum packet_contents {
     IMAGE_HEIGHT_L,
     IMAGE_WIDTH_H,
     IMAGE_WIDTH_L,
+    PACKET_LEN_H,
+    PACKET_LEN_L,
     HEADER_END_H,
     HEADER_END_L,
-    DATA_START,
+    DATA_START
 };
 
 /* ---------------------------- Semaphore Task Isolation ---------------------------- */
@@ -237,8 +239,47 @@ static inline size_t pixels_to_bytes(size_t pixels) {
     return (pixels + 3) / 4; // 4 pixels per byte
 }
 
+void rgb_to_gray(const uint16_t *src_rgb, uint8_t *dst_gray, uint16_t w, uint16_t h)
+{
+    const size_t pixels = (size_t)w * h;
+
+    for (size_t i = 0; i < pixels; ++i) {
+        uint16_t p = src_rgb[i];
+        // expand RGB565 -> 8-bit components
+        uint8_t r = (p >> 11) & 0x1F; r = (r * 527 + 23) >> 6;
+        uint8_t g = (p >> 5)  & 0x3F; g = (g * 259 + 33) >> 6;
+        uint8_t b =  p        & 0x1F; b = (b * 527 + 23) >> 6;
+
+        uint8_t y = (uint8_t)((77 * r + 150 * g + 29 * b) >> 8);
+        // quantize to 4 levels by selecting 2 MSBs
+        uint8_t q = (y >> 6) & 0x03; // 0..3
+
+        dst_gray[i] = (uint8_t)(q * 85); // optional gray8 store
+    }
+}
+
+void encapsulate(uint8_t *packet, uint16_t packet_len, char *mode, uint16_t w, uint16_t h) {
+    if (strcmp(mode, "header") == 0) {
+        packet[HEADER_START_H] = 0xFF;
+        packet[HEADER_START_L] = 0x01;
+        packet[IMAGE_HEIGHT_H] = (uint8_t)(h >> 8);
+        packet[IMAGE_HEIGHT_L] = (uint8_t)(h & 0xFF);
+        packet[IMAGE_WIDTH_H]  = (uint8_t)(w >> 8);
+        packet[IMAGE_WIDTH_L]  = (uint8_t)(w & 0xFF);
+        packet[HEADER_END_H]    = 0xFF;
+        packet[HEADER_END_L]    = 0x02; 
+    } else if (strcmp(mode, "data len") == 0) {
+        packet[PACKET_LEN_H] = (packet_len) >> 8;
+        packet[PACKET_LEN_L] = (packet_len) & 0xFF;
+    }
+    else if (strcmp(mode, "footer") == 0) {
+        packet[packet_len + 1] = 0xFF;
+        packet[packet_len + 2] = 0xFD; 
+    }
+ }
+
 /* Converts returned JPEG into grayscale bitmap and reports RGB of center pixel. */
-size_t rgb565_to_packet(const uint16_t *src, uint8_t *dst_gray, uint8_t *packet,
+size_t quantize(const uint8_t *src_gray, uint8_t *packet,
                              size_t packet_cap, uint16_t w, uint16_t h)
 {
     const size_t pixels = (size_t)w * h;
@@ -256,17 +297,8 @@ size_t rgb565_to_packet(const uint16_t *src, uint8_t *dst_gray, uint8_t *packet,
     memset(packet + header_len, 0, pixel_bytes);
 
     for (size_t i = 0; i < pixels; ++i) {
-        uint16_t p = src[i];
-        // expand RGB565 -> 8-bit components
-        uint8_t r = (p >> 11) & 0x1F; r = (r * 527 + 23) >> 6;
-        uint8_t g = (p >> 5)  & 0x3F; g = (g * 259 + 33) >> 6;
-        uint8_t b =  p        & 0x1F; b = (b * 527 + 23) >> 6;
-
-        uint8_t y = (uint8_t)((77 * r + 150 * g + 29 * b) >> 8);
         // quantize to 4 levels by selecting 2 MSBs
-        uint8_t q = (y >> 6) & 0x03; // 0..3
-
-        if (dst_gray) dst_gray[i] = (uint8_t)(q * 85); // optional gray8 store
+        uint8_t q = (src_gray[i] >> 6) & 0x03; // 0..3
 
         const size_t byte_index = header_len + (i / 4);    // which payload byte
         const unsigned pos_within_byte = i % 4;           // 0..3
@@ -274,12 +306,33 @@ size_t rgb565_to_packet(const uint16_t *src, uint8_t *dst_gray, uint8_t *packet,
 
         packet[byte_index] |= (uint8_t)(q << shift);
     }
-
-    // footer (end-of-image)
-    packet[header_len + pixel_bytes + 0] = 0xFF;
-    packet[header_len + pixel_bytes + 1] = 0xFD;
-
     return header_len + pixel_bytes + footer_len;
+}
+
+uint16_t compress_rle(uint8_t *packet, uint8_t *RLE, uint16_t w, uint16_t h) {
+    uint8_t curr_color = (packet[DATA_START] >> 6) & 0x03;
+    uint8_t count = 1; // first pixel
+    uint16_t current_byte = DATA_START;
+
+    for (size_t byte = DATA_START; byte < pixels_to_bytes((size_t)(w * h)); byte++) {
+        for (uint8_t crumb = 0; crumb < 4; crumb++) {
+            uint8_t val = (packet[byte] >> (6 - 2 * crumb)) & 0x03;
+            if (val == curr_color && count < 63) {
+                count++;
+            } else {
+                // emit run
+                RLE[current_byte++] = (count << 2) | (curr_color & 0x03);
+                // start new run
+                curr_color = val;
+                count = 1;
+            }
+        }
+    }
+    // emit last run
+    if (count > 0) {
+        RLE[current_byte++] = (count << 2) | (curr_color & 0x03);
+    }
+    return current_byte;
 }
 
 /* 3x3 convolution using unsigned ints to leverage ESP32c3's multipliers. */
@@ -451,9 +504,8 @@ void singleCapture(void)
     }
     ESP_LOGI("main","decoded %ux%u", w, h);
 
-    const size_t npix = (size_t)w * h;
-
     // Convert to GRAY 8-bit 
+    const size_t npix = (size_t)w * h;
     uint8_t *cur_gray = (uint8_t*)heap_caps_malloc(npix, MALLOC_CAP_8BIT);
     if (!cur_gray) {
         ESP_LOGW("main","OOM gray %u bytes", (unsigned)npix);
@@ -461,43 +513,50 @@ void singleCapture(void)
         vTaskDelay(pdMS_TO_TICKS(10));
         return;
     }
-
     size_t pixels = (size_t)w * h;
+    rgb_to_gray(pix, cur_gray, w, h);
+
+    // Create Payload with height and width in header
     size_t payload_bytes = pixels_to_bytes(pixels);
     size_t packet_cap = DATA_START + payload_bytes + 2; // header + payload + footer
-
-    // Embed image dimensions in packet header for receiver
-    uint8_t *packet = (uint8_t*)heap_caps_malloc((h*w)/4 + 1 + DATA_START, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    uint8_t *packet = (uint8_t*)heap_caps_malloc((h*w) + DATA_START, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
     if (!packet) {
         ESP_LOGE("main", "packet malloc failed (len=%u)", (unsigned)packet_cap);
         free(pix);
         free(cur_gray);
         return; // or handle error
     }
-    packet[HEADER_START_H] = 0xFF;
-    packet[HEADER_START_L] = 0x01;
-    packet[IMAGE_HEIGHT_H] = (uint8_t)(h >> 8);
-    packet[IMAGE_HEIGHT_L] = (uint8_t)(h & 0xFF);
-    packet[IMAGE_WIDTH_H]  = (uint8_t)(w >> 8);
-    packet[IMAGE_WIDTH_L]  = (uint8_t)(w & 0xFF);
-    packet[HEADER_END_H]    = 0xFF;
-    packet[HEADER_END_L]    = 0x02; 
+    encapsulate(packet, 0, "header", w, h);
+    // RLE buffer (worst case: no compression)
+    uint8_t *RLE = (uint8_t*)heap_caps_malloc(h*w + DATA_START, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    if (RLE) {
+        encapsulate(RLE, 0, "header", w, h);
+    }
+
+    // Quantize to 4 levels and pack into packet
+    size_t packet_len = quantize(cur_gray, packet, packet_cap, w, h);
     
-    // Convert RGB565 to GRAY8 and pack into packet
-    size_t packet_len = rgb565_to_packet(pix, cur_gray, packet, packet_cap, w, h);
+    uint16_t end_of_data = compress_rle(packet, RLE, w, h);
     
+    // Now write packet length in header
+    encapsulate(RLE, end_of_data, "data len", w, h);
+
+    // Write footer
+    encapsulate(RLE, end_of_data, "footer", w, h);
+
     free(pix);
     // Processing decoded JPEG
     // motion_detect(npix, cur_gray, w, h);
-    esp_err_t rc = publish_frame(packet, packet_len);
+    esp_err_t rc = publish_frame(RLE, end_of_data + DATA_START + 2);
     if (rc == ESP_OK) {
-        ESP_LOGI("main", "published %u bytes", (unsigned)packet_len);
+        ESP_LOGI("main", "published %u bytes", (unsigned)(end_of_data + DATA_START + 2));
     } else {
         ESP_LOGW("main", "publish failed: %d", rc);
     }
 
     free(cur_gray);
     free(packet);
+    free(RLE);
 
     // Small yield for Wi-Fi/httpd 
     vTaskDelay(pdMS_TO_TICKS(10));
