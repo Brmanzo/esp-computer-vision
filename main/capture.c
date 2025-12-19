@@ -2,6 +2,9 @@
 #include <stdbool.h>
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_err.h"
+#include "esp_heap_caps.h"
+#include "driver/uart.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -13,10 +16,15 @@
 #include "includes/spi.h"
 #include "includes/capture.h"
 #include "includes/globals.h"
+#include "includes/uart.h"
+#include <portmacro.h>
 
 #define MOTION_MIN_FRAC_NUM 1
 #define MOTION_MIN_FRAC_DEN 200   // >=0.5% pixels must be “subject”
 #define BORDER_MARGIN       2
+
+#define PAD 1
+
 
 static uint8_t  *prev_gray  = NULL;
 static size_t    prev_bytes = 0;
@@ -170,6 +178,7 @@ esp_err_t arducam_read_jpeg(uint8_t *dst, size_t max_len, size_t *out_len) {
 /* Leverages Espressif's jpeg library to decode jpegs into pixels. */
 esp_err_t jpeg_decode_from_buffer(const uint8_t *jpg_buf, size_t jpg_len,
                                   uint16_t **out_pixels, uint16_t *out_w, uint16_t *out_h,
+                                  uint16_t *out_padded_w, uint16_t *out_padded_h,
                                   esp_jpeg_image_scale_t scale)
 {
     *out_pixels = NULL; *out_w = *out_h = 0;
@@ -184,17 +193,10 @@ esp_err_t jpeg_decode_from_buffer(const uint8_t *jpg_buf, size_t jpg_len,
     esp_jpeg_image_output_t info = {0};
     esp_jpeg_get_image_info(&pcfg, &info);
 
-    uint16_t src_w = info.width;
-    uint16_t src_h = info.height;
-    size_t   need  = info.output_len;
-    if (need == 0) {
-        uint16_t w = src_w >> scale; if (!w) w = 1;
-        uint16_t h = src_h >> scale; if (!h) h = 1;
-        need = (size_t)w * h * 2;
-    }
-
     // Try to allocate; if OOM, retry at a smaller scale (bigger divisor)
     esp_jpeg_image_scale_t try_scale = scale;
+    size_t need = info.output_len;
+
     uint16_t *pixels = NULL;
 
     for (;;) {
@@ -226,12 +228,31 @@ esp_err_t jpeg_decode_from_buffer(const uint8_t *jpg_buf, size_t jpg_len,
 
     esp_jpeg_image_output_t out = {0};
     esp_err_t derr = esp_jpeg_decode(&dcfg, &out);
-    if (derr != ESP_OK) { free(pixels); return derr; }
+    if (derr != ESP_OK) { heap_caps_free(pixels); return derr; }
 
-    *out_pixels = pixels;
+    const uint16_t w = out.width;
+    const uint16_t h = out.height;
+
+    const uint16_t padded_w = w + PAD;
+    const uint16_t padded_h = h + PAD;
+
+    uint16_t *padbuf = (uint16_t*)heap_caps_calloc((size_t)padded_w * padded_h,
+                                                   sizeof(uint16_t),
+                                                   MALLOC_CAP_8BIT);
+    if (!padbuf) { heap_caps_free(padbuf); return ESP_ERR_NO_MEM; }
+    for (uint16_t y = 0; y < h; y++) {
+        size_t src = (size_t)y * w;
+        size_t dst = (size_t)(y + PAD) * padded_w + PAD;
+        memcpy(&padbuf[dst], &pixels[src], (size_t)w * sizeof(uint16_t));
+    }
+
+    heap_caps_free(pixels);
+    *out_pixels = padbuf;
     // decoder reports *scaled* dims here
-    *out_w = out.width;
-    *out_h = out.height;
+    *out_w = w;
+    *out_h = h;
+    *out_padded_w = padded_w;
+    *out_padded_h = padded_h;
     return ESP_OK;
 }
 
@@ -250,7 +271,7 @@ void rgb_to_gray(const uint16_t *src_rgb, uint8_t *dst_gray, uint16_t w, uint16_
         uint8_t g = (p >> 5)  & 0x3F; g = (g * 259 + 33) >> 6;
         uint8_t b =  p        & 0x1F; b = (b * 527 + 23) >> 6;
 
-        uint8_t y = (uint8_t)((77 * r + 150 * g + 29 * b) >> 8);
+        uint8_t y = (uint8_t)((77 * r + 150 * g + 29 * b) >> 8) + 128;
         // quantize to 4 levels by selecting 2 MSBs
         uint8_t q = (y >> 6) & 0x03; // 0..3
 
@@ -434,6 +455,46 @@ void motion_detect(uint32_t npix, uint8_t *cur_gray, uint16_t w, uint16_t h)
     }
 }
 
+static void trim_gray_center(const uint8_t *padded, uint8_t *trimmed,
+                             uint16_t w, uint16_t h, uint16_t padded_w)
+{
+    for (uint16_t y = 0; y < h; y++) {
+        memcpy(&trimmed[(size_t)y * w],
+               &padded[((size_t)(y + PAD)) * padded_w + PAD],
+               w);
+    }
+}
+
+typedef struct {
+    size_t expect;
+    uint8_t *dst;
+    volatile size_t got;
+    volatile bool done;
+    volatile bool error;
+} rx_ctx_t;
+
+static void uart_rx_task(void *arg)
+{
+    ESP_LOGI("uart", "rx task started");
+    rx_ctx_t *ctx = (rx_ctx_t*)arg;
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(4000);
+
+    while (ctx->got < ctx->expect) {
+        int r = uart_read_bytes(UART_NUM_1,
+                                ctx->dst + ctx->got,
+                                ctx->expect - ctx->got,
+                                pdMS_TO_TICKS(50));
+        if (r < 0) { ctx->error = true; break; }
+        if (r > 0) ctx->got += (size_t)r;
+
+        if (xTaskGetTickCount() > deadline) { ctx->error = true; break; }
+    }
+    ctx->done = true;
+    vTaskDelete(NULL);
+}
+
+
+
 void singleCapture(void)
 {
     // Capture into FIFO
@@ -492,9 +553,9 @@ void singleCapture(void)
     }
 
     // Decode JPEG from raw data into matrix of RGB565 pixels
-    uint16_t *pix = NULL; uint16_t w=0, h=0;
+    uint16_t *pix = NULL; uint16_t w=0, h=0, padded_w=0, padded_h=0;
 
-    esp_err_t d = jpeg_decode_from_buffer(jpg, actual, &pix, &w, &h, JPEG_IMAGE_SCALE_0);
+    esp_err_t d = jpeg_decode_from_buffer(jpg, actual, &pix, &w, &h, &padded_w, &padded_h, JPEG_IMAGE_SCALE_0);
     free(jpg);   // jpg buffer not needed after decode
 
     if (d != ESP_OK || !pix) {
@@ -503,46 +564,88 @@ void singleCapture(void)
         return;
     }
     ESP_LOGI("main","decoded %ux%u", w, h);
-
+    
     // Convert to GRAY 8-bit 
-    const size_t npix = (size_t)w * h;
-    uint8_t *cur_gray = (uint8_t*)heap_caps_malloc(npix, MALLOC_CAP_8BIT);
+    const size_t paddedPix = (size_t)(padded_w * padded_h);
+    ESP_LOGI("dims", "w=%u h=%u padded_w=%u padded_h=%u paddedPix=%u",
+         w, h, padded_w, padded_h, (unsigned)paddedPix);
+    uint8_t *cur_gray = (uint8_t*)heap_caps_malloc(paddedPix, MALLOC_CAP_8BIT);
     if (!cur_gray) {
-        ESP_LOGW("main","OOM gray %u bytes", (unsigned)npix);
+        ESP_LOGW("main","OOM gray %u bytes", (unsigned)paddedPix);
         free(pix);
         vTaskDelay(pdMS_TO_TICKS(10));
         return;
     }
-    size_t pixels = (size_t)w * h;
-    rgb_to_gray(pix, cur_gray, w, h);
+    rgb_to_gray(pix, cur_gray, padded_w, padded_h);
+
+    uint8_t *gray_padded_frame = (uint8_t*)heap_caps_malloc(paddedPix, MALLOC_CAP_8BIT);
+    if (!gray_padded_frame) {
+        ESP_LOGE("main", "OOM gray_padded_frame");
+        free(gray_padded_frame);
+        return;
+    }
+    rx_ctx_t rx = {.expect = paddedPix, .dst = gray_padded_frame, .got = 0, .done = false, .error = false};
+
+    uart_flush_input(UART_NUM_1);
+    xTaskCreatePinnedToCore(uart_rx_task, "uart_rx", 4096, &rx, 10, NULL, 0);
+
+    const uint8_t dummy[1] = {0};
+    ESP_ERROR_CHECK(uart_write_all(UART_NUM_1, dummy, 1));
+    ESP_ERROR_CHECK(uart_write_all(UART_NUM_1, cur_gray, paddedPix));
+
+    // Wait for RX to finish
+    while (!rx.done) vTaskDelay(pdMS_TO_TICKS(10));
+
+    if (rx.error) {
+        ESP_LOGW("uart", "rx failed: got %u/%u bytes", (unsigned)rx.got, (unsigned)rx.expect);
+        // cleanup + return
+    }
+
+    free(cur_gray);
+
+
+    uint16_t trimmed_w = w;
+    uint16_t trimmed_h = h;
+    uint16_t trimmedPix = (uint16_t)(trimmed_w * trimmed_h);
+
+    uint8_t *gray_trimmed_frame = (uint8_t*)heap_caps_malloc(trimmedPix, MALLOC_CAP_8BIT);
+    if (!gray_trimmed_frame) {
+        ESP_LOGE("main", "OOM gray_trimmed_frame");
+        free(gray_trimmed_frame);
+        return;
+    }
+    ESP_LOGI("uart", "waiting for %u bytes back", (unsigned)paddedPix);
+
+    trim_gray_center(gray_padded_frame, gray_trimmed_frame, w, h, padded_w);
+
+    free(gray_padded_frame);
 
     // Create Payload with height and width in header
-    size_t payload_bytes = pixels_to_bytes(pixels);
+    size_t payload_bytes = pixels_to_bytes(trimmedPix);
     size_t packet_cap = DATA_START + payload_bytes + 2; // header + payload + footer
-    uint8_t *packet = (uint8_t*)heap_caps_malloc((h*w) + DATA_START, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    uint8_t *packet = (uint8_t*)heap_caps_malloc((trimmedPix) + DATA_START, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
     if (!packet) {
         ESP_LOGE("main", "packet malloc failed (len=%u)", (unsigned)packet_cap);
         free(pix);
-        free(cur_gray);
         return; // or handle error
     }
-    encapsulate(packet, 0, "header", w, h);
+    encapsulate(packet, 0, "header", trimmed_w, trimmed_h);
     // RLE buffer (worst case: no compression)
-    uint8_t *RLE = (uint8_t*)heap_caps_malloc(h*w + DATA_START, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    uint8_t *RLE = (uint8_t*)heap_caps_malloc(trimmedPix + DATA_START, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
     if (RLE) {
-        encapsulate(RLE, 0, "header", w, h);
+        encapsulate(RLE, 0, "header", trimmed_w, trimmed_h);
     }
 
     // Quantize to 4 levels and pack into packet
-    size_t packet_len = quantize(cur_gray, packet, packet_cap, w, h);
+    size_t packet_len = quantize(gray_trimmed_frame, packet, packet_cap, trimmed_w, trimmed_h);
     
-    uint16_t end_of_data = compress_rle(packet, RLE, w, h);
+    uint16_t end_of_data = compress_rle(packet, RLE, trimmed_w, trimmed_h);
     
     // Now write packet length in header
-    encapsulate(RLE, end_of_data, "data len", w, h);
+    encapsulate(RLE, end_of_data, "data len", trimmed_w, trimmed_h);
 
     // Write footer
-    encapsulate(RLE, end_of_data, "footer", w, h);
+    encapsulate(RLE, end_of_data, "footer", trimmed_w, trimmed_h);
 
     free(pix);
     // Processing decoded JPEG
@@ -553,8 +656,7 @@ void singleCapture(void)
     } else {
         ESP_LOGW("main", "publish failed: %d", rc);
     }
-
-    free(cur_gray);
+    free(gray_trimmed_frame);
     free(packet);
     free(RLE);
 

@@ -19,9 +19,8 @@ void app_main(void) {
     // 1) Board bring-up
     arducam.systemInit();
 
-    // 2) (Optional) UART RX task — keep priority modest (e.g., 5–7)
-    xTaskCreate(uart_event_task, "uart_event_task", 4096, NULL, 5, NULL);
-
+    // 2) Initialize UART to Icebreaker FPGA
+    uart_init();
     // 3) Probe/init camera
     if (arducam.busDetect() != 0) { ESP_LOGE("main","SPI bus test failed."); return; }
     if (arducam.cameraProbe() != 0){ ESP_LOGE("main","Camera sensor probe failed."); return; }

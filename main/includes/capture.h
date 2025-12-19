@@ -29,6 +29,7 @@ esp_err_t arducam_read_jpeg(uint8_t *dst, size_t max_len, size_t *out_len);
 /* Leverages Espressif's jpeg library to decode jpegs into pixels. */
 esp_err_t jpeg_decode_from_buffer(const uint8_t *jpg_buf, size_t jpg_len,
                                   uint16_t **out_pixels, uint16_t *out_w, uint16_t *out_h,
+                                  uint16_t *out_padded_w, uint16_t *out_padded_h,
                                   esp_jpeg_image_scale_t scale);
 
 
