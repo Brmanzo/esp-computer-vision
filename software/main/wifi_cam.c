@@ -6,12 +6,15 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
+#include "freertos/portmacro.h"
 
 #include "esp_event.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_netif.h"
+#include "esp_netif_types.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "nvs_flash.h"
@@ -29,7 +32,7 @@ static bool                s_frame_available = false;
 static SemaphoreHandle_t   s_frame_mux  = NULL;
 
 /* --------------------------- Index Event --------------------------- */
-/* Send html index over ESP wifi. */
+/* Send html index over ESP Wi-Fi. */
 static esp_err_t index_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
@@ -37,7 +40,7 @@ static esp_err_t index_handler(httpd_req_t *req)
     return httpd_resp_send(req, INDEX_HTML, INDEX_HTML_LEN);
 }
 /* -------------------- Frame Event -------------------- */
-/* Call once at startup to initialize */
+/* Create Semaphore for frame buffer access */
 void frame_server_init(void)
 {
     if (s_frame_mux == NULL) {
@@ -45,6 +48,7 @@ void frame_server_init(void)
     }
 }
 
+/* Handle frame request over ESP Wi-Fi. */
 static esp_err_t frame_handler(httpd_req_t *req)
 {
     uint8_t *local_buf = NULL;
@@ -53,17 +57,18 @@ static esp_err_t frame_handler(httpd_req_t *req)
 
     if (s_frame_mux == NULL) frame_server_init();
 
+    // If available, take the mutex
     if (xSemaphoreTake(s_frame_mux, pdMS_TO_TICKS(500)) != pdTRUE) {
         ESP_LOGW(TAG, "frame_handler: mutex busy");
         httpd_resp_send_err(req, 503, "Server busy");
     }
-
+    // Otherwise yield, no frame
     if (!s_frame_available || s_frame_buf == NULL || s_frame_len == 0) {
         xSemaphoreGive(s_frame_mux);
         httpd_resp_send_err(req, 503, "No frame ready");
     }
 
-    // Allocate a temporary copy while holding mutex so s_frame_buf can't be freed underneath us.
+    // Cache frame in case freed while sending.
     local_len = s_frame_len;
     local_buf = malloc(local_len);
     if (!local_buf) {
@@ -76,7 +81,7 @@ static esp_err_t frame_handler(httpd_req_t *req)
 
     xSemaphoreGive(s_frame_mux);
 
-    // Send the copy
+    // Send the cached frame
     httpd_resp_set_type(req, "application/octet-stream");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
 
@@ -89,6 +94,7 @@ static esp_err_t frame_handler(httpd_req_t *req)
     return err;
 }
 
+/* When image frame is ready, publish it to ESP Wi-Fi */
 esp_err_t publish_frame(const uint8_t *data, size_t len)
 {
     if (!data || len == 0) return ESP_ERR_INVALID_ARG;
@@ -96,16 +102,16 @@ esp_err_t publish_frame(const uint8_t *data, size_t len)
     if (s_frame_mux == NULL) frame_server_init();
 
     // allocate new buffer
-    uint8_t *newbuf = malloc(len);
-    if (!newbuf) {
+    uint8_t *new_frame = malloc(len);
+    if (!new_frame) {
         ESP_LOGE(TAG, "Out of memory allocating frame buffer (len=%u)", (unsigned)len);
         return ESP_ERR_NO_MEM;
     }
-    memcpy(newbuf, data, len);
+    memcpy(new_frame, data, len);
 
     // swap under mutex
     if (xSemaphoreTake(s_frame_mux, pdMS_TO_TICKS(2000)) != pdTRUE) {
-        free(newbuf);
+        free(new_frame);
         ESP_LOGW(TAG, "publish_frame: failed to take mutex");
         return ESP_FAIL;
     }
@@ -114,7 +120,7 @@ esp_err_t publish_frame(const uint8_t *data, size_t len)
     if (s_frame_buf) {
         free(s_frame_buf);
     }
-    s_frame_buf = newbuf;
+    s_frame_buf = new_frame;
     s_frame_len = len;
     s_frame_available = true;
 

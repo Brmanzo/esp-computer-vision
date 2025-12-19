@@ -5,9 +5,7 @@
 #include "includes/arducam.h"
 #include "includes/uart.h"
 
-/* -------------------------------------- UART -------------------------------------- */
 /* Initialize UART for streaming images to interfaces. */
-
 void uart_init(void) {
     const uart_config_t uart_config = {
         .baud_rate = 115200,
@@ -23,25 +21,27 @@ void uart_init(void) {
     uart_set_pin(UART_NUM_1, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 }
 
-esp_err_t uart_read_exact(uart_port_t uart, uint8_t *dst, size_t n)
+/* Read exactly n bytes from UART into dst buffer. */
+esp_err_t uart_read_exact(uart_port_t uart, uint8_t *dst, size_t len)
 {
-    size_t got = 0;
-    while (got < n) {
-        int r = uart_read_bytes(uart, dst + got, n - got, pdMS_TO_TICKS(1000));
+    size_t idx = 0;
+    while (idx < len) {
+        int r = uart_read_bytes(uart, (char*)&dst[idx], len - idx, pdMS_TO_TICKS(1000));
         if (r < 0) return ESP_FAIL;
         if (r == 0) continue;
-        got += (size_t)r;
+        idx += (size_t)r;
     }
     return ESP_OK;
 }
 
+/* Write all data from buffer to UART in order. */
 esp_err_t uart_write_all(uart_port_t uart, const uint8_t *buf, size_t len)
 {
-    size_t off = 0;
-    while (off < len) {
-        int w = uart_write_bytes(uart, (const char*)(buf + off), len - off);
+    size_t idx = 0;
+    while (idx < len) {
+        int w = uart_write_bytes(uart, (const char*)&buf[idx], len - idx);
         if (w < 0) return ESP_FAIL;
-        off += (size_t)w;
+        idx += (size_t)w;
     }
     return ESP_OK;
 }

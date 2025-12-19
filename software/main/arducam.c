@@ -125,7 +125,7 @@ void OV2640_set_JPEG_size(unsigned char size)
 
 struct camera_operate arducam = {
     .slave_address = ARDUCAM_ADDR,
-    .systemInit    = esp32c3_SystemInit, // Point to your new ESP32 init function
+    .systemInit    = esp32c3_SystemInit,
     .busDetect     = spiBusDetect,
     .cameraProbe   = ov2640Probe,
     .cameraInit    = ov2640Init,
