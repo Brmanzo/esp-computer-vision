@@ -1,0 +1,18 @@
+{
+    "top": "uart_axis",
+    "files":
+    ["provided/pll.sv"
+    ,"provided/dff.sv"
+    ,"provided/inv.sv"
+    ,"verilog-axis/axis_adapter.v"
+    ,"verilog-uart/uart_rx.v"
+    ,"verilog-uart/uart_tx.v"
+    ,"verilog-uart/uart.v"
+    ,"counter.sv"
+    ,"delaybuffer.sv"
+    ,"mag.sv"
+    ,"sobel.sv"
+    ,"ram_1r1w_sync.sv"
+    ,"uart_axis.sv"
+    ]
+}
