@@ -9,6 +9,7 @@
     ,"verilog-uart/uart_tx.v"
     ,"verilog-uart/uart.v"
     ,"counter.sv"
+    ,"counter_roll.sv"
     ,"delaybuffer.sv"
     ,"mag.sv"
     ,"sobel.sv"
