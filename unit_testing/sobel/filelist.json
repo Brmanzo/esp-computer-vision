@@ -1,0 +1,11 @@
+{
+    "top": "sobel",
+    "files":
+    ["hardware/sobel.sv"
+    ,"hardware/counter.sv"
+    ,"hardware/counter_roll.sv"
+    ,"hardware/elastic.sv"
+    ,"hardware/ram_1r1w_sync.sv"
+    ,"hardware/delaybuffer.sv"
+    ]
+}

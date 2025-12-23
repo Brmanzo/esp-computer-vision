@@ -1,8 +1,7 @@
-`define IMAGE_W 161
-`define RGB_W_24 24 // Width of the expanded AXIS data from UART
-`define GRAY_W_8 8
-`define SOBEL_XY_W_14 14
-`define MAG_W_15 15
+`define IMAGE_W 641
+`define UART_W 8
+`define QUANTIZED_W 2
+`define PACK_NUM 4
 
 module uart_axis
 	#(parameter example_p = 0) // Does nothing, just an example. You may use it, extend it, or ignore it.
@@ -12,33 +11,48 @@ module uart_axis
 	,input [0:0] rx_serial_i
 	,output [0:0] tx_serial_o
 
-	,output [5:1] led_o // For debugging
+	,output [5:1] led_o
 	);
 
-	localparam [31:0] data_width_lp = 8; // Keep this constant. Treat UART as an 8-bit bus, output.
+	// Zero pack the QUANTIZED_W from 2 to 3 bits, max pixel is 3, over 8 accumulations plus sign bit
+	localparam int sobel_out_width_lp = $clog2(((((32'd1<<(`QUANTIZED_W + 1)))-1)*8)+1) + 1;
 
-	// In my soltion, these wires are data coming from (tx), and going
-	// to (rx) the UART module. You may pick your own alternate naming
-	// scheme.
-	wire [data_width_lp-1:0]  m_axis_uart_tdata;
-	wire [0:0]                m_axis_uart_tvalid;
-	wire [0:0]                m_axis_uart_tready;
+	// UART Interface Wires
+	wire [0:0]                        uart_ready_w;
+	wire [0:0]                        uart_valid_w;
+	wire [`UART_W-1:0]                uart_data_w;
 
-	// Expanded data, coming out of the adapter
-	wire [`RGB_W_24-1:0]      m_axis_tdata;
-	wire [0:0]                m_axis_tvalid;
-	wire [0:0]                m_axis_tready;
+	// AXIS Adapter Wires
+	wire [0:0]                        axis_ready_w;
+	wire [0:0]                        axis_valid_w;
+	wire [`UART_W-1:0]                axis_data_w;
 
-	// Shrunken data, combining sobel outputs onto 8 bit bus for UART
-	wire [`MAG_W_15 + 2 -1:0] s_axis_uart_tdata;
-	wire [0:0]                s_axis_uart_tvalid;
-	wire [0:0 ]               s_axis_uart_tready;
-	
-	wire [0:0]                s_axis_tready;
-	// Gray data, going out to the UART
-	wire [`GRAY_W_8-1:0]  gray_tdata;
-	wire        gray_tvalid;
+	// Unpacker Wires
+	wire [0:0]                        unpack_ready_w;
+	wire [0:0]                        unpack_valid_w;
+	wire [`QUANTIZED_W-1:0]           unpacked_data_w;
 
+	// Sobel Wires
+	wire [0:0]                        gx_ready_w, gy_ready_w;
+	wire [0:0]                        gx_valid_w, gy_valid_w;
+	wire [sobel_out_width_lp-1:0]     gx_data_w, gy_data_w;
+
+	// Elastic Stage Wires
+	wire [0:0]                        elastic_ready_w;
+	wire [0:0]                        elastic_valid_w;
+	wire [sobel_out_width_lp-1:0]     elastic_gx_w, elastic_gy_w;
+
+	// Magnitude Wires
+	wire [0:0]                        mag_ready_w;
+	wire [0:0]                        mag_valid_w;
+	wire [sobel_out_width_lp:0]       mag_data_w;
+
+	// Packer Wires
+	wire [0:0]                        pack_ready_w;
+	wire [0:0]                        pack_valid_w;
+	wire [`QUANTIZED_W*`PACK_NUM-1:0] packed_data_w;
+
+	// Predefined Kernel weights for gx and gy gradients	
 	typedef logic signed [2:0] weight_t;
 
 	weight_t gx_weights_l [0:8] = '{
@@ -50,19 +64,11 @@ module uart_axis
 	weight_t gy_weights_l [0:8] = '{
 		3'sd1,  3'sd2,  3'sd1,
 		3'sd0,  3'sd0,  3'sd0,
-	-3'sd1, -3'sd2, -3'sd1
+	   -3'sd1, -3'sd2, -3'sd1
 	};
 
-	wire [0:0] sobel_gx_ready_ow, sobel_gy_ready_ow;
-	wire [0:0] sobel_gx_valid_ow, sobel_gy_valid_ow;
-
-	wire signed [15:0] sobel_gx_ow, sobel_gy_ow;
-	wire        [`MAG_W_15-1:0]     mag_ow;
-
-	wire [0:0] mag_ready_ow, mag_valid_ow;
-
-	wire [`SOBEL_XY_W_14-1:0] stage_1_gx_ow, stage_1_gy_ow;
-	wire [0:0]  stage_1_valid_o, stage_1_ready_o;
+	// For indicating FPGA operation
+	assign led_o = axis_data_w[5:1];
 
 	// UART head to convert UART serial data to AXIS data
 	uart
@@ -71,115 +77,151 @@ module uart_axis
 	(.clk(clk_i)
 	,.rst(reset_i)
 	
-	// FPGA interface for UART 
-	,.txd(tx_serial_o)
-	,.rxd(rx_serial_i)
-	
-	// Manager (data received from wire)
-	,.m_axis_tready(m_axis_uart_tready) // Input
-	,.m_axis_tvalid(m_axis_uart_tvalid) 
-	,.m_axis_tdata(m_axis_uart_tdata)
-
-	// Suboordinate (data to be sent out on wire)
-	,.s_axis_tready(s_axis_uart_tready) // Output
-	,.s_axis_tvalid(mag_valid_ow)
-	,.s_axis_tdata(mag_ow[10:3]) // This window yields the best results
+	// FPGA interface for UART
+	,.txd(tx_serial_o) // ESP_TX_o pin 2
+	,.rxd(rx_serial_i) // ESP_RX_i pin 4
+	// Packer to UART
+	,.s_axis_tready(uart_ready_w)
+	,.s_axis_tvalid(pack_valid_w)
+	,.s_axis_tdata(packed_data_w)
+	// UART to AXIS
+	,.m_axis_tready(axis_ready_w)
+	,.m_axis_tvalid(uart_valid_w) 
+	,.m_axis_tdata(uart_data_w)
 
 	,.prescale(16'd27) // Fclk / (baud * 8), 25 MHz / (115200 * 8) = 27
 	);
 
-	// Data input as gray from software, still want axis adapter at head despite no expansion
+	// AXIS Adapter for UART input
 	axis_adapter
-	#(.S_DATA_WIDTH                   (data_width_lp) // 8 bits from serial
-	,.M_DATA_WIDTH                    (`GRAY_W_8) // 24 bits expanded
+	#(.S_DATA_WIDTH                   (`UART_W) // 8 bits from serial
+	,.M_DATA_WIDTH                    (`UART_W) // treat as 8 bit bus to UART
 	,.S_KEEP_ENABLE                   (0)
 	,.M_KEEP_ENABLE                   (1)
 	,.M_KEEP_WIDTH                    (1)
 	,.ID_ENABLE                       (0)
 	,.DEST_ENABLE                     (0)
 	,.USER_ENABLE                     (0))
-	axis_adapter_expander_inst
+	axis_adapter_inst
 	(.clk(clk_i)
 	,.rst(reset_i)
-	// Input from UART to RGB
-	,.s_axis_tready(m_axis_uart_tready)
-	,.s_axis_tdata(m_axis_uart_tdata)
+	// UART to AXIS
+	,.s_axis_tready(axis_ready_w)
+	,.s_axis_tvalid(uart_valid_w)
+	,.s_axis_tdata(uart_data_w)
 	,.s_axis_tkeep(1'b1)
 	,.s_axis_tlast(1'b0)
-	,.s_axis_tvalid(m_axis_uart_tvalid)
-	// Output from Gray to UART
-	,.m_axis_tready(sobel_gx_ready_ow & sobel_gy_ready_ow)
-	,.m_axis_tdata(gray_tdata)
+	// AXIS to Unpacker
+	,.m_axis_tready(unpack_ready_w)
+	,.m_axis_tvalid(axis_valid_w)
+	,.m_axis_tdata(axis_data_w)
 	,.m_axis_tkeep()
-	,.m_axis_tvalid(gray_tvalid)
 	);
 
+	// Unpacker to unpack 4 2-bit values from each 8-bit UART input
+	unpacker
+	#(.unpacked_p(`QUANTIZED_W)
+	,.num_packed_p(`PACK_NUM))
+	unpacker_inst
+	(.clk_i(clk_i)
+	,.reset_i(reset_i)
+	// AXIS to Unpacker
+	,.ready_o(unpack_ready_w)
+	,.valid_i(axis_valid_w)
+	,.packed_i(axis_data_w)
+	// Unpacker to Sobel Filters
+	,.ready_i(gx_ready_w & gy_ready_w)
+	,.valid_o(unpack_valid_w)
+	,.unpacked_o(unpacked_data_w)
+	);
+
+	// Sobel Filter for Gx gradient
 	sobel
 	#(.linewidth_px_p(`IMAGE_W)
-	,.width_p(`GRAY_W_8))
+	,.in_width_p(`QUANTIZED_W + 1)
+	,.out_width_p(sobel_out_width_lp))
 	sobel_gx_inst
 	(.clk_i(clk_i)
 	,.reset_i(reset_i)
-	,.valid_i(gray_tvalid)
-	,.ready_o(sobel_gx_ready_ow)
-	,.data_i(gray_tdata)
-	,.valid_o(sobel_gx_valid_ow)
-	,.ready_i(stage_1_ready_o)
-	,.abs_i(1'b1)
+	// Unpacker to Gx
+	,.ready_o(gx_ready_w)
+	,.valid_i(unpack_valid_w)
+	,.data_i({1'b0, unpacked_data_w})
+	// Gx to Elastic Stage
+	,.ready_i(elastic_ready_w)
+	,.valid_o(gx_valid_w)
+	,.data_o(gx_data_w)
 	,.weights_i(gx_weights_l)
-	,.sign_o()
-	,.data_o(sobel_gx_ow)
 	);
 
+	// Sobel Filter for Gy gradient
 	sobel
 	#(.linewidth_px_p(`IMAGE_W)
-	,.width_p(`GRAY_W_8))
+	,.in_width_p(`QUANTIZED_W + 1)
+	,.out_width_p(sobel_out_width_lp))
 	sobel_gy_inst
 	(.clk_i(clk_i)
 	,.reset_i(reset_i)
-	,.valid_i(gray_tvalid)
-	,.ready_o(sobel_gy_ready_ow)
-	,.data_i(gray_tdata)
-	,.valid_o(sobel_gy_valid_ow)
-	,.ready_i(stage_1_ready_o)
-	,.abs_i(1'b1)
+	// Unpacker to Gy
+	,.ready_o(gy_ready_w)
+	,.valid_i(unpack_valid_w)
+	,.data_i({1'b0, unpacked_data_w})
+	// Gy to Elastic Stage
+	,.ready_i(elastic_ready_w)
+	,.valid_o(gy_valid_w)
+	,.data_o(gy_data_w)
 	,.weights_i(gy_weights_l)
-	,.sign_o()
-	,.data_o(sobel_gy_ow)
 	);
+
 	// Elastic stage to meet timing requirements
 	elastic
-	#(.width_p(`SOBEL_XY_W_14 * 2) // 16 bits for gx, 16 bits for gy
+	#(.width_p(sobel_out_width_lp * 2) // 8 bits (4 for gx and 4 for gy)
 	,.datapath_gate_p(1))
 	elastic_stage_1_inst
 	(.clk_i(clk_i)
 	,.reset_i(reset_i)
-	,.data_i({sobel_gx_ow[13:0], sobel_gy_ow[13:0]})
-	,.valid_i(sobel_gx_valid_ow & sobel_gy_valid_ow)
-	,.ready_o(stage_1_ready_o)
-	,.valid_o(stage_1_valid_o)
-	,.data_o({stage_1_gx_ow, stage_1_gy_ow}) // When valid data, put onto shift register
-	,.ready_i(mag_ready_ow)
+	// Gx and Gy to Elastic Stage
+	,.ready_o(elastic_ready_w)
+	,.valid_i(gx_valid_w & gy_valid_w) 
+	,.data_i({gx_data_w, gy_data_w})
+	// Elastic Stage to Magnitude
+	,.ready_i(mag_ready_w)
+	,.valid_o(elastic_valid_w)
+	,.data_o({elastic_gx_w, elastic_gy_w})
 	);
 
-	// No shrinking necessary, just output 8 bit window from 15 bit magnitude
+	// Magnitude calculated from Gx and Gy
 	mag
-	#(.width_in_p(`SOBEL_XY_W_14))
+	#(.width_in_p(sobel_out_width_lp))
 	mag_inst
 	(.clk_i(clk_i)
 	,.reset_i(reset_i)
-
-	,.valid_i(stage_1_valid_o)
-	,.gx_i(stage_1_gx_ow)
-	,.gy_i(stage_1_gy_ow)
-	,.ready_o(mag_ready_ow)
-
-	,.valid_o(mag_valid_ow)
-	,.mag_o(mag_ow)
-	,.ready_i(s_axis_uart_tready)
+	// Elastic Stage to Magnitude
+	,.ready_o(mag_ready_w)
+	,.valid_i(elastic_valid_w)
+	,.gx_i(elastic_gx_w)
+	,.gy_i(elastic_gy_w)
+	// Magnitude to Packer
+	,.ready_i(pack_ready_w)
+	,.valid_o(mag_valid_w)
+	,.mag_o(mag_data_w)
 	);
 
-	// For verifying FPGA operation, but tx will also be obervable via serial
-	assign led_o = gray_tdata[5:1];
+	// Packer to pack 4 2-bit magnitude values into each 8-bit UART output
+	packer
+	#(.unpacked_p(`QUANTIZED_W)
+	,.num_packed_p(`PACK_NUM))
+	packer_inst
+	(.clk_i(clk_i)
+	,.reset_i(reset_i)
+	// Magnitude to Packer
+	,.ready_o(pack_ready_w)
+	,.valid_i(mag_valid_w)
+	,.unpacked_i(mag_data_w[4:3])
+	// Packer to UART output
+	,.ready_i(uart_ready_w)
+	,.valid_o(pack_valid_w)
+	,.packed_o(packed_data_w)
+	);
 
 endmodule

@@ -1,4 +1,6 @@
 module unpacker
+	#(parameter unpacked_p  = 2
+	,parameter num_packed_p = 4)
 	(input  [0:0] clk_i
 	,input  [0:0] reset_i
 
@@ -19,10 +21,10 @@ module unpacker
 
 	wire  [0:0] elastic_ready_ow;
 
-	wire  [1:0] counter_w;
+	wire  [$clog2(num_packed_p)-1:0] counter_w;
 	wire  [0:0] uart_fire_w = valid_i && ready_o;
 	wire  [0:0] unpack_fire_w = unpacking_l && elastic_ready_ow;
-	wire  [0:0] unpack_done_w = (counter_w == 2'd3) && unpack_fire_w;
+	wire  [0:0] unpack_done_w = (counter_w == 2'(num_packed_p-1)) && unpack_fire_w;
 
 	always_ff @(posedge clk_i) begin
 		if (reset_i) begin
@@ -61,7 +63,7 @@ module unpacker
 	elastic_inst
 	(.clk_i(clk_i)
 	,.reset_i(reset_i)
-	,.data_i(unpacked_ol[1:0])
+	,.data_i(unpacked_ol[unpacked_p-1:0])
 	,.valid_i(unpacking_l)
 	,.ready_o(elastic_ready_ow)
 	,.valid_o(valid_o)

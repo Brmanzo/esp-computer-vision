@@ -1,12 +1,14 @@
 module packer
+	#(parameter unpacked_p  = 2
+ 	,parameter num_packed_p = 4)
 	(input  [0:0] clk_i
 	,input  [0:0] reset_i
 
-	,input  [1:0] unpacked_i
+	,input  [unpacked_p-1:0] unpacked_i
 	,input  [0:0] valid_i
 	,output [0:0] ready_o
 
-	,output [7:0] packed_o
+	,output [(unpacked_p*num_packed_p)-1:0] packed_o
 	,output [0:0] valid_o
 	,input  [0:0] ready_i
 	);
@@ -16,12 +18,12 @@ module packer
 
 	wire  [1:0] counter_w;
 	wire  [0:0] in_fire_w = valid_i && ready_o;
-	wire  [0:0] out_fire_w = (counter_w == 2'd3) && in_fire_w;
+	wire  [0:0] out_fire_w = (counter_w == 2'(num_packed_p - 1)) && in_fire_w;
 
 	wire  [0:0] elastic_valid_ow, elastic_ready_ow;
 
 	// Block upstream data while receiving fourth input
-	assign ready_o = (counter_w != 2'd3) ? 1'b1 : elastic_ready_ow;
+	assign ready_o = (counter_w != 2'(num_packed_p - 1)) ? 1'b1 : elastic_ready_ow;
 	// Only assert valid when all four inputs have been packed
 	assign valid_o = elastic_valid_ow;
 
