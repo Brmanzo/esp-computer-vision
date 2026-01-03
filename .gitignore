@@ -1,0 +1,22 @@
+# Build outputs
+build/
+run/
+lint/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# FPGA / EDA outputs
+*.json
+*.yslog
+*.nplog
+*.asc
+*.bin
+*.bit
+
+# ESP-IDF
+build/
+managed_components/
+software/dependencies.lock

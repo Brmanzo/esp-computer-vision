@@ -1,8 +1,0 @@
-{
-    "top": "packer",
-    "files":
-    ["hardware/packer.sv"
-    ,"hardware/elastic.sv"
-    ,"hardware/counter_roll.sv"
-    ]
-}

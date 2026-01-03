@@ -1,0 +1,8 @@
+pytest -rA
+============================= test session starts ==============================
+platform linux -- Python 3.10.12, pytest-8.4.2, pluggy-1.6.0
+rootdir: /workspaces/lab-8-image-processing-Brmanzo/unit_testing/rle_decode
+plugins: utils-0.0.0, timeout-2.4.0, cocotb-test-0.2.6
+collected 12 items
+
+test_rle_decode.py ....
