@@ -1,7 +1,0 @@
-{
-    "top": "mag",
-    "files":
-    ["hardware/mag.sv"
-    ,"hardware/elastic.sv"
-    ]
-}

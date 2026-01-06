@@ -25,7 +25,7 @@ module elastic
 	logic [width_p - 1:0] data_r, data_n;
 
 	assign ready_o = (state_r == idle_s) ||
-						  (state_r == ihvd_s && ready_i);
+					 (state_r == ihvd_s && ready_i);
 
 	assign valid_o = (state_r == ihvd_s);
 	assign data_o  = data_r;

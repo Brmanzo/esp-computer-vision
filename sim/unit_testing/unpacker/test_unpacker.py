@@ -48,7 +48,8 @@ def float_to_fxp(value, frac):
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-def test_each(test_name, simulator):
+@pytest.mark.parametrize("unpacked_width_p, packed_num_p", [("2", "4"), ("1", "8")])
+def test_each(test_name, simulator, unpacked_width_p, packed_num_p):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
@@ -58,7 +59,8 @@ def test_each(test_name, simulator):
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-def test_all(simulator):
+@pytest.mark.parametrize("unpacked_width_p, packed_num_p", [("2", "4"), ("1", "8")])
+def test_all(simulator, unpacked_width_p, packed_num_p):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
@@ -83,7 +85,11 @@ class UnpackerModel():
         self._dut = dut
         self._unpacked_o = dut.unpacked_o
         self._packed_i = dut.packed_i
+        self._unpacked_width_p = dut.unpacked_width_p.value
+        self._packed_num_p = dut.packed_num_p.value
+        self._packed_width_p = dut.packed_width_p.value
 
+        self._mask = (1 << self._unpacked_width_p) - 1
         self._step = 0
         self._packed_buf = None
         
@@ -91,38 +97,32 @@ class UnpackerModel():
         self._enqs = 0
 
         self._q = queue.SimpleQueue()
-
-    def step(self):
-        # interpret as signed 8-bit like your Xs list
-        match self._step:
-            case 0: return int(self._packed_i.value & 0x03) & 0xFF
-            case 1: return int((self._packed_i.value >> 2) & 0x03) & 0xFF
-            case 2: return int((self._packed_i.value >> 4) & 0x03) & 0xFF
-            case 3: return int((self._packed_i.value >> 6) & 0x03) & 0xFF 
-            case _: raise RuntimeError("Step out of range")
     
     def consume(self):
         assert_resolvable(self._packed_i)
-        b = int(self._packed_i.value) & 0xFF
+        b = int(self._packed_i.value) & ((1 << (self._packed_width_p)) - 1)
         self._q.put(b)
         self._enqs += 1
 
     def ensure_packed_buf(self):
+        '''Checks for latest packed buffer state in queue before popping'''
         if self._packed_buf is None:
             assert (self._q.qsize() > 0), "Error! No input data available to pack"
             self._packed_buf = self._q.get()
 
     def _expected_from_byte(self, b: int, step: int) -> int:
-        # returns 2-bit value 0..3 (packed)
-        return (b >> (2 * step)) & 0x03
+        '''Masks the input byte to get the expected unpacked output for the given step'''
+        return (b >> (self._unpacked_width_p * step)) & self._mask
 
     def produce(self):
 
         self.ensure_packed_buf()
         assert_resolvable(self._unpacked_o)
 
-        got = self._unpacked_o.value.integer & 0xFF
-        expected = self._expected_from_byte(self._packed_buf, self._step) & 0xFF
+        got = int(self._unpacked_o.value) & self._mask
+        if self._packed_buf is None:
+            raise RuntimeError("Error! No packed buffer available to unpack")
+        expected = self._expected_from_byte(self._packed_buf, self._step) & self._mask
 
         self._deqs += 1
 
@@ -133,8 +133,8 @@ class UnpackerModel():
             f"Mismatch on output #{self._deqs}: expected {expected}, got {got} "
             f"(packed=0x{self._packed_buf:02X}, step={self._step})"
         )
-
-        self._step = (self._step + 1) & 3
+        # Wrap around step
+        self._step = (self._step + 1) % int(self._packed_num_p)
 
         if self._step == 0:
             self._packed_buf = None
@@ -147,8 +147,9 @@ class ReadyValidInterface():
         self._valid = valid
 
     def is_in_reset(self):
-        if((not self._reset_i.value.is_resolvable) or self._reset_i.value  == 1):
+        if (not self._reset_i.value.is_resolvable) or int(self._reset_i.value) == 1:
             return True
+        return False
         
     def assert_resolvable(self):
         if(not self.is_in_reset()):
@@ -156,7 +157,7 @@ class ReadyValidInterface():
             assert_resolvable(self._ready)
 
     def is_handshake(self):
-        return ((self._valid == 1) and (self._ready == 1))
+        return (self._valid.value.integer == 1) and (self._ready.value.integer == 1)
 
     async def _handshake(self):
         while True:
@@ -179,6 +180,7 @@ class ReadyValidInterface():
 class RandomDataGenerator():
     def __init__(self, dut):
         self._dut = dut
+        self._width_p = dut.packed_width_p.value
 
     def generate(self):
         x_i = random.randint(0, (1 << 8) - 1)
@@ -188,7 +190,7 @@ class EdgeCaseGenerator():
 
     def __init__(self, dut):
         self._dut = dut
-        limits = [0, 1, (1 << self._dut.width_p.value) - 1]
+        limits = [0, 1, (1 << self._dut.packed_width_p.value.integer) - 1]
         self._pairs = list(product(limits, limits))
         self._loc = 0
 
@@ -296,9 +298,10 @@ class OutputModel():
                 assert_resolvable(valid_o)
                 #assert valid_o.value.is_resolvable, f"Unresolvable value in valid_o (x or z in some or all bits) at Time {get_sim_time(units='ns')}ns."
 
-                success = True if (valid_o.value == 1) else False
-                if (success):
+                fire_out = (int(valid_o.value) == 1) and (int(ready_i.value) == 1)
+                if fire_out:
                     self._nout += 1
+                    success = 1
 
             await FallingEdge(clk_i)
         return self._nout
@@ -370,6 +373,7 @@ class InputModel():
 
             fire_in = (int(valid_i.value) == 1) and (int(ready_o.value) == 1)
             if(fire_in):
+                self._nin += 1
                 data = self._data.generate()
 
             await FallingEdge(clk_i)
@@ -381,6 +385,7 @@ class ModelRunner():
 
         self._clk_i = dut.clk_i
         self._reset_i = dut.reset_i
+        self._emit_cycles = dut.packed_num_p.value
 
         self._rv_in = ReadyValidInterface(self._clk_i, self._reset_i,
                                           dut.valid_i, dut.ready_o)
@@ -405,7 +410,7 @@ class ModelRunner():
         while True:
             await self._rv_in.handshake(None)
             self._model.consume()
-            for _ in range(4): # Four valid outputs per valid input
+            for _ in range(self._emit_cycles): # Four valid outputs per valid input
                 self._events.put(get_sim_time(units='ns'))
 
     async def _run_output(self, model):
