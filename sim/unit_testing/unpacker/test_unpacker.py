@@ -183,7 +183,7 @@ class RandomDataGenerator():
         self._width_p = dut.packed_width_p.value
 
     def generate(self):
-        x_i = random.randint(0, (1 << 8) - 1)
+        x_i = random.randint(0, (1 << self._width_p) - 1)
         return (x_i)
     
 class EdgeCaseGenerator():

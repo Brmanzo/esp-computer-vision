@@ -49,7 +49,8 @@ def float_to_fxp(value, frac):
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-def test_each(test_name, simulator):
+@pytest.mark.parametrize("unpacked_width_p, packed_num_p", [("2", "4"), ("1", "8")])
+def test_each(test_name, simulator, unpacked_width_p, packed_num_p):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
@@ -59,7 +60,8 @@ def test_each(test_name, simulator):
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-def test_all(simulator):
+@pytest.mark.parametrize("unpacked_width_p, packed_num_p", [("2", "4"), ("1", "8")])
+def test_all(simulator, unpacked_width_p, packed_num_p):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
@@ -81,9 +83,12 @@ def test_style(simulator):
 
 class PackerModel():
     def __init__(self, dut):
-        self._dut        = dut
-        self._unpacked_i = dut.unpacked_i
-        self._packed_o   = dut.packed_o
+        self._dut              = dut
+        self._unpacked_i       = dut.unpacked_i
+        self._packed_o         = dut.packed_o
+        self._unpacked_width_p = dut.unpacked_width_p.value
+        self._packed_num_p     = dut.packed_num_p.value
+        self._packed_width_p   = dut.packed_width_p.value
 
         self._step         = 0
         self._acc          = 0
@@ -92,23 +97,16 @@ class PackerModel():
         self._enqs = 0
 
         self._q = queue.SimpleQueue()
-
-    def step(self):
-        # interpret as signed 8-bit like your Xs list
-        if self._step == 0:
-            self._packed_buf = 0
-        elif self._packed_buf:
-            return int((self._packed_buf << 2) | (self._unpacked_i & 0x03))
     
     def consume(self):
         assert_resolvable(self._unpacked_i)
         u = int(self._unpacked_i.value) & 0x03
         
-        self._acc = self._acc | (u << (2 * self._step))
+        self._acc = self._acc | (u << (self._unpacked_width_p * self._step))
         self._enqs += 1
 
-        if self._step == 3:
-            self._q.put(self._acc & 0xFF)
+        if self._step == self._packed_num_p - 1:
+            self._q.put(self._acc & ((1 << self._packed_width_p) - 1))
             self._acc = 0
             self._step = 0
         else:
@@ -117,7 +115,7 @@ class PackerModel():
     def produce(self):
         assert_resolvable(self._packed_o)
 
-        got = self._packed_o.value.integer & 0xFF
+        got = self._packed_o.value.integer & ((1 << self._packed_width_p) - 1)
 
         assert self._q.qsize() > 0, (
             "Output fired but model has no completed expected byte. "
@@ -175,9 +173,10 @@ class ReadyValidInterface():
 class RandomDataGenerator():
     def __init__(self, dut):
         self._dut = dut
+        self._width_p = dut.unpacked_width_p.value
 
     def generate(self):
-        x_i = random.randint(0, (1 << 2) - 1)
+        x_i = random.randint(0, (1 << self._width_p) - 1)
         return (x_i)
     
 class EdgeCaseGenerator():
@@ -344,6 +343,7 @@ class InputModel():
         ready_o = self._dut.ready_o
         valid_i = self._dut.valid_i
         unpacked_i = self._dut.unpacked_i
+        unpacked_width_p = self._dut.unpacked_width_p.value
 
         await delay_cycles(self._dut, 1, False)
 
@@ -352,7 +352,7 @@ class InputModel():
 
         await delay_cycles(self._dut, 2, False)
 
-        data = self._data.generate() & 0x3
+        data = self._data.generate() & ((1 << unpacked_width_p) - 1)
 
         # Precondition: Falling Edge of Clock
         while self._nin < self._length:

@@ -14,26 +14,32 @@ module unpacker
 	,output [0:0]                  valid_o
 	,input  [0:0]                  ready_i
 	);
-	localparam int CW = $clog2(packed_num_p);
-	wire [CW-1:0] max_count_w = CW'(packed_num_p - 1);
 
-	// Buffering Logic
-	logic [packed_width_p-1:0] packed_buf_r;
-	logic [packed_width_p-1:0] unpacked_ol;
-	
-	logic [0:0] unpacking_r;
+	// Counter logic
+	localparam int count_width_lp = $clog2(packed_num_p);
+	wire  [count_width_lp-1:0] counter_w;
+	wire  [count_width_lp-1:0] max_count_w = count_width_lp'(packed_num_p - 1);
+
+	// Unpacking logic
+	logic [0:0]                        unpacking_r;
+	logic [packed_width_p-1:0]         packed_buf_r;
+	logic [packed_width_p-1:0]         unpacked_ol;
+
+	// Maintain offset of current shift/select within packed_buf
 	logic [$clog2(packed_width_p)-1:0] offset_l;
 
+	// Mask to select the unpacked data from buffer (Replicating proper bit width)
+	wire [packed_width_p-1:0] mask_l = {{(packed_width_p - unpacked_width_p){1'b0}},
+										{unpacked_width_p{1'b1}}};
+	
+	// Handshaking logic
 	wire  [0:0] elastic_ready_ow;
-
-	wire  [$clog2(packed_num_p)-1:0] counter_w;
-
 	wire  [0:0] in_fire_w = valid_i && ready_o;
 	wire  [0:0] out_fire_w = unpacking_r && elastic_ready_ow;
 	wire  [0:0] last_w = (counter_w == max_count_w);
 	wire  [0:0] done_w = last_w && out_fire_w;
 
-
+	// Current State Logic
 	always_ff @(posedge clk_i) begin
 		if (reset_i) begin
 			packed_buf_r <= 0;
@@ -48,9 +54,9 @@ module unpacker
 		end 
 	end
 
-
 	assign ready_o = (~unpacking_r) || done_w;
 
+	// Counter to increment unpacking offset
 	counter_roll
 	#(.width_p($clog2(packed_num_p))
 	,.reset_val_p('0)
@@ -64,6 +70,7 @@ module unpacker
 	,.count_o(counter_w)
 	);
 
+	// Elastic Buffer to decouple unpacking from downstream logic
 	elastic
 	#(.width_p(unpacked_width_p)
 	,.datapath_gate_p(1)
@@ -79,12 +86,8 @@ module unpacker
 	,.data_o(unpacked_o)
 	,.ready_i(ready_i)
 	);
-
-	// Mask to select the unpacked data from buffer
-	wire [packed_width_p-1:0] mask_l = {{(packed_width_p - unpacked_width_p){1'b0}},
-										{unpacked_width_p{1'b1}}}; // Replicating proper bit width
 	
-	// Unpacking Logic
+	// Unpacking logic
 	always_comb begin
 		offset_l    = counter_w * unpacked_width_p;
 		unpacked_ol = (packed_buf_r >> offset_l) & mask_l;
