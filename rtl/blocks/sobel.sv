@@ -1,11 +1,7 @@
-`define MAX_IMAGE_HEIGHT_P 1024 // Not provided by assignment
 `timescale 1ns / 1ps
 module sobel
   #(
-    // This is the number of pixels in each line of the image
      parameter  linewidth_px_p = 16
-    // This is the width of each input pixel. You will use 8 for part 2.
-    // We will only change it to help with debugging (so that 0 to 4 * 480 can be represented without overflow)
     ,parameter in_width_p  = 2
     ,parameter out_width_p = 32)
    (input  [0:0]            clk_i
@@ -15,7 +11,7 @@ module sobel
    ,input  [in_width_p-1:0] data_i
    ,output [0:0]            valid_o
    ,input  [0:0]            ready_i
-   ,input logic signed [8:0][2:0] weights_i
+   ,input logic signed [8:0][1:0] weights_i
    ,output signed [out_width_p-1:0] data_o
    );
 
@@ -102,9 +98,7 @@ module sobel
          window_l[0][2] <= ram_2_ol;
       end
    end
-   /* ------------------------------------ Output Logic ------------------------------------ */
-   // Assign statement necessary evil, clock too slow when trying to do in always_comb
-   
+   /* ------------------------------------ Output Logic ------------------------------------ */   
    wire signed [out_width_p-1:0] p0 = $signed(weights_i[8]) * $signed(window_l[2][2]);
    wire signed [out_width_p-1:0] p1 = $signed(weights_i[7]) * $signed(window_l[2][1]);
    wire signed [out_width_p-1:0] p2 = $signed(weights_i[6]) * $signed(window_l[2][0]);

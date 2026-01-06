@@ -1,7 +1,9 @@
 `define IMAGE_W 641
 `define UART_W 8
-`define QUANTIZED_W 2
-`define PACK_NUM 4
+`define WC_SUM 9
+
+`define QUANTIZED_W 1
+`define PACK_NUM 8
 `timescale 1ns / 1ps
 module uart_axis
 	(input [0:0] clk_i // 25 MHz Clock
@@ -14,7 +16,7 @@ module uart_axis
 	);
 
 	// Zero pack the QUANTIZED_W from 2 to 3 bits, max pixel is 3, over 8 accumulations plus sign bit
-	localparam int sobel_out_width_lp = $clog2(((((32'd1<<(`QUANTIZED_W + 1)))-1)*8)+1) + 1;
+	localparam int sobel_out_width_lp = $clog2(((((32'd1<<(`QUANTIZED_W + 1)))-1)*`WC_SUM)+1) + 1;
 
 	// UART Interface Wires
 	wire [0:0]                        uart_ready_w;
@@ -52,18 +54,18 @@ module uart_axis
 	wire [`QUANTIZED_W*`PACK_NUM-1:0] packed_data_w;
 
 	// Predefined Kernel weights for gx and gy gradients	
-	typedef logic signed [2:0] weight_t;
+	typedef logic signed [1:0] weight_t;
 
 	function automatic weight_t gx_w(input int unsigned i);
 	unique case (i)
-		0: gx_w = 3'sd1;   1: gx_w = 3'sd0;   2: gx_w = -3'sd1;
-		3: gx_w = 3'sd1;   4: gx_w = 3'sd0;   5: gx_w = -3'sd1;
-		6: gx_w = 3'sd1;   7: gx_w = 3'sd0;   8: gx_w = -3'sd1;
+		0: gx_w = 2'sd1;  1: gx_w = 2'sd0;  2: gx_w = -2'sd1;
+		3: gx_w = 2'sd1;  4: gx_w = 2'sd0;  5: gx_w = -2'sd1;
+		6: gx_w = 2'sd1;  7: gx_w = 2'sd0;  8: gx_w = -2'sd1;
 		default: gx_w = '0;
 	endcase
 	endfunction
 
-	logic signed [8:0][2:0] gx_weights_w;
+	logic signed [8:0][1:0] gx_weights_w;
 
 	genvar j;
 	generate
@@ -74,14 +76,14 @@ module uart_axis
 
 	function automatic weight_t gy_w(input int unsigned i);
 	unique case (i)
-		0: gy_w = 3'sd1;   1: gy_w = 3'sd1;   2: gy_w = 3'sd1;
-		3: gy_w = 3'sd0;   4: gy_w = 3'sd0;   5: gy_w = 3'sd0;
-		6: gy_w = -3'sd1;  7: gy_w = -3'sd1;  8: gy_w = -3'sd1;
+		0: gy_w =  2'sd1;  1: gy_w =  2'sd1;  2: gy_w =  2'sd1;
+		3: gy_w =  2'sd0;  4: gy_w =  2'sd0;  5: gy_w =  2'sd0;
+		6: gy_w = -2'sd1;  7: gy_w = -2'sd1;  8: gy_w = -2'sd1;
 		default: gy_w = '0;
 	endcase
 	endfunction
 
-	logic signed [8:0][2:0] gy_weights_w;
+	logic signed [8:0][1:0] gy_weights_w;
 
 	genvar k;
 	generate
@@ -143,8 +145,8 @@ module uart_axis
 
 	// Unpacker to unpack 4 2-bit values from each 8-bit UART input
 	unpacker
-	#(.unpacked_p(`QUANTIZED_W)
-	,.num_packed_p(`PACK_NUM))
+	#(.unpacked_width_p(`QUANTIZED_W)
+	,.packed_num_p(`PACK_NUM))
 	unpacker_inst
 	(.clk_i(clk_i)
 	,.reset_i(reset_i)
@@ -161,7 +163,7 @@ module uart_axis
 	// Sobel Filter for Gx gradient
 	sobel
 	#(.linewidth_px_p(`IMAGE_W)
-	,.in_width_p(`QUANTIZED_W + 1)
+	,.in_width_p(`QUANTIZED_W + 1) // Zero pad inputs
 	,.out_width_p(sobel_out_width_lp))
 	sobel_gx_inst
 	(.clk_i(clk_i)
@@ -232,15 +234,15 @@ module uart_axis
 
 	// Packer to pack 4 2-bit magnitude values into each 8-bit UART output
 	packer
-	#(.unpacked_p(`QUANTIZED_W)
-	,.num_packed_p(`PACK_NUM))
+	#(.unpacked_width_p(`QUANTIZED_W)
+	,.packed_num_p(`PACK_NUM))
 	packer_inst
 	(.clk_i(clk_i)
 	,.reset_i(reset_i)
 	// Magnitude to Packer
 	,.ready_o(pack_ready_w)
 	,.valid_i(mag_valid_w)
-	,.unpacked_i(mag_data_w[4:3])
+	,.unpacked_i(mag_data_w[3])
 	// Packer to UART output
 	,.ready_i(uart_ready_w)
 	,.valid_o(pack_valid_w)

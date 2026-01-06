@@ -107,7 +107,7 @@ for row in range(padded_h):
         else:
             r, g, b = img_array[row - pad, col - pad]
             gray = int(0.2989*r + 0.5870*g + 0.1140*b) & 0xFF
-            q = (gray >> 7) & 0x1  # Keep only the top 2 bits
+            q = (gray >> 7) & 0x1  # Keep only the top bit
         
         acc |= q << step # LSB first
         

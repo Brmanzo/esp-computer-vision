@@ -22,10 +22,10 @@ module unpacker
 
 	// Unpacking logic
 	logic [0:0]                        unpacking_r;
-	logic [packed_width_p-1:0]         packed_buf_r;
+	logic [packed_width_p-1:0]         shift_reg_l;
 	logic [packed_width_p-1:0]         unpacked_ol;
 
-	// Maintain offset of current shift/select within packed_buf
+	// Maintain offset of current shift/select within shift_reg_l
 	logic [$clog2(packed_width_p)-1:0] offset_l;
 
 	// Mask to select the unpacked data from buffer (Replicating proper bit width)
@@ -42,11 +42,11 @@ module unpacker
 	// Current State Logic
 	always_ff @(posedge clk_i) begin
 		if (reset_i) begin
-			packed_buf_r <= 0;
+			shift_reg_l <= 0;
 			unpacking_r <= 1'b0;
 		end else begin
 			if (in_fire_w) begin
-				packed_buf_r <= packed_i;
+				shift_reg_l <= packed_i;
 				unpacking_r <= 1'b1;
 			end else if (done_w && !in_fire_w) begin
 				unpacking_r <= 1'b0;
@@ -90,7 +90,7 @@ module unpacker
 	// Unpacking logic
 	always_comb begin
 		offset_l    = counter_w * unpacked_width_p;
-		unpacked_ol = (packed_buf_r >> offset_l) & mask_l;
+		unpacked_ol = (shift_reg_l >> offset_l) & mask_l;
 	end
 
 endmodule

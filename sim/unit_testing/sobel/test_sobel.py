@@ -49,21 +49,25 @@ def output_width(input_width: int, w_sum: int = 8) -> str:
     abs_w = math.ceil(math.log2(gray_max * w_sum + 1))
     return str(abs_w + 1)   # +1 for sign bit
 
-def pack_weights_3b(ws):
+def pack_weights(weights: List[int], width: int) -> int:
     # ws: list of 9 integers, each should fit in signed 3-bit (-4..3)
     # Pack weight 0 into bits [2:0], weight 1 into [5:3], etc.
+    mask = (1 << width) - 1
     out = 0
-    for i, w in enumerate(ws):
+
+    lo, hi = -(1 << (width - 1)), (1 << (width - 1)) - 1
+
+    for i, w in enumerate(weights):
         # convert signed to 3-bit two's complement
-        w &= 0x7
-        out |= (w << (3*i))
+        assert lo <= w <= hi, f"weight[{i}]={w} out of range for signed {width}-bit ({lo}..{hi})"
+        out |= (w & mask) << (width*i)
     return out
 
 weights = [1]*9
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p", [("16", "8", output_width(8)), ("16", "3", output_width(3))])
+@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p", [("16", "2", output_width(8))])
 def test_each(test_name, simulator, linewidth_px_p, in_width_p, out_width_p):
     # This line must be first
     parameters = dict(locals())
@@ -74,7 +78,7 @@ def test_each(test_name, simulator, linewidth_px_p, in_width_p, out_width_p):
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p", [("16", "8", output_width(8)), ("16", "3", output_width(3))])
+@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p", [("16", "2", output_width(2))])
 def test_all(simulator, linewidth_px_p, in_width_p, out_width_p):
     # This line must be first
     parameters = dict(locals())
@@ -82,7 +86,7 @@ def test_all(simulator, linewidth_px_p, in_width_p, out_width_p):
     runner(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p", [("16", "8", output_width(8))])
+@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p", [("16", "2", output_width(2))])
 def test_lint(simulator, linewidth_px_p, in_width_p, out_width_p):
     # This line must be first
     parameters = dict(locals())
@@ -90,7 +94,7 @@ def test_lint(simulator, linewidth_px_p, in_width_p, out_width_p):
     lint(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p", [("16", "8", output_width(8))])
+@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p", [("16", "2", output_width(2))])
 def test_style(simulator, linewidth_px_p, in_width_p, out_width_p):
     # This line must be first
     parameters = dict(locals())
@@ -538,7 +542,7 @@ async def out_fuzz_test(dut):
     valid_i.value = 0
 
     weights_i = dut.weights_i
-    weights_i.value = pack_weights_3b([1, 1, 1, 1, 1, 1, 1, 1, 1])
+    weights_i.value = pack_weights([1, 1, 1, 1, 1, 1, 1, 1, 1], 2)
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, reset_i, 10)
 
@@ -587,7 +591,7 @@ async def in_fuzz_test(dut):
     valid_i.value = 0
 
     weights_i = dut.weights_i
-    weights_i.value = pack_weights_3b([1, 1, 1, 1, 1, 1, 1, 1, 1])
+    weights_i.value = pack_weights([1, 1, 1, 1, 1, 1, 1, 1, 1], 2)
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, reset_i, 10)
 
@@ -640,7 +644,7 @@ async def inout_fuzz_test(dut):
     valid_i.value = 0
 
     weights_i = dut.weights_i
-    weights_i.value = pack_weights_3b([1, 1, 1, 1, 1, 1, 1, 1, 1])
+    weights_i.value = pack_weights([1, 1, 1, 1, 1, 1, 1, 1, 1], 2)
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, reset_i, 10)
 
@@ -689,7 +693,7 @@ async def full_bw_test(dut):
     valid_i.value = 0
 
     weights_i = dut.weights_i
-    weights_i.value = pack_weights_3b([1, 1, 1, 1, 1, 1, 1, 1, 1])
+    weights_i.value = pack_weights([1, 1, 1, 1, 1, 1, 1, 1, 1], 2)
 
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, reset_i, 10)
@@ -724,7 +728,7 @@ async def full_bw_Gx_test(dut):
     timeout = l + 1
 
     kernel = [[-1, 0, 1],
-              [-2, 0, 2],
+              [-1, 0, 1],
               [-1, 0, 1]]
     model = SobelModel(dut, kernel)
     m = ModelRunner(dut, model)
@@ -741,7 +745,7 @@ async def full_bw_Gx_test(dut):
     valid_i.value = 0
 
     weights_i = dut.weights_i
-    weights_i.value = pack_weights_3b([-1, 0, 1, -2, 0, 2, -1, 0, 1])
+    weights_i.value = pack_weights([-1, 0, 1, -1, 0, 1, -1, 0, 1], 2)
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, reset_i, 10)
 
@@ -774,9 +778,9 @@ async def full_bw_Gy_test(dut):
 
     timeout = l + 1
 
-    kernel = [[-1, -2, -1],
+    kernel = [[-1, -1, -1],
               [ 0,  0,  0],
-              [ 1,  2,  1]]
+              [ 1,  1,  1]]
     model = SobelModel(dut, kernel)
     m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, rate), l)
@@ -792,7 +796,7 @@ async def full_bw_Gy_test(dut):
     valid_i.value = 0
 
     weights_i = dut.weights_i
-    weights_i.value = pack_weights_3b([-1, -2, -1, 0, 0, 0, 1, 2, 1])
+    weights_i.value = pack_weights([-1, -1, -1, 0, 0, 0, 1, 1, 1], 2)
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, reset_i, 10)
 
