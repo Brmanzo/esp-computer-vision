@@ -52,7 +52,6 @@ module top
      ,.q_o(reset_r));
        
   (* blackbox *)
-  // This is a PLL! You'll learn about these later...
   SB_PLL40_2_PAD
     #(.FEEDBACK_PATH("SIMPLE")
      ,.DIVR(4'b0000)
@@ -74,8 +73,8 @@ module top
        (.clk_i                          (clk_25mhz_o), // 25 MHz Clock
         .reset_i                        (reset_r),
 
-        .rx_serial_i                    (rx_serial_i),
-        .tx_serial_o                    (tx_serial_o),
+        .rx_serial_i                    (ESP_RX_i),
+        .tx_serial_o                    (ESP_TX_o),
 
         .led_o                          (led_o[5:1]));
 

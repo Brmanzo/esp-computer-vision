@@ -1,4 +1,4 @@
-`define IMAGE_W 641
+`define IMAGE_W 161
 `define UART_W 8
 `define WC_SUM 9
 
@@ -15,7 +15,7 @@ module uart_axis
 	,output [5:1] led_o
 	);
 
-	// Zero pack the QUANTIZED_W from 2 to 3 bits, max pixel is 3, over 8 accumulations plus sign bit
+	// Zero pack the QUANTIZED_W from 1 to 2 bits, max pixel value is 1, worst case sum is 9 per convolution
 	localparam int sobel_out_width_lp = $clog2(((((32'd1<<(`QUANTIZED_W + 1)))-1)*`WC_SUM)+1) + 1;
 
 	// UART Interface Wires

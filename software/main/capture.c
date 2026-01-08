@@ -263,12 +263,12 @@ void rgb_to_gray_quantized(const uint16_t *src_rgb, uint8_t *dst_q, uint16_t w, 
         uint8_t b =  p        & 0x1F; b = (b * 527 + 23) >> 6;
         
         uint8_t gray = (uint8_t)((77 * r + 150 * g + 29 * b) >> 8) + 128;
-        // quantize to 4 levels by selecting 2 MSBs
-        uint8_t q = (gray >> 6) & 0x03; // 0..3
+        // quantize to 2 levels by selecting 1 MSB
+        uint8_t q = (gray >> 7) & 0x01; // 0..1
 
-        acc = acc | (q << (step * 2));
+        acc = acc | (q << (step * 1));
         step++;
-        if (step == 4) {
+        if (step == 8) {
             dst_q[byte_i] = (uint8_t)acc;
             byte_i += 1;
             step = 0;
@@ -280,19 +280,10 @@ void rgb_to_gray_quantized(const uint16_t *src_rgb, uint8_t *dst_q, uint16_t w, 
     }
 }
 
-static void trim_gray_center(const uint8_t *padded, uint8_t *trimmed,
-                             uint16_t w, uint16_t h, uint16_t padded_w)
-{
-    for (uint16_t y = 0; y < h; y++) {
-        memcpy(&trimmed[(size_t)y * w],
-               &padded[((size_t)(y + PAD)) * padded_w + PAD],
-               w);
-    }
-}
 /* -------------------------------------- Packet Encoding -------------------------------------- */
 
 static inline size_t pixels_to_bytes(size_t pixels) {
-    return (pixels + 3) / 4; // 4 pixels per byte
+    return (pixels + 7) / 8; // 8 pixels per byte
 }
 
 void encapsulate(uint8_t *packet, uint16_t packet_len, char *mode, uint16_t w, uint16_t h) {
@@ -310,75 +301,9 @@ void encapsulate(uint8_t *packet, uint16_t packet_len, char *mode, uint16_t w, u
         packet[PACKET_LEN_L] = (packet_len) & 0xFF;
     }
     else if (strcmp(mode, "footer") == 0) {
-        packet[packet_len + 1] = 0xFF;
-        packet[packet_len + 2] = 0xFD; 
+        packet[DATA_START + packet_len + 0] = 0xFF;
+        packet[DATA_START + packet_len + 1] = 0xFD;
     }
- }
-
-/* Converts returned JPEG into grayscale bitmap and reports RGB of center pixel. */
-size_t quantize(const uint8_t *src_gray, uint8_t *packet,
-                             size_t packet_cap, uint16_t w, uint16_t h)
-{
-    const size_t pixels = (size_t)w * h;
-    const size_t pixel_bytes = pixels_to_bytes(pixels);
-    const size_t header_len = DATA_START;
-    const size_t footer_len = 2; // EOI 0xFF, 0xFD
-    const size_t needed = header_len + pixel_bytes + footer_len;
-
-    if (packet_cap < needed) {
-        ESP_LOGE("packing rgb565", "packet buffer too small: cap=%u need=%u", (unsigned)packet_cap, (unsigned)needed);
-        return 0;
-    }
-
-    // zero payload area (important before ORing)
-    memset(packet + header_len, 0, pixel_bytes);
-
-    for (size_t i = 0; i < pixels; ++i) {
-        // quantize to 4 levels by selecting 2 MSBs
-        uint8_t q = (src_gray[i] >> 6) & 0x03; // 0..3
-
-        const size_t byte_index = header_len + (i / 4);    // which payload byte
-        const unsigned pos_within_byte = i % 4;           // 0..3
-        const unsigned shift = (3 - pos_within_byte) * 2; // MSB-first: pixel0 -> bits 7..6
-
-        packet[byte_index] |= (uint8_t)(q << shift);
-    }
-    return header_len + pixel_bytes + footer_len;
-}
-
-uint16_t compress_rle(uint8_t *packet, uint8_t *RLE, uint16_t len) {
-    uint8_t curr_color = (packet[DATA_START] >> 6) & 0x03;
-    uint8_t count = 1; // first pixel
-    uint16_t current_byte = DATA_START;
-
-    for (size_t byte = DATA_START; byte < len; byte++) {
-        if (curr_color == 0b00 && byte == 0b00000000 ||
-            curr_color == 0b01 && byte == 0b01010101 ||
-            curr_color == 0b10 && byte == 0b10101010 ||
-            curr_color == 0b11 && byte == 0b11111111) {
-            count += 4;
-        }
-        else {
-            for (uint8_t crumb = 0; crumb < 4; crumb++) {
-                uint8_t val = (packet[byte] >> (6 - 2 * crumb)) & 0x03;
-                if (val == curr_color && count < 63) {
-                    count++;
-                } else {
-                    // emit run
-                    RLE[current_byte++] = (count << 2) | (curr_color & 0x03);
-                    // start new run
-                    curr_color = val;
-                    count = 1;
-                }
-            }
-            continue;
-        }
-    }
-    // emit last run
-    if (count > 0) {
-        RLE[current_byte++] = (count << 2) | (curr_color & 0x03);
-    }
-    return current_byte;
 }
 
 /* -------------------------------------- UART RX Task -------------------------------------- */
@@ -485,6 +410,7 @@ void singleCapture(void)
     
     /* ------------------------------------------------- Convert to Gray and Quantize ------------------------------------------------- */
     const size_t padded_pixels = (size_t)(padded_w * padded_h);
+
     size_t padded_bytes = pixels_to_bytes(padded_pixels);
     ESP_LOGI("dims", "w=%u h=%u padded_w=%u padded_h=%u padded_pixels=%u",
          w, h, padded_w, padded_h, (unsigned)padded_pixels);
@@ -501,7 +427,8 @@ void singleCapture(void)
     uint8_t *gray_q_rx = (uint8_t*)heap_caps_malloc(padded_bytes, MALLOC_CAP_8BIT);
     if (!gray_q_rx) {
         ESP_LOGE("main", "OOM gray_q_rx");
-        free(gray_q_rx);
+        free(gray_q_tx);
+        free(pix);
         return;
     }
     rx_ctx_t rx = {.expect = padded_bytes, .dst = gray_q_rx, .got = 0, .done = false, .error = false};
@@ -511,58 +438,55 @@ void singleCapture(void)
 
     const uint8_t dummy[1] = {0};
     ESP_ERROR_CHECK(uart_write_all(UART_NUM_1, dummy, 1));
-    ESP_ERROR_CHECK(uart_write_all(UART_NUM_1, gray_q_tx, padded_pixels));
+    ESP_ERROR_CHECK(uart_write_all(UART_NUM_1, gray_q_tx, padded_bytes));
 
     // Wait for RX to finish
     while (!rx.done) vTaskDelay(pdMS_TO_TICKS(10));
 
     if (rx.error) {
         ESP_LOGW("uart", "rx failed: got %u/%u bytes", (unsigned)rx.got, (unsigned)rx.expect);
-        // cleanup + return
+        free(gray_q_rx);
+        free(gray_q_tx);
+        free(pix);
+        return;
     }
 
     free(gray_q_tx);
 
-    /* ----------------------------------------------- Encode and Encapsulate Packket ----------------------------------------------- */
-    // Create Payload with height and width in header
-    size_t payload_bytes = pixels_to_bytes(gray_q_rx);
-    size_t packet_cap = DATA_START + payload_bytes + 2; // header + payload + footer
-    uint8_t *packet = (uint8_t*)heap_caps_malloc((gray_q_rx) + DATA_START, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    /* ----------------------------------------------- Encapsulate RAW Packet ----------------------------------------------- */
+    size_t packet_len = DATA_START + padded_bytes + 2;
+    uint8_t *packet = (uint8_t*)heap_caps_malloc(packet_len, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
     if (!packet) {
-        ESP_LOGE("main", "packet malloc failed (len=%u)", (unsigned)packet_cap);
+        ESP_LOGE("main", "packet malloc failed (len=%u)", (unsigned)packet_len);
+        free(gray_q_rx);
         free(pix);
-        return; // or handle error
+        return;
     }
+
+    // Write header INCLUDING payload length (use your encapsulate or write directly)
     encapsulate(packet, 0, "header", padded_w, padded_h);
-    // RLE buffer (worst case: no compression)
-    uint8_t *RLE = (uint8_t*)heap_caps_malloc(padded_bytes + DATA_START, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
-    if (RLE) {
-        encapsulate(RLE, 0, "header", padded_w, padded_h);
-    }
+    // IMPORTANT: you must set PACKET_LEN_H/L to padded_bytes somewhere.
+    // If encapsulate("header") doesn't do it, call data len setter:
+    encapsulate(packet, (uint16_t)padded_bytes, "data len", padded_w, padded_h);
 
-    // Quantize to 4 levels and pack into packet
-    // size_t packet_len = quantize(gray_trimmed_frame, packet, packet_cap, trimmed_w, trimmed_h);
-    
-    uint16_t end_of_data = compress_rle(packet, RLE, padded_bytes);
-    
-    // Now write packet length in header
-    encapsulate(RLE, end_of_data, "data len", padded_w, padded_h);
+    memcpy(packet + DATA_START, gray_q_rx, padded_bytes);
 
-    // Write footer
-    encapsulate(RLE, end_of_data, "footer", padded_w, padded_h);
+    // Footer must be placed right after payload
+    // If your encapsulate("footer") uses packet_len offsets incorrectly, do it explicitly:
+    packet[DATA_START + padded_bytes + 0] = 0xFF;
+    packet[DATA_START + padded_bytes + 1] = 0xFD;
 
+    free(gray_q_rx);
     free(pix);
-    // Processing decoded JPEG
+
     /* ------------------------------------------------------ Publish Frame ------------------------------------------------------ */
-    esp_err_t rc = publish_frame(RLE, end_of_data + DATA_START + 2);
+    esp_err_t rc = publish_frame(packet, packet_len);
     if (rc == ESP_OK) {
-        ESP_LOGI("main", "published %u bytes", (unsigned)(end_of_data + DATA_START + 2));
+        ESP_LOGI("main", "published %u bytes", (unsigned)packet_len);
     } else {
         ESP_LOGW("main", "publish failed: %d", rc);
     }
-    free(gray_trimmed_frame);
     free(packet);
-    free(RLE);
 
     // Small yield for Wi-Fi/httpd 
     vTaskDelay(pdMS_TO_TICKS(10));
