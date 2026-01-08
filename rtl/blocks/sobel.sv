@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 module sobel
   #(
-     parameter  linewidth_px_p = 16
+     parameter linewidth_px_p = 16
     ,parameter in_width_p  = 2
     ,parameter out_width_p = 32)
    (input  [0:0]            clk_i
@@ -98,21 +98,23 @@ module sobel
          window_l[0][2] <= ram_2_ol;
       end
    end
-   /* ------------------------------------ Output Logic ------------------------------------ */   
-   wire signed [out_width_p-1:0] p0 = $signed(weights_i[8]) * $signed(window_l[2][2]);
-   wire signed [out_width_p-1:0] p1 = $signed(weights_i[7]) * $signed(window_l[2][1]);
-   wire signed [out_width_p-1:0] p2 = $signed(weights_i[6]) * $signed(window_l[2][0]);
-   wire signed [out_width_p-1:0] p3 = $signed(weights_i[5]) * $signed(window_l[1][2]);
-   wire signed [out_width_p-1:0] p4 = $signed(weights_i[4]) * $signed(window_l[1][1]);
-   wire signed [out_width_p-1:0] p5 = $signed(weights_i[3]) * $signed(window_l[1][0]);
-   wire signed [out_width_p-1:0] p6 = $signed(weights_i[2]) * $signed(window_l[0][2]);
-   wire signed [out_width_p-1:0] p7 = $signed(weights_i[1]) * $signed(window_l[0][1]);
-   wire signed [out_width_p-1:0] p8 = $signed(weights_i[0]) * $signed(window_l[0][0]);
-                  
-   wire signed [out_width_p-1:0] acc = p0 + p1 + p2
-                                     + p3 + p4 + p5
-                                     + p6 + p7 + p8;
-
-   assign data_o = acc;
+   /* ------------------------------------ Output Logic ------------------------------------ */
+   logic signed [out_width_p-1:0] acc_l;
+   logic signed [out_width_p-1:0] pp_l;
+   always_comb begin
+      acc_l = '0;
+      for (int r = 0; r < 3; r++) begin
+         for (int c = 0; c < 3; c++) begin
+            // When binary inputs, use bitwise AND instead of multiplication
+            if (in_width_p == 1) begin
+               pp_l = signed'(out_width_p'($signed(weights_i[r*3 + c])) & out_width_p'(window_l[r][c]));
+               acc_l = acc_l + pp_l;
+            end else begin
+               acc_l = acc_l + ($signed(weights_i[r*3 + c]) * $signed(window_l[r][c]));
+            end
+         end
+      end
+   end   
+   assign data_o = acc_l;
 
 endmodule

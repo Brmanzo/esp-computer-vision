@@ -45,6 +45,7 @@ tests = ['reset_test'
          ,'full_bw_Gy_test']
 
 def output_width(input_width: int, w_sum: int = 8) -> str:
+    '''Calculates proper output width for given input width amount of accumulations.'''
     gray_max = (1 << input_width) - 1
     abs_w = math.ceil(math.log2(gray_max * w_sum + 1))
     return str(abs_w + 1)   # +1 for sign bit
@@ -67,7 +68,7 @@ weights = [1]*9
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p", [("16", "2", output_width(8))])
+@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p", [("16", "2", output_width(2)), ("32", "1", output_width(1))])
 def test_each(test_name, simulator, linewidth_px_p, in_width_p, out_width_p):
     # This line must be first
     parameters = dict(locals())
@@ -78,7 +79,7 @@ def test_each(test_name, simulator, linewidth_px_p, in_width_p, out_width_p):
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p", [("16", "2", output_width(2))])
+@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p", [("16", "2", output_width(2)), ("32", "1", output_width(1))])
 def test_all(simulator, linewidth_px_p, in_width_p, out_width_p):
     # This line must be first
     parameters = dict(locals())
