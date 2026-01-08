@@ -33,6 +33,11 @@ module uart_axis
 	wire [0:0]                        unpack_valid_w;
 	wire [`QUANTIZED_W-1:0]           unpacked_data_w;
 
+	// Blur Wires
+	wire [0:0] 					      blur_ready_w;
+	wire [0:0] 					      blur_valid_w;
+	wire [sobel_out_width_lp-1:0] 	  blur_data_w;
+
 	// Sobel Wires
 	wire [0:0]                        gx_ready_w, gy_ready_w;
 	wire [0:0]                        gx_valid_w, gy_valid_w;
@@ -57,39 +62,57 @@ module uart_axis
 	typedef logic signed [1:0] weight_t;
 
 	function automatic weight_t gx_w(input int unsigned i);
-	unique case (i)
-		0: gx_w = 2'sd1;  1: gx_w = 2'sd0;  2: gx_w = -2'sd1;
-		3: gx_w = 2'sd1;  4: gx_w = 2'sd0;  5: gx_w = -2'sd1;
-		6: gx_w = 2'sd1;  7: gx_w = 2'sd0;  8: gx_w = -2'sd1;
-		default: gx_w = '0;
-	endcase
+		unique case (i)
+			0: gx_w = 2'sd1;  1: gx_w = 2'sd0;  2: gx_w = -2'sd1;
+			3: gx_w = 2'sd1;  4: gx_w = 2'sd0;  5: gx_w = -2'sd1;
+			6: gx_w = 2'sd1;  7: gx_w = 2'sd0;  8: gx_w = -2'sd1;
+			default: gx_w = '0;
+		endcase
 	endfunction
 
 	logic signed [8:0][1:0] gx_weights_w;
 
 	genvar j;
 	generate
-	for (j = 0; j < 9; j++) begin : gen_gx
-		assign gx_weights_w[j] = gx_w(j);  // gx_w returns weight_t (signed [2:0])
-	end
+		for (j = 0; j < 9; j++) begin : gen_gx
+			assign gx_weights_w[j] = gx_w(j);  // gx_w returns weight_t (signed [2:0])
+		end
 	endgenerate
 
 	function automatic weight_t gy_w(input int unsigned i);
-	unique case (i)
-		0: gy_w =  2'sd1;  1: gy_w =  2'sd1;  2: gy_w =  2'sd1;
-		3: gy_w =  2'sd0;  4: gy_w =  2'sd0;  5: gy_w =  2'sd0;
-		6: gy_w = -2'sd1;  7: gy_w = -2'sd1;  8: gy_w = -2'sd1;
-		default: gy_w = '0;
-	endcase
+		unique case (i)
+			0: gy_w =  2'sd1;  1: gy_w =  2'sd1;  2: gy_w =  2'sd1;
+			3: gy_w =  2'sd0;  4: gy_w =  2'sd0;  5: gy_w =  2'sd0;
+			6: gy_w = -2'sd1;  7: gy_w = -2'sd1;  8: gy_w = -2'sd1;
+			default: gy_w = '0;
+		endcase
 	endfunction
 
 	logic signed [8:0][1:0] gy_weights_w;
 
 	genvar k;
 	generate
-	for (k = 0; k < 9; k++) begin : gen_gy
-		assign gy_weights_w[k] = gy_w(k);  // gy_w returns weight_t (signed [2:0])
-	end
+		for (k = 0; k < 9; k++) begin : gen_gy
+			assign gy_weights_w[k] = gy_w(k);  // gy_w returns weight_t (signed [2:0])
+		end
+	endgenerate
+
+	function automatic weight_t blur_w(input int unsigned i);
+		unique case (i)
+			0: blur_w = 2'sd1; 1: blur_w = 2'sd1; 2: blur_w = 2'sd1;
+			3: blur_w = 2'sd1; 4: blur_w = 2'sd1; 5: blur_w = 2'sd1;
+			6: blur_w = 2'sd1; 7: blur_w = 2'sd1; 8: blur_w = 2'sd1;
+			default: blur_w = '0;
+		endcase
+	endfunction
+
+	logic signed [8:0][1:0] blur_weights_w;
+
+	genvar k;
+	generate
+		for (k = 0; k < 9; k++) begin : gen_blur
+			assign blur_weights_w[k] = blur_w(k);  // blur_w returns weight_t (signed [2:0])
+		end
 	endgenerate
 
 	// For indicating FPGA operation
@@ -155,9 +178,28 @@ module uart_axis
 	,.valid_i(axis_valid_w)
 	,.packed_i(axis_data_w)
 	// Unpacker to Sobel Filters
-	,.ready_i(gx_ready_w & gy_ready_w)
+	,.ready_i(blur_ready_w)
 	,.valid_o(unpack_valid_w)
 	,.unpacked_o(unpacked_data_w)
+	);
+
+	// Gaussian Blur Filter to denoise input image
+	sobel
+	#(.linewidth_px_p(`IMAGE_W)
+	,.in_width_p(`QUANTIZED_W + 1) // Zero pad inputs
+	,.out_width_p(sobel_out_width_lp))
+	gaus_blur_inst
+	(.clk_i(clk_i)
+	,.reset_i(reset_i)
+	// Unpacker to Gx
+	,.ready_o(blur_ready_w)
+	,.valid_i(unpack_valid_w)
+	,.data_i({1'b0, unpacked_data_w})
+	// Gx to Elastic Stage
+	,.ready_i(gx_ready_w & gy_ready_w)
+	,.valid_o(blur_valid_w)
+	,.data_o(blur_data_w)
+	,.weights_i(blur_weights_w)
 	);
 
 	// Sobel Filter for Gx gradient
@@ -170,8 +212,8 @@ module uart_axis
 	,.reset_i(reset_i)
 	// Unpacker to Gx
 	,.ready_o(gx_ready_w)
-	,.valid_i(unpack_valid_w)
-	,.data_i({1'b0, unpacked_data_w})
+	,.valid_i(blur_valid_w)
+	,.data_i({1'b0, blur_data_w[3]})
 	// Gx to Elastic Stage
 	,.ready_i(elastic_ready_w)
 	,.valid_o(gx_valid_w)
@@ -189,8 +231,8 @@ module uart_axis
 	,.reset_i(reset_i)
 	// Unpacker to Gy
 	,.ready_o(gy_ready_w)
-	,.valid_i(unpack_valid_w)
-	,.data_i({1'b0, unpacked_data_w})
+	,.valid_i(blur_valid_w)
+	,.data_i({1'b0, blur_data_w[3]})
 	// Gy to Elastic Stage
 	,.ready_i(elastic_ready_w)
 	,.valid_o(gy_valid_w)
