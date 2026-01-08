@@ -251,9 +251,18 @@ void rgb_to_gray_quantized(const uint16_t *src_rgb, uint8_t *dst_q, uint16_t w, 
 {
     const size_t pixels = (size_t)w * h;
 
-    int step   = 0;
-    int acc    = 0;
-    int byte_i = 0;
+    int step     = 0;
+    int acc      = 0;
+    int byte_i   = 0;
+    uint64_t avg = 0;
+
+    // Intermediate buffer to average the grayscale values
+    uint8_t *gray_pix = (uint8_t*)heap_caps_malloc(pixels, MALLOC_CAP_8BIT);
+    if (!gray_pix) {
+        ESP_LOGW("main","OOM gray %u bytes", (unsigned)pixels);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        return;
+    }
     
     for (size_t i = 0; i < pixels; ++i) {
         uint16_t p = src_rgb[i];
@@ -262,11 +271,20 @@ void rgb_to_gray_quantized(const uint16_t *src_rgb, uint8_t *dst_q, uint16_t w, 
         uint8_t g = (p >> 5)  & 0x3F; g = (g * 259 + 33) >> 6;
         uint8_t b =  p        & 0x1F; b = (b * 527 + 23) >> 6;
         
-        uint8_t gray = (uint8_t)((77 * r + 150 * g + 29 * b) >> 8) + 128;
-        // quantize to 2 levels by selecting 1 MSB
-        uint8_t q = (gray >> 7) & 0x01; // 0..1
+        uint8_t gray = (uint8_t)((77 * r + 150 * g + 29 * b) >> 8); // 0..255
+        avg += gray;
+        gray_pix[i] = gray;
+    }
 
-        acc = acc | (q << (step * 1));
+    // Take the average to adaptively threshold
+    avg /= pixels;
+    // avg *= 1.2;  // slight bias to darkness to denoise
+    printf("Unbiased avg: %llu\nBiased avg: %llu\n", (unsigned long long)(avg / 1.2), (unsigned long long)avg);
+
+    for (size_t i = 0; i < pixels; ++i) {
+        uint8_t q = (gray_pix[i] >= avg);  // explicit threshold
+    
+        acc |= (q << step);
         step++;
         if (step == 8) {
             dst_q[byte_i] = (uint8_t)acc;
@@ -278,6 +296,8 @@ void rgb_to_gray_quantized(const uint16_t *src_rgb, uint8_t *dst_q, uint16_t w, 
     if (step != 0) {
         dst_q[byte_i] = (uint8_t)acc;
     }
+
+    free(gray_pix);
 }
 
 /* -------------------------------------- Packet Encoding -------------------------------------- */
