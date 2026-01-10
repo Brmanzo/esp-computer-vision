@@ -8,6 +8,7 @@
 module uart_axis
 	(input [0:0] clk_i // 25 MHz Clock
 	,input [0:0] reset_i
+	,input [3:1] button_i
 
 	,input [0:0] rx_serial_i
 	,output [0:0] tx_serial_o
@@ -42,11 +43,6 @@ module uart_axis
 	wire [0:0]                        gx_ready_w, gy_ready_w;
 	wire [0:0]                        gx_valid_w, gy_valid_w;
 	wire [sobel_out_width_lp-1:0]     gx_data_w, gy_data_w;
-
-	// Elastic Stage Wires
-	wire [0:0]                        elastic_ready_w;
-	wire [0:0]                        elastic_valid_w;
-	wire [sobel_out_width_lp-1:0]     elastic_gx_w, elastic_gy_w;
 
 	// Magnitude Wires
 	wire [0:0]                        mag_ready_w;
@@ -108,10 +104,10 @@ module uart_axis
 
 	logic signed [8:0][1:0] blur_weights_w;
 
-	genvar k;
+	genvar b;
 	generate
-		for (k = 0; k < 9; k++) begin : gen_blur
-			assign blur_weights_w[k] = blur_w(k);  // blur_w returns weight_t (signed [2:0])
+		for (b = 0; b < 9; b++) begin : gen_blur
+			assign blur_weights_w[b] = blur_w(b);  // blur_w returns weight_t (signed [2:0])
 		end
 	endgenerate
 
@@ -213,9 +209,9 @@ module uart_axis
 	// Unpacker to Gx
 	,.ready_o(gx_ready_w)
 	,.valid_i(blur_valid_w)
-	,.data_i({1'b0, blur_data_w[3]})
+	,.data_i({1'b0, blur_data_w[3]}) // "Right shit" by 3 to divide by 8 and average the output
 	// Gx to Elastic Stage
-	,.ready_i(elastic_ready_w)
+	,.ready_i(mag_ready_w)
 	,.valid_o(gx_valid_w)
 	,.data_o(gx_data_w)
 	,.weights_i(gx_weights_w)
@@ -234,27 +230,10 @@ module uart_axis
 	,.valid_i(blur_valid_w)
 	,.data_i({1'b0, blur_data_w[3]})
 	// Gy to Elastic Stage
-	,.ready_i(elastic_ready_w)
+	,.ready_i(mag_ready_w)
 	,.valid_o(gy_valid_w)
 	,.data_o(gy_data_w)
 	,.weights_i(gy_weights_w)
-	);
-
-	// Elastic stage to meet timing requirements
-	elastic
-	#(.width_p(sobel_out_width_lp * 2) // 8 bits (4 for gx and 4 for gy)
-	,.datapath_gate_p(1))
-	elastic_stage_1_inst
-	(.clk_i(clk_i)
-	,.reset_i(reset_i)
-	// Gx and Gy to Elastic Stage
-	,.ready_o(elastic_ready_w)
-	,.valid_i(gx_valid_w & gy_valid_w) 
-	,.data_i({gx_data_w, gy_data_w})
-	// Elastic Stage to Magnitude
-	,.ready_i(mag_ready_w)
-	,.valid_o(elastic_valid_w)
-	,.data_o({elastic_gx_w, elastic_gy_w})
 	);
 
 	// Magnitude calculated from Gx and Gy
@@ -265,14 +244,24 @@ module uart_axis
 	,.reset_i(reset_i)
 	// Elastic Stage to Magnitude
 	,.ready_o(mag_ready_w)
-	,.valid_i(elastic_valid_w)
-	,.gx_i(elastic_gx_w)
-	,.gy_i(elastic_gy_w)
+	,.valid_i(gx_valid_w & gy_valid_w)
+	,.gx_i(gx_data_w)
+	,.gy_i(gy_data_w)
 	// Magnitude to Packer
 	,.ready_i(pack_ready_w)
 	,.valid_o(mag_valid_w)
 	,.mag_o(mag_data_w)
 	);
+
+	logic [0:0] output_mux_w;
+	always_comb begin
+		case (button_i)
+			3'b001: output_mux_w  = blur_data_w[3]; // Lowest bit
+			3'b010: output_mux_w  = gx_data_w[3];
+			3'b100: output_mux_w  = gy_data_w[3];
+			default: output_mux_w = mag_data_w[3];
+		endcase
+	end
 
 	// Packer to pack 4 2-bit magnitude values into each 8-bit UART output
 	packer
@@ -284,7 +273,7 @@ module uart_axis
 	// Magnitude to Packer
 	,.ready_o(pack_ready_w)
 	,.valid_i(mag_valid_w)
-	,.unpacked_i(mag_data_w[3])
+	,.unpacked_i(output_mux_w)
 	// Packer to UART output
 	,.ready_i(uart_ready_w)
 	,.valid_o(pack_valid_w)
