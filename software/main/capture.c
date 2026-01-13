@@ -204,8 +204,8 @@ static void uart_rx_task(void *arg)
     vTaskDelete(NULL);
 }
 
-static inline uint8_t luma_to_bit(uint8_t y) {
-    return (y > 40) ? 1 : 0;  // Lowered from 127 to 40 to catch the 0x3E (62) pixels
+static inline uint8_t luma_to_bit(uint8_t y, uint8_t threshold) {
+    return (y > threshold) ? 1 : 0;
 }
 
 esp_err_t spi_read_chunk_no_yield(uint8_t *dst, size_t n, bool keep_cs)
@@ -232,14 +232,14 @@ esp_err_t spi_read_chunk_no_yield(uint8_t *dst, size_t n, bool keep_cs)
     return ESP_OK;
 }
 
-esp_err_t arducam_read_y_pack1bpp_stream(uint8_t *out, size_t out_cap, uint16_t w, uint16_t h)
+esp_err_t arducam_read_y_pack1bpp_stream(uint8_t *out, size_t out_cap, uint16_t w, uint16_t h, uint8_t* adaptive_th)
 {
     const size_t npix    = (size_t)w * h;
     const size_t out_len = (npix + 7) / 8;
     const size_t raw_len = npix * 2;
     if (out_cap < out_len) return ESP_ERR_NO_MEM;
 
-    // 1. LOCK THE BUS (Critical for atomic burst)
+    // 1. LOCK THE BUS
     esp_err_t e = spi_device_acquire_bus(spi_device_handle, portMAX_DELAY);
     if (e != ESP_OK) return e;
 
@@ -253,7 +253,7 @@ esp_err_t arducam_read_y_pack1bpp_stream(uint8_t *out, size_t out_cap, uint16_t 
     e = spi_device_polling_transmit(spi_device_handle, &tc);
     if (e != ESP_OK) { spi_device_release_bus(spi_device_handle); return e; }
 
-    // 3. BURN THE DUMMY BYTE (Fixes the initial phase alignment)
+    // 3. BURN DUMMY BYTE
     uint8_t dummy_waste;
     spi_transaction_t tw = {
         .length    = 8,
@@ -270,49 +270,73 @@ esp_err_t arducam_read_y_pack1bpp_stream(uint8_t *out, size_t out_cap, uint16_t 
     size_t out_i = 0;
     uint8_t acc = 0;
     int bitpos = 0;
-    bool keep = false; // We burned the dummy, so next byte should be Y0 (Keep)
+    bool keep = false; // Skip U, Keep Y (assuming correct phase from previous fix)
 
-    while (remaining) {
-        size_t n = remaining > RJPEG_PULL_CHUNK ? RJPEG_PULL_CHUNK : remaining;
-        
-        // Pass 'true' to keep CS active until the very last chunk
-        bool keep_cs = (remaining > n); 
-        
-        // Use the NO YIELD version
-        e = spi_read_chunk_no_yield(tmp, n, keep_cs);
-        // DEBUG: Print first chunk ONLY
-        static bool printed_debug = false;
-        if (!printed_debug) {
-            printf("RAW STREAM: ");
-            for(int k=0; k<16 && k<n; k++) {
-                printf("%02X ", tmp[k]);
-            }
-            printf("\n");
-            printed_debug = true;
-        }
-        if (e != ESP_OK) { spi_device_release_bus(spi_device_handle); return e; }
+    // MODE A: PACKING (Using existing threshold)
+    if (*adaptive_th > 0) {
+        while (remaining) {
+            size_t n = remaining > RJPEG_PULL_CHUNK ? RJPEG_PULL_CHUNK : remaining;
+            bool keep_cs = (remaining > n); 
+            
+            e = spi_read_chunk_no_yield(tmp, n, keep_cs);
+            if (e != ESP_OK) { spi_device_release_bus(spi_device_handle); return e; }
 
-        for (size_t i = 0; i < n; i++) {
-            if (keep) {
-                // Using MSB first (Web Standard) - try this if LSB looks static-y
-                // acc |= (luma_to_bit(tmp[i]) << (7 - bitpos)); 
-                
-                // Using LSB first (Your original)
-                acc |= (luma_to_bit(tmp[i]) << bitpos);
-                
-                if (++bitpos == 8) {
-                    out[out_i++] = acc;
-                    acc = 0;
-                    bitpos = 0;
+            for (size_t i = 0; i < n; i++) {
+                if (keep) {
+                    // Corrected syntax: Pass dereferenced threshold, shift RESULT
+                    acc |= (luma_to_bit(tmp[i], *adaptive_th) << bitpos);
+                    
+                    if (++bitpos == 8) {
+                        out[out_i++] = acc;
+                        acc = 0;
+                        bitpos = 0;
+                    }
                 }
+                keep = !keep;
             }
-            keep = !keep;
+            remaining -= n;
         }
-        remaining -= n;
-    }
+        // Cleanup trailing bits
+        if (bitpos != 0 && out_i < out_len) out[out_i++] = acc;
+    } 
     
-    // Cleanup
-    if (bitpos != 0 && out_i < out_len) out[out_i++] = acc;
+    // MODE B: CALIBRATION (Calculating average)
+    else {
+        uint64_t sum_luma = 0;
+        size_t count_luma = 0;
+
+        while (remaining) {
+            size_t n = remaining > RJPEG_PULL_CHUNK ? RJPEG_PULL_CHUNK : remaining;
+            bool keep_cs = (remaining > n);
+
+            e = spi_read_chunk_no_yield(tmp, n, keep_cs);
+            if (e != ESP_OK) { spi_device_release_bus(spi_device_handle); return e; }
+
+            for (size_t i = 0; i < n; i++) {
+                if (keep) {
+                    sum_luma += tmp[i]; // Accumulate brightness
+                    count_luma++;
+                }
+                keep = !keep;
+            }
+            remaining -= n;
+        }
+
+        // Compute Average
+        if (count_luma > 0) {
+            *adaptive_th = (uint8_t)(sum_luma / count_luma);
+            
+            // Safety: Ensure we don't calculate 0 and loop forever. 
+            // Min fallback 10 ensures next frame goes to 'Packing' mode.
+            if (*adaptive_th < 10) *adaptive_th = 10;
+            
+            printf("Calibration Done. Avg Luma: %u\n", (unsigned)*adaptive_th);
+        }
+        
+        // Fill output with 0 or a dummy pattern so we don't send garbage
+        memset(out, 0, out_len); 
+    }
+
     spi_device_release_bus(spi_device_handle);
     return ESP_OK;
 }
@@ -347,6 +371,7 @@ void debug_ascii_dump(uint8_t *buffer, uint16_t w, uint16_t h) {
 
 void singleCapture(void)
 {
+    static uint8_t adaptive_th = 0;
     const uint16_t W = 320, H = 240;
     const size_t tx_bytes = ((size_t)W * H + 7) / 8;
 
@@ -422,7 +447,7 @@ void singleCapture(void)
 
     // Read Data
     // We ignore 'len' for the read loop to avoid buffer overflows if len is garbage
-    esp_err_t re = arducam_read_y_pack1bpp_stream(gray_q_tx, tx_bytes, W, H);
+    esp_err_t re = arducam_read_y_pack1bpp_stream(gray_q_tx, tx_bytes, W, H, &adaptive_th);
     
     // Dump ASCII for debug
     debug_ascii_dump(gray_q_tx, W, H);
@@ -461,10 +486,11 @@ void singleCapture(void)
     
     free(gray_q_tx);
     // free(gray_q_rx); // Not used in bypass mode
-
-    esp_err_t rc = publish_frame(packet, packet_len);
-    if (rc == ESP_OK) ESP_LOGI("main", "published %u bytes", (unsigned)packet_len);
-    else              ESP_LOGW("main", "publish failed: %d", rc);
+    if (re == ESP_OK && adaptive_th > 0) {
+        esp_err_t rc = publish_frame(packet, packet_len);
+        if (rc == ESP_OK) ESP_LOGI("main", "published %u bytes", (unsigned)packet_len);
+        else              ESP_LOGW("main", "publish failed: %d", rc);
+    }
 
     free(packet);
     vTaskDelay(pdMS_TO_TICKS(1));
