@@ -53,21 +53,22 @@ int i2c_write_reg(uint8_t regID, uint8_t regDat) {
 }
 
 /* Write multiple 8-bit values to 8-bit registers on the sensor. */
-int i2c_write_regs(const struct sensor_reg reglist[]) {
-    int err = 0;
-    const struct sensor_reg *next = reglist;
+int i2c_write_regs(const struct sensor_reg *regs)
+{
+    for (int i = 0; ; i++) {
+        uint8_t reg = regs[i].reg;
+        uint8_t val = regs[i].val;
 
-    // Check the next entry before processing it.
-    while (next->reg != MARKER_PREFIX || next->val != MARKER_PREFIX) {
-        // Pass the register and value directly to your write function.
-        err = i2c_write_reg(next->reg, next->val);
-        
-        // If there's an error, stop and return it.
-        if (err != 0) {
-            return err;
+        if (reg == 0xFF && val == 0xFF) {   // end marker
+            break;
         }
-        // Move to the next entry in the list.
-        next++;
+
+        esp_err_t err = i2c_write_reg(reg, val);
+        vTaskDelay(pdMS_TO_TICKS(1));
+        if (err != ESP_OK) return err;
+
+        // Optional: tiny delay helps some sensors/bridges
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
-    return 0; // Return 0 for success
+    return ESP_OK;
 }

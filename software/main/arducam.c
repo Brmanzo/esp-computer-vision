@@ -30,7 +30,6 @@ void arducam_power_up_sensor(void) {
 void esp32c3_SystemInit(void) {
     i2c_master_init();
     spi_master_init();
-    uart_init();
     arducam_power_up_sensor();
 }
 
@@ -73,17 +72,67 @@ uint8_t ov2640Probe(void) {
     }
 }
 
-/* Initialize the OV2640 camera sensor. */
-void ov2640Init(){
-    i2c_write_reg(MARKER_PREFIX, 0x01);
+/* Initialize the OV2640 camera sensor for RAW YUV422 320x240. */
+void ov2640Init(void){
+    // 1. Software Reset
+    i2c_write_reg(0xFF, 0x01);
     i2c_write_reg(0x12, 0x80);
-    i2c_write_regs(OV2640_JPEG_INIT);
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    // 2. Load Base Configs
+    // We use the JPEG init arrays because they contain the necessary 
+    // electrical setup (clocks, gain, etc), but we will strip the JPEG mode later.
+    i2c_write_regs(OV2640_JPEG_INIT); 
     i2c_write_regs(OV2640_YUV422);
-    i2c_write_regs(OV2640_JPEG);
-    i2c_write_reg(MARKER_PREFIX, 0x01);
-    i2c_write_reg(0x15, 0x00);
+
+    // 3. Load Resolution (CRITICAL!)
+    // You MUST load this to set the PCLK and Window Size correctly.
+    // NOTE: This array inevitably re-enables JPEG (Bit 4 of 0xDA), 
+    // so we must patch 0xDA *after* this step.
     i2c_write_regs(OV2640_320x240_JPEG);
+
+    // 4. Force DSP to Output RAW YUV422 (Y first)
+    i2c_write_reg(0xFF, 0x00); // Select Bank 0 (DSP)
+
+    uint8_t reg_DA;
+    i2c_read_reg(0xDA, &reg_DA);
+
+    // STRICTLY enforce: No JPEG (Bit 4=0) AND No Byte Swap (Bit 0=0)
+    reg_DA &= 0xEE; // Mask: 1110 1110 (Clears Bit 4 and Bit 0)
+
+    i2c_write_reg(0xDA, reg_DA);
+
+    // 5. Short settlement delay
+    vTaskDelay(pdMS_TO_TICKS(50));
+    
+    ESP_LOGI("OV2640", "Init complete. DSP Ctrl (0xDA): 0x%02X", reg_DA);
 }
+
+// static esp_err_t ov2640_set_yuv_order_yuyv(void)
+// {
+//     esp_err_t err;
+//     uint8_t v;
+
+//     // Select DSP bank
+//     err = i2c_write_reg(0xFF, 0x00);
+//     if (err != ESP_OK) return err;
+
+//     // 0xDA bit0 = 0
+//     err = i2c_read_reg(0xDA, &v);
+//     if (err != ESP_OK) return err;
+//     v &= (uint8_t)~0x01;
+//     err = i2c_write_reg(0xDA, v);
+//     if (err != ESP_OK) return err;
+
+//     // 0xC2 bit4 = 0
+//     err = i2c_read_reg(0xC2, &v);
+//     if (err != ESP_OK) return err;
+//     v &= (uint8_t)~0x10;
+//     err = i2c_write_reg(0xC2, v);
+//     if (err != ESP_OK) return err;
+
+//     return ESP_OK;
+// }
 
 /* Set the JPEG size for the OV2640 camera. */
 void OV2640_set_JPEG_size(unsigned char size)

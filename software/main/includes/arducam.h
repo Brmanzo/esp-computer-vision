@@ -81,6 +81,7 @@ struct camera_operate{
 #define res_1280x1024	7	//1280x1024
 #define res_1600x1200	8	//1600x1200
 #define ARDUCHIP_FIFO      		0x04  //FIFO and I2C control
+#define ARDUCHIP_TEST1          0x00
 #define FIFO_CLEAR_MASK    		0x01
 #define FIFO_START_MASK    		0x02
 #define FIFO_RDPTR_RST_MASK     0x10

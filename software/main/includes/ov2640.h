@@ -3,6 +3,12 @@
 #include "arducam.h"
 #define OV2640_CHIPID_HIGH 	0x0A
 #define OV2640_CHIPID_LOW 	0x0B
+
+typedef enum
+{
+    OV2640_MODE_UXGA, OV2640_MODE_SVGA, OV2640_MODE_CIF, OV2640_MODE_MAX
+} ov2640_sensor_mode_t;
+
 const struct sensor_reg OV2640_QVGA[]  =
 {
 	{0xff, 0x0}, 
@@ -410,7 +416,7 @@ const struct sensor_reg OV2640_YUV422[]  =
 {
   { 0xFF, 0x00 },
   { 0x05, 0x00 },
-  { 0xDA, 0x10 },
+  { 0xDA, 0x00 },
   { 0xD7, 0x03 },
   { 0xDF, 0x00 },
   { 0x33, 0x80 },

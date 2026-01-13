@@ -1,4 +1,4 @@
-`define IMAGE_W 161
+`define IMAGE_W 320
 `define UART_W 8
 `define WC_SUM 9
 
@@ -112,7 +112,7 @@ module uart_axis
 	endgenerate
 
 	// For indicating FPGA operation
-	assign led_o = axis_data_w[5:1];
+	// assign led_o = axis_data_w[5:1];
 
 	// UART head to convert UART serial data to AXIS data
 	/* verilator lint_off PINMISSING */
@@ -134,7 +134,7 @@ module uart_axis
 	,.m_axis_tvalid(uart_valid_w)
 	,.m_axis_tdata(uart_data_w)
 
-	,.prescale(16'd27) // Fclk / (baud * 8), 25 MHz / (115200 * 8) = 27
+	,.prescale(16'd10) // Fclk / (baud * 8), 25 MHz / (312,500 * 8) = 20
 	);
 
 	// AXIS Adapter for UART input
@@ -209,7 +209,7 @@ module uart_axis
 	// Unpacker to Gx
 	,.ready_o(gx_ready_w)
 	,.valid_i(blur_valid_w)
-	,.data_i({1'b0, blur_data_w[3]}) // "Right shit" by 3 to divide by 8 and average the output
+	,.data_i({1'b0, blur_data_w[2]}) // "Right shit" by 3 to divide by 8 and average the output
 	// Gx to Elastic Stage
 	,.ready_i(mag_ready_w)
 	,.valid_o(gx_valid_w)
@@ -228,7 +228,7 @@ module uart_axis
 	// Unpacker to Gy
 	,.ready_o(gy_ready_w)
 	,.valid_i(blur_valid_w)
-	,.data_i({1'b0, blur_data_w[3]})
+	,.data_i({1'b0, blur_data_w[2]})
 	// Gy to Elastic Stage
 	,.ready_i(mag_ready_w)
 	,.valid_o(gy_valid_w)
@@ -256,10 +256,11 @@ module uart_axis
 	logic [0:0] output_mux_w;
 	always_comb begin
 		case (button_i)
-			3'b001: output_mux_w  = blur_data_w[3]; // Lowest bit
-			3'b010: output_mux_w  = gx_data_w[3];
-			3'b100: output_mux_w  = gy_data_w[3];
-			default: output_mux_w = mag_data_w[3];
+			3'b001: output_mux_w  = blur_data_w[2];
+			3'b010: output_mux_w  = gx_data_w[2];
+			3'b011: output_mux_w  = unpacked_data_w;
+			3'b100: output_mux_w  = gy_data_w[2];
+			default: output_mux_w = mag_data_w[2];
 		endcase
 	end
 
