@@ -11,7 +11,7 @@
 static void camera_task(void *arg) {
     for (;;) {
         singleCapture();
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
@@ -30,7 +30,7 @@ void app_main(void) {
 
     // Bring up SoftAP + HTTP ONCE
     ESP_ERROR_CHECK(wifi_cam_init(DEFAULT_SSID, DEFAULT_PASS));
-    vTaskDelay(pdMS_TO_TICKS(100));  // grace period so AP/HTTP are ready
+    vTaskDelay(pdMS_TO_TICKS(10));  // grace period so AP/HTTP are ready
 
     // Start capture loop task (priority 6 is usually safe)
     ESP_LOGI("HEAP", "free=%u largest=%u",

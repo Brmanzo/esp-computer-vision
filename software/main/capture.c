@@ -218,12 +218,11 @@ esp_err_t spi_read_chunk_no_yield(uint8_t *dst, size_t n, bool keep_cs)
         spi_transaction_t t = {
             .length    = to * 8,
             .rxlength  = to * 8,
-            .tx_buffer = dummy_tx, // Ensure this is zeroed or safe
+            .tx_buffer = dummy_tx,
             .rx_buffer = dst + done,
             .flags     = ((keep_cs || (done + to < n)) ? SPI_TRANS_CS_KEEP_ACTIVE : 0)
         };
 
-        // BLOCKING call. No vTaskDelay here!
         esp_err_t e = spi_device_polling_transmit(spi_device_handle, &t);
         if (e != ESP_OK) return e;
 
@@ -324,9 +323,11 @@ esp_err_t arducam_read_y_pack1bpp_stream(uint8_t *out, size_t out_cap, uint16_t 
 
         // Compute Average
         if (count_luma > 0) {
-            *adaptive_th = (uint8_t)(sum_luma / count_luma);
-            
-            // Safety: Ensure we don't calculate 0 and loop forever. 
+            uint8_t avg = (uint8_t)(sum_luma / count_luma);
+            uint8_t bias = 0; // Bias to favor darker pixels
+            *adaptive_th = avg + bias;
+            if (avg > 230) *adaptive_th = 255;
+
             // Min fallback 10 ensures next frame goes to 'Packing' mode.
             if (*adaptive_th < 10) *adaptive_th = 10;
             
@@ -377,42 +378,34 @@ void singleCapture(void)
 
     arducam_camlock_take();
 
-    // 1. HARD RESET & CLEAR
-    spi_write_reg(ARDUCHIP_MODE, 0x01); // Force Single Mode
-    
-    // Toggle the FIFO Clear bit with delays
+    // 1. Single Capture Sequence
+    spi_write_reg(ARDUCHIP_MODE, 0x01);
     spi_write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK); 
-    esp_rom_delay_us(10); // Small hardware delay
+    esp_rom_delay_us(10);
     spi_write_reg(ARDUCHIP_FIFO, 0x00); 
 
-    // Reset pointers
+    // Completely reset Arducam FIFO
     spi_write_reg(ARDUCHIP_FIFO, FIFO_RDPTR_RST_MASK | FIFO_WRPTR_RST_MASK);
     spi_write_reg(ARDUCHIP_TRIG, CAP_DONE_MASK); 
-
-    // SAFETY CHECK: Verify FIFO is empty
-    // If this still fails, we just warn and continue, but the delay above should fix it.
     if (spi_read_fifo_len() > 0) {
         ESP_LOGW("cam", "FIFO stubborn! Force clearing again.");
         spi_write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK);
         spi_write_reg(ARDUCHIP_FIFO, 0x00);
         spi_write_reg(ARDUCHIP_FIFO, FIFO_RDPTR_RST_MASK | FIFO_WRPTR_RST_MASK);
     }
-    
-    // Explicitly clear the Done Flag (using your method since it worked for you)
     spi_write_reg(ARDUCHIP_TRIG, CAP_DONE_MASK); 
 
-    // SAFETY CHECK: Verify FIFO is empty before we start
+    // Ensure that FIFO is empty before capture
     if (spi_read_fifo_len() > 0) {
         ESP_LOGW("cam", "FIFO not empty after reset! Force clearing again.");
         spi_write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK);
         spi_write_reg(ARDUCHIP_FIFO, 0x00);
     }
 
-    // ----------------------------------------------------------------------
-    // 2. CAPTURE WITH TIMEOUT
-    // ----------------------------------------------------------------------
+    // 2. Capture chunked frame
     start_capture(); // Writes 0x02 to ARDUCHIP_FIFO
 
+    // Poll Arducam with timeout
     const TickType_t t0 = xTaskGetTickCount();
     while (!spi_get_bit(ARDUCHIP_TRIG, CAP_DONE_MASK)) {
         // Spin without sleep for precision, or very short sleep
@@ -425,15 +418,11 @@ void singleCapture(void)
         }
     }
 
-    // ----------------------------------------------------------------------
-    // 3. HARD STOP
-    // ----------------------------------------------------------------------
+    // 3. Stop Capture
     spi_write_reg(ARDUCHIP_FIFO, 0x00); // Kill Write Enable
     spi_write_reg(ARDUCHIP_FIFO, FIFO_RDPTR_RST_MASK); // Reset Read Pointer to 0
 
-    // ----------------------------------------------------------------------
-    // 4. READ & ALLOCATE
-    // ----------------------------------------------------------------------
+    // 4. Allocate buffer
     uint32_t len = spi_read_fifo_len();
     ESP_LOGI("cam", "Capture Done. FIFO Len: %u", (unsigned)len);
 
@@ -445,12 +434,12 @@ void singleCapture(void)
         return;
     }
 
-    // Read Data
+    // 5. Read Data
     // We ignore 'len' for the read loop to avoid buffer overflows if len is garbage
     esp_err_t re = arducam_read_y_pack1bpp_stream(gray_q_tx, tx_bytes, W, H, &adaptive_th);
     
     // Dump ASCII for debug
-    debug_ascii_dump(gray_q_tx, W, H);
+    // debug_ascii_dump(gray_q_tx, W, H);
     
     arducam_camlock_give();
 
@@ -460,18 +449,45 @@ void singleCapture(void)
         return;
     }
 
-    // ----------------------------------------------------------------------
-    // 5. SOFTWARE LOOPBACK (BYPASSING UART)
-    // ----------------------------------------------------------------------
-    // Since you are debugging the camera, we skip the FPGA/UART round-trip.
-    // This allows the web server to receive the image immediately.
+    // 6. UART TX/RX to FPGA
+    if (adaptive_th == 0) {
+        free(gray_q_tx);
+        return;
+    }
+
+    uint8_t *gray_q_rx = (uint8_t*)heap_caps_malloc(tx_bytes, MALLOC_CAP_8BIT);
+    if (!gray_q_rx) {
+        ESP_LOGE("main", "OOM gray_q_rx");
+        free(gray_q_tx);
+        return;
+    }
+    rx_ctx_t rx = {.expect = tx_bytes, .dst = gray_q_rx, .got = 0, .done = false, .error = false};
+
+    uart_flush_input(UART_NUM_1);
+    xTaskCreatePinnedToCore(uart_rx_task, "uart_rx", 4096, &rx, 10, NULL, 0);
     
-    // Packetize for HTTP publish: payload = tx_bytes, dims = W x H
+    // Send Dummy + Data
+    const uint8_t dummy[1] = {0};
+    ESP_ERROR_CHECK(uart_write_all(UART_NUM_1, dummy, 1));
+    ESP_ERROR_CHECK(uart_write_all(UART_NUM_1, gray_q_tx, tx_bytes));
+
+    // Wait for RX to finish
+    while (!rx.done) vTaskDelay(pdMS_TO_TICKS(10));
+
+    if (rx.error) {
+        ESP_LOGW("uart", "rx failed: got %u/%u bytes", (unsigned)rx.got, (unsigned)rx.expect);
+        free(gray_q_tx);
+        free(gray_q_rx);
+        return;
+    }
+    
+    // 7. Packetize for HTTP publish: payload = tx_bytes, dims = W x H
     size_t packet_len = DATA_START + tx_bytes + 2;
     uint8_t *packet = heap_caps_malloc(packet_len, MALLOC_CAP_8BIT);
     if (!packet) {
         ESP_LOGE("main", "packet malloc failed");
         free(gray_q_tx);
+        free(gray_q_rx);
         return;
     }
 
@@ -479,18 +495,17 @@ void singleCapture(void)
     encapsulate(packet, (uint16_t)tx_bytes, "data len", W, H);
 
     // DIRECT COPY: TX -> Packet (Simulating perfect FPGA return)
-    memcpy(packet + DATA_START, gray_q_tx, tx_bytes);
+    memcpy(packet + DATA_START, gray_q_rx, tx_bytes);
     
     packet[DATA_START + tx_bytes + 0] = 0xFF;
     packet[DATA_START + tx_bytes + 1] = 0xFD;
     
     free(gray_q_tx);
-    // free(gray_q_rx); // Not used in bypass mode
-    if (re == ESP_OK && adaptive_th > 0) {
-        esp_err_t rc = publish_frame(packet, packet_len);
-        if (rc == ESP_OK) ESP_LOGI("main", "published %u bytes", (unsigned)packet_len);
-        else              ESP_LOGW("main", "publish failed: %d", rc);
-    }
+    free(gray_q_rx);
+
+    esp_err_t rc = publish_frame(packet, packet_len);
+    if (rc == ESP_OK) ESP_LOGI("main", "published %u bytes", (unsigned)packet_len);
+    else              ESP_LOGW("main", "publish failed: %d", rc);
 
     free(packet);
     vTaskDelay(pdMS_TO_TICKS(1));
