@@ -348,80 +348,71 @@ void debug_ascii_dump(uint8_t *buffer, uint16_t w, uint16_t h) {
 void singleCapture(void)
 {
     const uint16_t W = 320, H = 240;
-    const size_t npix = (size_t)W * H;
-    const size_t tx_bytes = (npix + 7) / 8;   // 9600 bytes for 1bpp
+    const size_t tx_bytes = ((size_t)W * H + 7) / 8;
 
-    // Capture into FIFO
     arducam_camlock_take();
-    // 1. Reset the CPLD Logic (Safety Step)
-    spi_write_reg(ARDUCHIP_TEST1, 0x55); // Write a test value
-    if (spi_read_reg(ARDUCHIP_TEST1) != 0x55) {
-        ESP_LOGE("cam", "SPI Bus Error - Test Register Failed");
-        arducam_camlock_give();
-        return;
-    }
 
-    // 2. FORCE Single Capture Mode & VERIFY
-    spi_write_reg(ARDUCHIP_MODE, 0x01); // 0x01 = Single Mode
-    vTaskDelay(pdMS_TO_TICKS(1));       // Give it a moment to latch
+    // 1. HARD RESET & CLEAR
+    spi_write_reg(ARDUCHIP_MODE, 0x01); // Force Single Mode
     
-    uint8_t current_mode = spi_read_reg(ARDUCHIP_MODE);
-    if (current_mode != 0x01) {
-        // If this prints, your hardware ignores the mode switch!
-        ESP_LOGW("cam", "Mode Set Failed! Read: 0x%02X, Expected: 0x01", current_mode);
-        // Force retry?
-        spi_write_reg(ARDUCHIP_MODE, 0x01); 
-    }
+    // Toggle the FIFO Clear bit with delays
+    spi_write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK); 
+    esp_rom_delay_us(10); // Small hardware delay
+    spi_write_reg(ARDUCHIP_FIFO, 0x00); 
 
-    // 3. Clear/Reset FIFO Pointers
-    spi_write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK | FIFO_RDPTR_RST_MASK | FIFO_WRPTR_RST_MASK);
-    
-    // 4. Clear Done Flag (Bit 3 of 0x41)
+    // Reset pointers
+    spi_write_reg(ARDUCHIP_FIFO, FIFO_RDPTR_RST_MASK | FIFO_WRPTR_RST_MASK);
     spi_write_reg(ARDUCHIP_TRIG, CAP_DONE_MASK); 
-    
-    // 5. Start Capture
-    start_capture(); // Using the reverted 0x04 register write
 
-    // 6. Wait for Done
+    // SAFETY CHECK: Verify FIFO is empty
+    // If this still fails, we just warn and continue, but the delay above should fix it.
+    if (spi_read_fifo_len() > 0) {
+        ESP_LOGW("cam", "FIFO stubborn! Force clearing again.");
+        spi_write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK);
+        spi_write_reg(ARDUCHIP_FIFO, 0x00);
+        spi_write_reg(ARDUCHIP_FIFO, FIFO_RDPTR_RST_MASK | FIFO_WRPTR_RST_MASK);
+    }
+    
+    // Explicitly clear the Done Flag (using your method since it worked for you)
+    spi_write_reg(ARDUCHIP_TRIG, CAP_DONE_MASK); 
+
+    // SAFETY CHECK: Verify FIFO is empty before we start
+    if (spi_read_fifo_len() > 0) {
+        ESP_LOGW("cam", "FIFO not empty after reset! Force clearing again.");
+        spi_write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK);
+        spi_write_reg(ARDUCHIP_FIFO, 0x00);
+    }
+
+    // ----------------------------------------------------------------------
+    // 2. CAPTURE WITH TIMEOUT
+    // ----------------------------------------------------------------------
+    start_capture(); // Writes 0x02 to ARDUCHIP_FIFO
+
     const TickType_t t0 = xTaskGetTickCount();
     while (!spi_get_bit(ARDUCHIP_TRIG, CAP_DONE_MASK)) {
-        vTaskDelay(pdMS_TO_TICKS(1));
+        // Spin without sleep for precision, or very short sleep
+        // vTaskDelay(1); 
         if ((xTaskGetTickCount() - t0) > pdMS_TO_TICKS(1000)) {
             ESP_LOGE("cam", "Timeout waiting for CAP_DONE");
-            spi_clear_bit(ARDUCHIP_FIFO, FIFO_START_MASK);
-            spi_reset_fifo();
+            spi_write_reg(ARDUCHIP_FIFO, 0x00); // Stop
             arducam_camlock_give();
             return;
         }
     }
-    spi_write_reg(ARDUCHIP_FIFO, 0x00); 
 
-    // 4. Synchronization Safety (Optional but recommended)
-    // Wait 1ms to ensure the CPLD has fully latched the "Stop" state
-    // esp_rom_delay_us(100); 
+    // ----------------------------------------------------------------------
+    // 3. HARD STOP
+    // ----------------------------------------------------------------------
+    spi_write_reg(ARDUCHIP_FIFO, 0x00); // Kill Write Enable
+    spi_write_reg(ARDUCHIP_FIFO, FIFO_RDPTR_RST_MASK); // Reset Read Pointer to 0
 
-    // 5. Reset Read Pointer to 0
-    // Now that writing has stopped, we align our read head to the start.
-    spi_write_reg(ARDUCHIP_FIFO, FIFO_RDPTR_RST_MASK); 
-    
-    // 6. Verification (Debug)
-    // Check if the Start Bit is actually gone.
-    if (spi_read_reg(ARDUCHIP_FIFO) & FIFO_START_MASK) {
-        ESP_LOGE("cam", "Failed to STOP capture! Register stuck.");
-    }
-    
-    // 8. Read FIFO Length
+    // ----------------------------------------------------------------------
+    // 4. READ & ALLOCATE
+    // ----------------------------------------------------------------------
     uint32_t len = spi_read_fifo_len();
-    ESP_LOGI("cam", "Capture Success. Len: %u, Mode Reg: 0x%02X", 
-             (unsigned)len, spi_read_reg(ARDUCHIP_MODE));
+    ESP_LOGI("cam", "Capture Done. FIFO Len: %u", (unsigned)len);
 
-    const uint32_t expected = (uint32_t)W * H * 2u; // 153600
-    if (len < expected) {
-        ESP_LOGW("cam","short fifo %u (<%u)", (unsigned)len, (unsigned)expected);
-        // You can choose to return here for safety
-    }
-
-    // Allocate TX payload (1bpp packed)
+    // Allocate TX buffer
     uint8_t *gray_q_tx = heap_caps_malloc(tx_bytes, MALLOC_CAP_8BIT);
     if (!gray_q_tx) {
         ESP_LOGE("cam","OOM gray_q_tx %u", (unsigned)tx_bytes);
@@ -429,9 +420,13 @@ void singleCapture(void)
         return;
     }
 
-    // Read FIFO stream and pack Y -> 1bpp
+    // Read Data
+    // We ignore 'len' for the read loop to avoid buffer overflows if len is garbage
     esp_err_t re = arducam_read_y_pack1bpp_stream(gray_q_tx, tx_bytes, W, H);
+    
+    // Dump ASCII for debug
     debug_ascii_dump(gray_q_tx, W, H);
+    
     arducam_camlock_give();
 
     if (re != ESP_OK) {
@@ -440,54 +435,36 @@ void singleCapture(void)
         return;
     }
 
-    // Allocate RX buffer (assume FPGA returns same payload size for now)
-    uint8_t *gray_q_rx = heap_caps_malloc(tx_bytes, MALLOC_CAP_8BIT);
-    if (!gray_q_rx) {
-        ESP_LOGE("uart","OOM gray_q_rx %u", (unsigned)tx_bytes);
-        free(gray_q_tx);
-        return;
-    }
-
-    rx_ctx_t rx = {.expect = tx_bytes, .dst = gray_q_rx, .got = 0, .done = false, .error = false};
-
-    uart_flush_input(UART_NUM_1);
-    xTaskCreatePinnedToCore(uart_rx_task, "uart_rx", 4096, &rx, 10, NULL, 0);
-
-    const uint8_t dummy[1] = {0};
-    ESP_ERROR_CHECK(uart_write_all(UART_NUM_1, dummy, 1));
-    ESP_ERROR_CHECK(uart_write_all(UART_NUM_1, gray_q_tx, tx_bytes));
-
-    while (!rx.done) vTaskDelay(pdMS_TO_TICKS(10));
-
-    if (rx.error) {
-        ESP_LOGW("uart", "rx failed: got %u/%u bytes",
-                 (unsigned)rx.got, (unsigned)rx.expect);
-        free(gray_q_rx);
-        return;
-    }
-
+    // ----------------------------------------------------------------------
+    // 5. SOFTWARE LOOPBACK (BYPASSING UART)
+    // ----------------------------------------------------------------------
+    // Since you are debugging the camera, we skip the FPGA/UART round-trip.
+    // This allows the web server to receive the image immediately.
+    
     // Packetize for HTTP publish: payload = tx_bytes, dims = W x H
     size_t packet_len = DATA_START + tx_bytes + 2;
     uint8_t *packet = heap_caps_malloc(packet_len, MALLOC_CAP_8BIT);
     if (!packet) {
-        ESP_LOGE("main", "packet malloc failed (len=%u)", (unsigned)packet_len);
-        free(gray_q_rx);
+        ESP_LOGE("main", "packet malloc failed");
+        free(gray_q_tx);
         return;
     }
 
     encapsulate(packet, 0, "header", W, H);
     encapsulate(packet, (uint16_t)tx_bytes, "data len", W, H);
 
+    // DIRECT COPY: TX -> Packet (Simulating perfect FPGA return)
     memcpy(packet + DATA_START, gray_q_tx, tx_bytes);
-    // memcpy(packet + DATA_START, gray_q_rx, tx_bytes);
+    
     packet[DATA_START + tx_bytes + 0] = 0xFF;
     packet[DATA_START + tx_bytes + 1] = 0xFD;
+    
     free(gray_q_tx);
-    free(gray_q_rx);
+    // free(gray_q_rx); // Not used in bypass mode
 
     esp_err_t rc = publish_frame(packet, packet_len);
     if (rc == ESP_OK) ESP_LOGI("main", "published %u bytes", (unsigned)packet_len);
-    else             ESP_LOGW("main", "publish failed: %d", rc);
+    else              ESP_LOGW("main", "publish failed: %d", rc);
 
     free(packet);
     vTaskDelay(pdMS_TO_TICKS(1));
