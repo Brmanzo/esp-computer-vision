@@ -29,14 +29,14 @@ void spi_clear_bit(unsigned char addr, unsigned char bit);
 /* Get bit at address using SPI. */
 unsigned char spi_get_bit(unsigned char addr, unsigned char bit);
 
-/* Start the image capture. */
-void start_capture(void);
-
 /* Read the length of data in the SPI FIFO buffer. */
 unsigned int spi_read_fifo_len(void);
 
 /* Reset the SPI FIFO buffer. */
 void spi_reset_fifo(void);
+
+/* Detect the SPI bus operational state. */
+uint8_t spi_bus_detect(void);
 
 /* Reads exactly n bytes from SPI FIFO */
 esp_err_t spi_read_chunk(uint8_t *dst, size_t n, bool keep_cs);

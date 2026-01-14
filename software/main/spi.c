@@ -71,6 +71,7 @@ void spi_set_bit(unsigned char addr, unsigned char bit)
 	tmp = spi_read_reg(addr);
 	spi_write_reg(addr, tmp | bit);
 }
+
 /* Clear bit at address using SPI. */
 void spi_clear_bit(unsigned char addr, unsigned char bit)
 {
@@ -86,11 +87,6 @@ unsigned char spi_get_bit(unsigned char addr, unsigned char bit)
   tmp = spi_read_reg(addr);
   tmp = tmp & bit;
   return tmp;
-}
-
-/* Start the image capture. */
-void start_capture(void) {
-	spi_write_reg(ARDUCHIP_FIFO, FIFO_START_MASK);
 }
 
 /* Read the length of data in the SPI FIFO buffer. */
@@ -110,31 +106,39 @@ void spi_reset_fifo(void) {
     spi_write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK | FIFO_RDPTR_RST_MASK | FIFO_WRPTR_RST_MASK);
 }
 
-/* Reads exactly n bytes from SPI FIFO*/
+
+/* Detect the SPI bus operational state. */
+uint8_t spi_bus_detect(void){
+    spi_write_reg(0x00, 0x55);
+    if(spi_read_reg(0x00) == 0x55){
+        printf("SPI bus normal");
+        return 0;
+    }else{
+        printf("SPI bus error\r\n");
+        return 1;
+    }      
+}
+
+/* Reads chunk of data from SPI FIFO without yielding */
 esp_err_t spi_read_chunk(uint8_t *dst, size_t n, bool keep_cs)
 {
-    // Pull exactly n bytes, yielding every RJPEG_YIELD_EVERY chunks
     size_t done = 0;
-    int chunks  = 0;
     while (done < n) {
         size_t to = n - done;
         if (to > RJPEG_PULL_CHUNK) to = RJPEG_PULL_CHUNK;
 
-        spi_transaction_t t;
-        memset(&t, 0, sizeof(t));
-        t.length    = to * 8;
-        t.rxlength  = to * 8;
-        t.tx_buffer = dummy_tx;
-        t.rx_buffer = dst + done;
-        t.flags     = ((keep_cs || (done + to < n)) ? SPI_TRANS_CS_KEEP_ACTIVE : 0);
+        spi_transaction_t t = {
+            .length    = to * 8,
+            .rxlength  = to * 8,
+            .tx_buffer = dummy_tx,
+            .rx_buffer = dst + done,
+            .flags     = ((keep_cs || (done + to < n)) ? SPI_TRANS_CS_KEEP_ACTIVE : 0)
+        };
 
         esp_err_t e = spi_device_polling_transmit(spi_device_handle, &t);
         if (e != ESP_OK) return e;
 
         done += to;
-        chunks++;
-        // let idle/Wi-Fi run
-        if ((chunks % RJPEG_YIELD_EVERY) == 0) vTaskDelay(0);
     }
     return ESP_OK;
 }

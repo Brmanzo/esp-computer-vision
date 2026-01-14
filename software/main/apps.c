@@ -121,3 +121,31 @@ void motion_detect(uint32_t npix, uint8_t *cur_gray, uint16_t w, uint16_t h, boo
         }
     }
 }
+
+void debug_ascii_dump(uint8_t *buffer, uint16_t w, uint16_t h) {
+    // We will dump a 32x32 block from the center
+    int center_x = w / 2;
+    int center_y = h / 2;
+    int roi_w = 32;
+    int roi_h = 32;
+
+    printf("\n--- ASCII START ---\n");
+    for (int y = center_y - (roi_h/2); y < center_y + (roi_h/2); y++) {
+        for (int x = center_x - (roi_w/2); x < center_x + (roi_w/2); x++) {
+            // Calculate byte index. 
+            // Note: Buffer is PACKED 1bpp. We must extract the bit.
+            size_t pixel_index = (y * w) + x;
+            size_t byte_index  = pixel_index / 8;
+            int bit_pos        = pixel_index % 8; // Adjust this if you switched to MSB
+            
+            // Extract the bit (assuming LSB first based on your code)
+            uint8_t byte = buffer[byte_index];
+            uint8_t bit  = (byte >> bit_pos) & 1;
+
+            // Print '.' for black, '#' for white
+            printf("%c", bit ? '#' : '.'); 
+        }
+        printf("\n");
+    }
+    printf("--- ASCII END ---\n");
+}

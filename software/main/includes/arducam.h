@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "driver/i2c_master.h"
 #include "jpeg_decoder.h"
+#include "esp_err.h"
 
 /*spi pin source*/
 #define PIN_SCK    GPIO_NUM_4
@@ -135,6 +136,21 @@ struct camera_operate{
 extern struct camera_operate arducam;
 
 void arducam_power_up_sensor(void);
+
+void arducam_camlock_take(void);
+
+void arducam_camlock_give(void);
+
+void arducam_reset_fifo(void);
+
+void arducam_set_capture(void);
+
+/* Start the image capture. */
+void arducam_start_capture(void);
+
+void arducam_stop_capture(void);
+
+esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint16_t w, uint16_t h, uint8_t* adaptive_th);
 
 /* Prepares ESP for communication and initiates image capture. */
 void esp32c3_SystemInit(void);
