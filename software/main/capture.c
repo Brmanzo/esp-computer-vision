@@ -4,12 +4,12 @@
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "driver/uart.h"
+#include "driver/gpio.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "freertos/portmacro.h"
-#include "jpeg_decoder.h"
 
 #include "includes/arducam.h"
 #include "includes/wifi_cam.h"
@@ -18,6 +18,7 @@
 #include "includes/globals.h"
 #include "includes/uart.h"
 
+#define GPIO_BYPASS_FPGA    GPIO_NUM_3
 
 /* -------------------------------------- Packet Encoding -------------------------------------- */
 enum packet_contents {
@@ -181,7 +182,12 @@ void singleCapture(void)
     // Encode Data length in header
     encapsulate(packet, (uint16_t)tx_bytes, "data len", W, H);
     // Package 1bpp data within packet body
-    memcpy(packet + DATA_START, gray_q_rx, tx_bytes);
+    if (gpio_get_level(GPIO_BYPASS_FPGA)) {
+        // Bypass FPGA processing and send original packed data
+        memcpy(packet + DATA_START, gray_q_tx, tx_bytes);
+    } else {
+        memcpy(packet + DATA_START, gray_q_rx, tx_bytes);
+    }
     // Encode footer with packet end markers
     packet[DATA_START + tx_bytes + 0] = 0xFF;
     packet[DATA_START + tx_bytes + 1] = 0xFD;
