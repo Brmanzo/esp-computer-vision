@@ -1,10 +1,7 @@
-#include "sdkconfig.h"
-#include "esp_log.h"
-#include "esp_err.h"
+// i2c.c
+// Bradley Manzo 2026
 #include "driver/i2c_master.h"
-#include "freertos/FreeRTOS.h"
 
-#include "includes/arducam.h"
 #include "includes/i2c.h"
 #include "includes/globals.h"
 
@@ -20,14 +17,14 @@ void i2c_master_init(){ // peripherals/i2c/i2c_basic
         bus_config.clk_source        = I2C_CLK_SRC_DEFAULT;
         bus_config.glitch_ignore_cnt = 7;
         bus_config.flags.enable_internal_pullup = true;
-    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &bus_handle));
+    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &i2c_bus_handle));
 
     i2c_device_config_t dev_config = {};
     dev_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
     dev_config.scl_speed_hz = I2C_MASTER_FREQ_HZ;
 
     dev_config.device_address = arducam.slave_address;
-    ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &dev_config, &camera_dev_handle));
+    ESP_ERROR_CHECK(i2c_master_bus_add_device(i2c_bus_handle, &dev_config, &camera_dev_handle));
 }
 
 

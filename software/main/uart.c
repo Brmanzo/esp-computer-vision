@@ -1,5 +1,5 @@
-#include "sdkconfig.h"
-#include "freertos/FreeRTOS.h"
+// uart.c
+// Bradley Manzo 2026
 #include "driver/uart.h"
 
 #include "includes/arducam.h"
@@ -19,19 +19,6 @@ void uart_init(void) {
     uart_driver_install(UART_NUM_1, 4096, 0, 0, NULL, 0);
     uart_param_config(UART_NUM_1, &uart_config);
     uart_set_pin(UART_NUM_1, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
-}
-
-/* Read exactly n bytes from UART into dst buffer. */
-esp_err_t uart_read_exact(uart_port_t uart, uint8_t *dst, size_t len)
-{
-    size_t idx = 0;
-    while (idx < len) {
-        int r = uart_read_bytes(uart, (char*)&dst[idx], len - idx, pdMS_TO_TICKS(1000));
-        if (r < 0) return ESP_FAIL;
-        if (r == 0) continue;
-        idx += (size_t)r;
-    }
-    return ESP_OK;
 }
 
 /* Write all data from buffer to UART in order. */

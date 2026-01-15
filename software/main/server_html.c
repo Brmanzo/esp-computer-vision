@@ -1,3 +1,5 @@
+// server_html.c
+// Bradley Manzo 2026
 #include <stddef.h>
 
 const char INDEX_HTML[] =

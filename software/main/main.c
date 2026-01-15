@@ -1,8 +1,5 @@
-#include <stdio.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_log.h"
-
+// main.c
+// Bradley Manzo 2026
 #include "includes/arducam.h"
 #include "includes/wifi_cam.h"
 #include "includes/capture.h"

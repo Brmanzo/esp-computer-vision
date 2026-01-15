@@ -1,27 +1,12 @@
-
-
-#include <stdbool.h>
-#include "esp_check.h"
-#include "esp_log.h"
-#include "esp_err.h"
-#include "esp_heap_caps.h"
-#include "driver/uart.h"
-
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
-#include "freertos/task.h"
-#include "jpeg_decoder.h"
-
-#include "includes/arducam.h"
-#include "includes/wifi_cam.h"
-#include "includes/spi.h"
-#include "includes/capture.h"
+// apps.c
+// Bradley Manzo 2026
 #include "includes/globals.h"
-#include "includes/uart.h"
 
 #define BORDER_MARGIN 2
 #define MOTION_MIN_FRAC_NUM 1
 #define MOTION_MIN_FRAC_DEN 200   // >=0.5% pixels must be “subject”
+
+#define DIFF_TOL      70
 
 /* 3x3 convolution using unsigned ints to leverage ESP32c3's multipliers. */
 void convolution_3x3(const uint8_t *src, uint8_t *dst,

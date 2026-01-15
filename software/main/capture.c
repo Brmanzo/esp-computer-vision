@@ -1,22 +1,14 @@
-#include <stdbool.h>
-#include "esp_check.h"
-#include "esp_log.h"
-#include "esp_err.h"
-#include "esp_heap_caps.h"
-#include "driver/uart.h"
+// capture.c
+// Bradley Manzo 2026
 #include "driver/gpio.h"
-
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
-#include "freertos/task.h"
-#include "freertos/portmacro.h"
+#include "driver/uart.h"
 
 #include "includes/arducam.h"
-#include "includes/wifi_cam.h"
-#include "includes/spi.h"
 #include "includes/capture.h"
 #include "includes/globals.h"
+#include "includes/spi.h"
 #include "includes/uart.h"
+#include "includes/wifi_cam.h"
 
 #define GPIO_BYPASS_FPGA    GPIO_NUM_3
 

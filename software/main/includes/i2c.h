@@ -1,7 +1,7 @@
+// i2c.h
+// Bradley Manzo 2026
 #ifndef I2C_H
 #define I2C_H
-#include "freertos/FreeRTOS.h"
-#include "sdkconfig.h"
 
 #include "arducam.h"
 
@@ -21,7 +21,7 @@ int i2c_read_reg(uint8_t regID, uint8_t* regDat);
 int i2c_write_reg(uint8_t regID, uint8_t regDat);
 
 /* Write multiple 8-bit values to 8-bit registers on the sensor. */
-int i2c_write_regs(const struct sensor_reg reglist[]);
+int i2c_write_regs(const struct sensor_reg *regs);
 
 #ifdef __cplusplus
 }

@@ -1,14 +1,9 @@
+// arducam.h
+// Bradley Manzo 2026
 #ifndef ARDUCAM_H_ 
 #define ARDUCAM_H_
 
-#include <stdio.h>
-#include <string.h>
-#include "sdkconfig.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "esp_log.h"
-#include "driver/i2c_master.h"
-#include "jpeg_decoder.h"
+#include "driver/gpio.h"
 #include "esp_err.h"
 
 /*spi pin source*/
@@ -41,11 +36,6 @@
 #define QUEUE_DEPTH (20)
 #define RX_BUF_SIZE (BUF_SIZE*2)
 #define RD_BUF_SIZE (BUF_SIZE)
-
-static const int8_t SOBEL_FILTER_Y[3][3] = { {-1, -2, -1}, {0, 0, 0}, {1, 2, 1} };
-static const int8_t SOBEL_FILTER_X[3][3] = { {-1, 0, 1}, {-2, 0, 2}, {-1, 0, 1} };
-
-#define DIFF_TOL      70
 
 /* jpeg markers*/
 #define MARKER_PREFIX 0xFF
@@ -135,35 +125,25 @@ struct camera_operate{
 
 extern struct camera_operate arducam;
 
-void arducam_power_up_sensor(void);
-
+/* Take control of arducam hardware. */
 void arducam_camlock_take(void);
 
+/* Release arducam hardware. */
 void arducam_camlock_give(void);
 
+/* Reset the contents and state of the Arducam FIFO Buffer. */
 void arducam_reset_fifo(void);
 
+/* Set Arducam to capture mode. */
 void arducam_set_capture(void);
 
 /* Start the image capture. */
 void arducam_start_capture(void);
 
+/* Stop the image capture. */
 void arducam_stop_capture(void);
 
+/* Read raw YUV422 image data from Arducam and pack luma values onto 1bpp local buffer. */
 esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint16_t w, uint16_t h, uint8_t* adaptive_th);
 
-/* Prepares ESP for communication and initiates image capture. */
-void esp32c3_SystemInit(void);
-
-/* Detect the SPI bus operational state. */
-uint8_t spiBusDetect(void);
-
-/* Probe the state of the OV2640 camera sensor. */
-uint8_t ov2640Probe(void);
-
-/* Initialize the OV2640 camera sensor. */
-void ov2640Init();
-
-/* Set the JPEG size for the OV2640 camera. */
-void OV2640_set_JPEG_size(unsigned char size);
 #endif

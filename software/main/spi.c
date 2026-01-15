@@ -1,10 +1,9 @@
-#include <stdio.h>
-#include <string.h>
+// spi.c
+// Bradley Manzo 2026
 #include "driver/spi_master.h"
 
 #include "includes/arducam.h"
 #include "includes/spi.h"
-#include "includes/capture.h"
 #include "includes/globals.h"
 
 /* -------------------------------------- SPI -------------------------------------- */

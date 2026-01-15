@@ -1,25 +1,14 @@
 // wifi_cam.c
+// Bradley Manzo 2026
 #include "includes/wifi_cam.h"
 
-#include <string.h>
-#include <stdlib.h>
-
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
-#include "freertos/task.h"
-#include "freertos/portmacro.h"
-
-#include "esp_event.h"
 #include "esp_http_server.h"
-#include "esp_log.h"
 #include "esp_mac.h"
-#include "esp_netif.h"
-#include "esp_netif_types.h"
-#include "esp_system.h"
 #include "esp_wifi.h"
 #include "nvs_flash.h"
 
 #include "includes/server_html.h"
+#include "includes/globals.h"
 
 static const char *TAG = "wifi_cam";
 

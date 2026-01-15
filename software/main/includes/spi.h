@@ -1,8 +1,7 @@
+// spi.h
+// Bradley Manzo 2026
 #ifndef SPI_H
 #define SPI_H
-
-#include <stddef.h>
-#include <stdbool.h>
 
 #include "esp_err.h"
 #include "driver/spi_master.h"
@@ -18,9 +17,6 @@ void spi_master_init(void);
 /* Write to device register using SPI. */
 void spi_write_reg(uint8_t address, uint8_t value);
 
-/* Read from device register using SPI. */
-uint8_t spi_read_reg(uint8_t address);
-
 /* Set bit at address using SPI. */
 void spi_set_bit(unsigned char addr, unsigned char bit);
 /* Clear bit at address using SPI. */
@@ -31,9 +27,6 @@ unsigned char spi_get_bit(unsigned char addr, unsigned char bit);
 
 /* Read the length of data in the SPI FIFO buffer. */
 unsigned int spi_read_fifo_len(void);
-
-/* Reset the SPI FIFO buffer. */
-void spi_reset_fifo(void);
 
 /* Detect the SPI bus operational state. */
 uint8_t spi_bus_detect(void);

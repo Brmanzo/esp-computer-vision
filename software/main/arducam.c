@@ -1,14 +1,10 @@
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-
+// arducam.c
+// Bradley Manzo 2026
 #include "includes/arducam.h"
+#include "includes/globals.h"
+#include "includes/i2c.h"
 #include "includes/ov2640.h"
 #include "includes/spi.h"
-#include "includes/i2c.h"
-#include "includes/uart.h"
-#include "includes/globals.h"
-#include "freertos/semphr.h"
-#include "esp_err.h"
 
 
 /* -------------------------------------- Device Init -------------------------------------- */
@@ -65,35 +61,30 @@ uint8_t ov2640Probe(void) {
 
 /* Initialize the OV2640 camera sensor for RAW YUV422 320x240. */
 void ov2640Init(void){
-    // 1. Software Reset
+    // Software Reset
     i2c_write_reg(0xFF, 0x01);
     i2c_write_reg(0x12, 0x80);
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    // 2. Load Base Configs
-    // We use the JPEG init arrays because they contain the necessary 
-    // electrical setup (clocks, gain, etc), but we will strip the JPEG mode later.
+    // Load Base Configs
     i2c_write_regs(OV2640_JPEG_INIT); 
     i2c_write_regs(OV2640_YUV422);
 
-    // 3. Load Resolution (CRITICAL!)
-    // You MUST load this to set the PCLK and Window Size correctly.
-    // NOTE: This array inevitably re-enables JPEG (Bit 4 of 0xDA), 
-    // so we must patch 0xDA *after* this step.
+    // Load Resolution
     i2c_write_regs(OV2640_320x240_JPEG);
 
-    // 4. Force DSP to Output RAW YUV422 (Y first)
+    // Force DSP to Output RAW YUV422 (Y first)
     i2c_write_reg(0xFF, 0x00); // Select Bank 0 (DSP)
 
     uint8_t reg_DA;
     i2c_read_reg(0xDA, &reg_DA);
 
-    // STRICTLY enforce: No JPEG (Bit 4=0) AND No Byte Swap (Bit 0=0)
+    // No JPEG (Bit 4=0) AND No Byte Swap (Bit 0=0)
     reg_DA &= 0xEE; // Mask: 1110 1110 (Clears Bit 4 and Bit 0)
 
     i2c_write_reg(0xDA, reg_DA);
 
-    // 5. Short settlement delay
+    // Short settlement delay
     vTaskDelay(pdMS_TO_TICKS(50));
     
     ESP_LOGI("OV2640", "Init complete. DSP Ctrl (0xDA): 0x%02X", reg_DA);

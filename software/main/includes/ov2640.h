@@ -1,3 +1,5 @@
+// ov2640.h
+// Bradley Manzo 2026
 #ifndef OV2640_REGS_H
 #define OV2640_REGS_H
 #include "arducam.h"
