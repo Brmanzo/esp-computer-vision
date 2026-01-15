@@ -4,6 +4,9 @@
 
 #include "includes/arducam.h"
 #include "includes/uart.h"
+#include "driver/gpio.h"
+
+#define UART_CTS_PIN GPIO_NUM_1
 
 /* Initialize UART for streaming images to interfaces. */
 void uart_init(void) {
@@ -12,13 +15,14 @@ void uart_init(void) {
         .data_bits = UART_DATA_8_BITS,
         .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .flow_ctrl = UART_HW_FLOWCTRL_CTS,
+        .rx_flow_ctrl_thresh = 0,
         .source_clk = UART_SCLK_DEFAULT,
     };
     // We won't use a buffer for sending data.
     uart_driver_install(UART_NUM_1, 4096, 0, 0, NULL, 0);
     uart_param_config(UART_NUM_1, &uart_config);
-    uart_set_pin(UART_NUM_1, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    uart_set_pin(UART_NUM_1, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_CTS_PIN);
 }
 
 /* Write all data from buffer to UART in order. */

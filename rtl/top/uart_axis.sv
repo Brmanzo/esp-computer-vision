@@ -12,6 +12,7 @@ module uart_axis
 
 	,input [0:0] rx_serial_i
 	,output [0:0] tx_serial_o
+	,output [0:0] uart_rts_o
 
 	,output [5:1] led_o
 	);
@@ -24,10 +25,10 @@ module uart_axis
 	wire [0:0]                        uart_valid_w;
 	wire [`UART_W-1:0]                uart_data_w;
 
-	// AXIS Adapter Wires
-	wire [0:0]                        axis_ready_w;
-	wire [0:0]                        axis_valid_w;
-	wire [`UART_W-1:0]                axis_data_w;
+	// Skid Buffer Wires
+	wire [0:0]                        skid_ready_w;
+	wire [0:0]                        skid_valid_w;
+	wire [`UART_W-1:0]                skid_data_w;
 
 	// Unpacker Wires
 	wire [0:0]                        unpack_ready_w;
@@ -48,6 +49,10 @@ module uart_axis
 	wire [0:0]                        mag_ready_w;
 	wire [0:0]                        mag_valid_w;
 	wire [sobel_out_width_lp:0]       mag_data_w;
+
+	// Mux Logic
+	logic [0:0]                       output_mux_l;
+	logic [0:0]                       mux_valid_l;
 
 	// Packer Wires
 	wire [0:0]                        pack_ready_w;
@@ -130,37 +135,27 @@ module uart_axis
 	,.s_axis_tvalid(pack_valid_w)
 	,.s_axis_tdata(packed_data_w)
 	// UART to AXIS
-	,.m_axis_tready(axis_ready_w)
+	,.m_axis_tready(skid_ready_w)
 	,.m_axis_tvalid(uart_valid_w)
 	,.m_axis_tdata(uart_data_w)
 
-	,.prescale(16'd10) // Fclk / (baud * 8), 25 MHz / (312,500 * 8) = 20
+	,.prescale(16'd10) // Fclk / (baud * 8), 25 MHz / (312,500 * 8) = 20 //10
 	);
 
-	// AXIS Adapter for UART input
-	axis_adapter
-	#(.S_DATA_WIDTH                   (`UART_W) // 8 bits from serial
-	,.M_DATA_WIDTH                    (`UART_W) // treat as 8 bit bus to UART
-	,.S_KEEP_ENABLE                   (0)
-	,.M_KEEP_ENABLE                   (1)
-	,.M_KEEP_WIDTH                    (1)
-	,.ID_ENABLE                       (0)
-	,.DEST_ENABLE                     (0)
-	,.USER_ENABLE                     (0))
-	axis_adapter_inst
-	(.clk(clk_i)
-	,.rst(reset_i)
-	// UART to AXIS
-	,.s_axis_tready(axis_ready_w)
-	,.s_axis_tvalid(uart_valid_w)
-	,.s_axis_tdata(uart_data_w)
-	,.s_axis_tkeep(1'b1)
-	,.s_axis_tlast(1'b0)
-	// AXIS to Unpacker
-	,.m_axis_tready(unpack_ready_w)
-	,.m_axis_tvalid(axis_valid_w)
-	,.m_axis_tdata(axis_data_w)
-	);
+	skid_buffer
+	#(.DEPTH(16)
+	 ,.HEADROOM(6))
+	skid_inst (
+        .clk(clk_i)
+		,.rst(reset_i)
+		,.s_axis_tdata(uart_data_w)
+		,.s_axis_tvalid(uart_valid_w)
+		,.s_axis_tready(skid_ready_w)
+		,.m_axis_tdata(skid_data_w)
+		,.m_axis_tvalid(skid_valid_w)
+		,.m_axis_tready(unpack_ready_w)
+        ,.rts(uart_rts_o) 
+    );
 
 	// Unpacker to unpack 4 2-bit values from each 8-bit UART input
 	unpacker
@@ -171,8 +166,8 @@ module uart_axis
 	,.reset_i(reset_i)
 	// AXIS to Unpacker
 	,.ready_o(unpack_ready_w)
-	,.valid_i(axis_valid_w)
-	,.packed_i(axis_data_w)
+	,.valid_i(skid_valid_w)
+	,.packed_i(skid_data_w)
 	// Unpacker to Sobel Filters
 	,.ready_i(blur_ready_w)
 	,.valid_o(unpack_valid_w)
@@ -253,14 +248,13 @@ module uart_axis
 	,.mag_o(mag_data_w)
 	);
 
-	logic [0:0] output_mux_w;
 	always_comb begin
 		case (button_i)
-			3'b001: output_mux_w  = blur_data_w[2];
-			3'b010: output_mux_w  = gx_data_w[2];
-			3'b011: output_mux_w  = unpacked_data_w;
-			3'b100: output_mux_w  = gy_data_w[2];
-			default: output_mux_w = mag_data_w[2];
+			3'b001: begin output_mux_l  = blur_data_w[2];  mux_valid_l = mag_valid_w; end
+			3'b010: begin output_mux_l  = gx_data_w[2];    mux_valid_l = mag_valid_w; end
+			3'b100: begin output_mux_l  = gy_data_w[2];    mux_valid_l = mag_valid_w; end
+			3'b011: begin output_mux_l  = unpacked_data_w; mux_valid_l = unpack_valid_w; end
+			default: begin output_mux_l = mag_data_w[2];   mux_valid_l = mag_valid_w; end
 		endcase
 	end
 
@@ -273,8 +267,8 @@ module uart_axis
 	,.reset_i(reset_i)
 	// Magnitude to Packer
 	,.ready_o(pack_ready_w)
-	,.valid_i(mag_valid_w)
-	,.unpacked_i(output_mux_w)
+	,.valid_i(mux_valid_l)
+	,.unpacked_i(output_mux_l)
 	// Packer to UART output
 	,.ready_i(uart_ready_w)
 	,.valid_o(pack_valid_w)

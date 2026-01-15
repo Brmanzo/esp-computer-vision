@@ -15,6 +15,7 @@ module top
   ,input  ESP_RX_i
   ,output ESP_TX_o
   ,output tx_serial_o
+  ,output uart_rts_o
 
   ,output [5:1] led_o);
 
@@ -26,6 +27,11 @@ module top
 
   wire [3:1] button_sync_r;
   wire [3:1] button_r;
+
+  wire [0:0] rts_w;
+
+  assign uart_rts_o = rts_w;
+  assign led_o[1] = rts_w;
 
   dff
     #()
@@ -100,6 +106,7 @@ module top
         .rx_serial_i                    (ESP_RX_i),
         .tx_serial_o                    (ESP_TX_o),
 
-        .led_o                          (led_o[5:1]));
+        .led_o                          (led_o[5:1]),
+        .uart_rts_o                     (rts_w));
 
 endmodule

@@ -100,7 +100,7 @@ class PackerModel():
     
     def consume(self):
         assert_resolvable(self._unpacked_i)
-        u = int(self._unpacked_i.value) & 0x03
+        u = int(self._unpacked_i.value) & ((1 << int(self._unpacked_width_p)) - 1)
         
         self._acc = self._acc | (u << (self._unpacked_width_p * self._step))
         self._enqs += 1
@@ -383,6 +383,8 @@ class ModelRunner():
                                           dut.valid_i, dut.ready_o)
         self._rv_out = ReadyValidInterface(self._clk_i, self._reset_i,
                                            dut.valid_o, dut.ready_i)
+        
+        self._num_packed_p  = dut.packed_num_p.value
 
         self._model = model
 
@@ -407,9 +409,9 @@ class ModelRunner():
     async def _run_output(self, model):
         while True:
             await self._rv_out.handshake(None)
-            assert (self._events.qsize() >= 4), "Error! Module produced output without 4 valid input"
+            assert (self._events.qsize() >= self._num_packed_p), "Error! Module produced output without {} valid input".format(self._num_packed_p)
             self._model.produce()
-            for _ in range(4): # Four valid inputs per valid output
+            for _ in range(self._num_packed_p): # Four valid inputs per valid output
                 _ = self._events.get()
             
     def stop(self) -> None:
@@ -455,7 +457,7 @@ async def single_test(dut):
 
     eg = RandomDataGenerator(dut)
     l_out = 1
-    l_in = l_out * 4
+    l_in = l_out * dut.packed_num_p.value
     rate = 1
 
     timeout = max(l_out, l_in) * int(1/rate) * int(1/rate) 
@@ -488,7 +490,7 @@ async def single_test(dut):
     await RisingEdge(dut.valid_i)
     await RisingEdge(dut.clk_i)
 
-    timeout_cycles = int((l_in + l_out) * (1/rate) * 4) + 50
+    timeout_cycles = int((l_in + l_out) * (1/rate) * dut.packed_num_p.value) + 50
     timeout = False
     try:
         await om.wait(timeout_cycles)
@@ -505,8 +507,8 @@ async def full_bw_test(dut):
     """Input random data elements at 100% line rate"""
 
     eg = RandomDataGenerator(dut)
-    l_out = 10
-    l_in = l_out * 4
+    l_out = 50
+    l_in = l_out * dut.packed_num_p.value
     rate = 1
 
     timeout = max(l_out, l_in) * int(1/rate) * int(1/rate) 
@@ -537,7 +539,7 @@ async def full_bw_test(dut):
     await RisingEdge(dut.clk_i)
 
     CLK_NS = 10
-    timeout_cycles = int((l_in + l_out) * (1/rate) * 4) + 50
+    timeout_cycles = int((l_in + l_out) * (1/rate) * dut.packed_num_p.value) + 50
     timeout_ns = timeout_cycles * CLK_NS
     await om.wait(timeout_ns)
 
@@ -546,8 +548,8 @@ async def fuzz_random_test(dut):
     """Add random data elements at 50% line rate"""
 
     eg = RandomDataGenerator(dut)
-    l_out = 10
-    l_in = l_out * 4
+    l_out = 50
+    l_in = l_out * dut.packed_num_p.value
     rate = 0.5
 
     timeout = max(l_out, l_in) * int(1/rate) * int(1/rate) 
@@ -578,6 +580,6 @@ async def fuzz_random_test(dut):
     await RisingEdge(dut.clk_i)
 
     CLK_NS = 10
-    timeout_cycles = int((l_in + l_out) * (1/rate) * 4) + 50
+    timeout_cycles = int((l_in + l_out) * (1/rate) * dut.packed_num_p.value) + 50
     timeout_ns = timeout_cycles * CLK_NS
     await om.wait(timeout_ns)

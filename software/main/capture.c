@@ -147,10 +147,20 @@ void singleCapture(void)
     uart_flush_input(UART_NUM_1);
     xTaskCreatePinnedToCore(uart_rx_task, "uart_rx", 4096, &rx, 10, NULL, 0);
     
-    // Send one dummy byte then all packed 1bpp data
-    const uint8_t dummy[1] = {0};
-    ESP_ERROR_CHECK(uart_write_all(UART_NUM_1, dummy, 1));
-    ESP_ERROR_CHECK(uart_write_all(UART_NUM_1, gray_q_tx, tx_bytes));
+    // Necessary for proper image alignment on UART
+    const size_t CHUNK_SIZE = 128; 
+    size_t sent = 0;
+    while (sent < tx_bytes) {
+        size_t n = tx_bytes - sent;
+        if (n > CHUNK_SIZE) n = CHUNK_SIZE;
+        
+        uart_write_bytes(UART_NUM_1, (const char*)(gray_q_tx + sent), n);
+        sent += n;
+        
+        // Tiny delay to let FPGA drain its FIFO
+        // Even 1 tick or a simple busy-wait might be enough
+        esp_rom_delay_us(100); 
+    }
 
     // Wait for RX to finish
     while (!rx.done) vTaskDelay(pdMS_TO_TICKS(10));

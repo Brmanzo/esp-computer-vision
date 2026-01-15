@@ -228,16 +228,16 @@ esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint16_t w,
     e = spi_device_polling_transmit(spi_device_handle, &tc);
     if (e != ESP_OK) { spi_device_release_bus(spi_device_handle); return e; }
 
-    // 3. BURN DUMMY BYTE
-    uint8_t dummy_waste;
-    spi_transaction_t tw = {
-        .length    = 8,
-        .rxlength  = 8,
-        .tx_buffer = dummy_tx,
-        .rx_buffer = &dummy_waste,
-        .flags     = SPI_TRANS_CS_KEEP_ACTIVE
-    };
-    spi_device_polling_transmit(spi_device_handle, &tw);
+    // // 3. BURN DUMMY BYTE
+    // uint8_t dummy_waste;
+    // spi_transaction_t tw = {
+    //     .length    = 8,
+    //     .rxlength  = 8,
+    //     .tx_buffer = dummy_tx,
+    //     .rx_buffer = &dummy_waste,
+    //     .flags     = SPI_TRANS_CS_KEEP_ACTIVE
+    // };
+    // spi_device_polling_transmit(spi_device_handle, &tw);
     
     // 4. Stream Loop
     uint8_t tmp[RJPEG_PULL_CHUNK];
@@ -245,7 +245,7 @@ esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint16_t w,
     size_t out_i = 0;
     uint8_t acc = 0;
     int bitpos = 0;
-    bool keep = false; // Skip U, Keep Y (assuming correct phase from previous fix)
+    bool keep = true; // Skip U, Keep Y (assuming correct phase from previous fix)
 
     // MODE A: PACKING (Using existing threshold)
     if (capture_num < RECALIBRATE_INTERVAL) {

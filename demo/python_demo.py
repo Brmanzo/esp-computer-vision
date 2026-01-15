@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# Only works with images of odd widths due to YOSYS error
 # Usage: python3 mag_demo.py <image_filename> <ttyUSBx>
 
 from sys import argv
@@ -19,12 +18,12 @@ def producer() -> None:
 
     return
 
-def consumer(mag_image: np.ndarray, padded_w: int, padded_h: int, pad: int) -> None:
-    untrimmed = np.zeros((padded_h, padded_w), dtype=np.uint8)
+def consumer(mag_image: np.ndarray, width: int, height: int, pad: int) -> None:
+    untrimmed = np.zeros((height, width), dtype=np.uint8)
 
-    total_pixels = padded_w * padded_h
+    total_pixels = height * width
     total_bytes  = (total_pixels + 7) // 8
-
+    
     byte_i = 0
     pixel_i = 0
 
@@ -42,19 +41,18 @@ def consumer(mag_image: np.ndarray, padded_w: int, padded_h: int, pad: int) -> N
 
             gray = (q << 7) & 0xFF  # Scale back to 8 bits
 
-            r = pixel_i // padded_w
-            c = pixel_i % padded_w
+            r = pixel_i // width
+            c = pixel_i % width
             untrimmed[r, c] = gray
 
             pixel_i += 1
 
         byte_i += 1
-        if pixel_i % padded_w == 0:
-            print(f"Processed row {pixel_i // padded_w} of {padded_h}")
+        if pixel_i % width == 0:
+            print(f"Processed row {pixel_i // width} of {height}")
 
     # Trim padding (pad pixels on each side)
-    mag_image[:, :] = untrimmed[pad:padded_h, pad:padded_w]
-
+    mag_image[:, :] = untrimmed[pad:height, pad:width]
 # Image loading and setup
 path = os.path.dirname(os.path.realpath(__file__))
 if argv.__len__() < 2:
@@ -77,20 +75,18 @@ img = Image.open(img_path).convert('RGB')
 img_array = np.array(img)
 height, width, _ = img_array.shape
 
-pad = 1
-padded_w = width + pad
-padded_h = height + pad
-
-
+# Serial port setup
 # Serial port setup
 ser = serial.Serial(port=serial_port,
                     baudrate=115200, 
                     parity=serial.PARITY_NONE, 
                     stopbits=serial.STOPBITS_ONE, 
-                    bytesize=serial.EIGHTBITS,timeout=1)
+                    bytesize=serial.EIGHTBITS,
+                    timeout=1,
+                    rtscts=True)
 
 # Pre-generate all byte arrays for efficiency
-total_pixels = padded_w * padded_h
+total_pixels = height * width
 
 # Packing 8 binary inputs onto each byte
 total_bytes  = (total_pixels + 7) // 8
@@ -100,14 +96,11 @@ step = 0
 acc  = 0
 byte_i = 0 
 
-for row in range(padded_h):
-    for col in range(padded_w):
-        if row < pad or col < pad:
-            q = 0
-        else:
-            r, g, b = img_array[row - pad, col - pad]
-            gray = int(0.2989*r + 0.5870*g + 0.1140*b) & 0xFF
-            q = (gray >> 7) & 0x1  # Keep only the top bit
+for row in range(height):
+    for col in range(width):
+        r, g, b = img_array[row, col]
+        gray = int(0.2989*r + 0.5870*g + 0.1140*b) & 0xFF
+        q = (gray >> 7) & 0x1  # Keep only the top bit
         
         acc |= q << step # LSB first
         
@@ -122,10 +115,10 @@ if step != 0:
 
 # repository image array
 mag_image = np.zeros((height, width), dtype=np.uint8)
-print("width,height:", width, height, "padded_w,padded_h:", padded_w, padded_h)
+print("width,height:", width, height)
 # Start producer and consumer threads
 producer_thread = threading.Thread(target=producer, daemon=True)
-consumer_thread = threading.Thread(target=consumer, args=(mag_image, padded_w, padded_h, pad), daemon=True)
+consumer_thread = threading.Thread(target=consumer, args=(mag_image, width, height, 0), daemon=True)
 
 ser.reset_input_buffer()
 ser.reset_output_buffer()

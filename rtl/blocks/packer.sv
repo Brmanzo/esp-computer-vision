@@ -34,20 +34,19 @@ module packer
 	wire  [0:0] out_fire_w = last_w && in_fire_w;
 
 	always_ff @(posedge clk_i) begin
-		if (reset_i) begin
-			packed_r <= '0;
-		end else begin
-			if (in_fire_w) begin
-				packed_r <= packed_n;
-			end
-			if (out_fire_w) begin
-				packed_r <= '0;
-			end
-		end 
-	end
+        if (reset_i) begin
+            packed_r <= '0;
+        end else if (out_fire_w) begin
+            // We just sent the full word to elastic; clear buffer for next frame
+            packed_r <= '0;
+        end else if (in_fire_w) begin
+            // We accepted a partial chunk; accumulate it
+            packed_r <= packed_n;
+        end
+    end
 
 	// Block upstream data while receiving fourth input
-	assign ready_o = ~last_w ? 1'b1 : elastic_ready_ow;
+	assign ready_o = last_w ? elastic_ready_ow : 1'b1;
 	// Only assert valid when all four inputs have been packed
 
 	counter_roll
@@ -80,7 +79,6 @@ module packer
 	);
 
 	always_comb begin
-		packed_n = packed_r;
 		offset_l = counter_w * unpacked_width_p;
 		shift_reg_l = {{(packed_width_p-unpacked_width_p){1'b0}}, unpacked_i};
 		packed_n = packed_r | (shift_reg_l << offset_l);
