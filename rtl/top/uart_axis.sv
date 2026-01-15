@@ -1,4 +1,4 @@
-`define IMAGE_W 320
+`define IMAGE_W 320 // Change with software capture width
 `define UART_W 8
 `define WC_SUM 9
 
@@ -34,11 +34,6 @@ module uart_axis
 	wire [0:0]                        unpack_ready_w;
 	wire [0:0]                        unpack_valid_w;
 	wire [`QUANTIZED_W-1:0]           unpacked_data_w;
-
-	// Blur Wires
-	wire [0:0] 					      blur_ready_w;
-	wire [0:0] 					      blur_valid_w;
-	wire [sobel_out_width_lp-1:0] 	  blur_data_w;
 
 	// Sobel Wires
 	wire [0:0]                        gx_ready_w, gy_ready_w;
@@ -98,24 +93,6 @@ module uart_axis
 		end
 	endgenerate
 
-	function automatic weight_t blur_w(input int unsigned i);
-		unique case (i)
-			0: blur_w = 2'sd1; 1: blur_w = 2'sd1; 2: blur_w = 2'sd1;
-			3: blur_w = 2'sd1; 4: blur_w = 2'sd1; 5: blur_w = 2'sd1;
-			6: blur_w = 2'sd1; 7: blur_w = 2'sd1; 8: blur_w = 2'sd1;
-			default: blur_w = '0;
-		endcase
-	endfunction
-
-	logic signed [8:0][1:0] blur_weights_w;
-
-	genvar b;
-	generate
-		for (b = 0; b < 9; b++) begin : gen_blur
-			assign blur_weights_w[b] = blur_w(b);  // blur_w returns weight_t (signed [2:0])
-		end
-	endgenerate
-
 	// For indicating FPGA operation
 	// assign led_o = axis_data_w[5:1];
 
@@ -169,28 +146,9 @@ module uart_axis
 	,.valid_i(skid_valid_w)
 	,.packed_i(skid_data_w)
 	// Unpacker to Sobel Filters
-	,.ready_i(blur_ready_w)
+	,.ready_i(gx_ready_w & gy_ready_w)
 	,.valid_o(unpack_valid_w)
 	,.unpacked_o(unpacked_data_w)
-	);
-
-	// Gaussian Blur Filter to denoise input image
-	sobel
-	#(.linewidth_px_p(`IMAGE_W)
-	,.in_width_p(`QUANTIZED_W + 1) // Zero pad inputs
-	,.out_width_p(sobel_out_width_lp))
-	gaus_blur_inst
-	(.clk_i(clk_i)
-	,.reset_i(reset_i)
-	// Unpacker to Gx
-	,.ready_o(blur_ready_w)
-	,.valid_i(unpack_valid_w)
-	,.data_i({1'b0, unpacked_data_w})
-	// Gx to Elastic Stage
-	,.ready_i(gx_ready_w & gy_ready_w)
-	,.valid_o(blur_valid_w)
-	,.data_o(blur_data_w)
-	,.weights_i(blur_weights_w)
 	);
 
 	// Sobel Filter for Gx gradient
@@ -203,8 +161,8 @@ module uart_axis
 	,.reset_i(reset_i)
 	// Unpacker to Gx
 	,.ready_o(gx_ready_w)
-	,.valid_i(blur_valid_w)
-	,.data_i({1'b0, blur_data_w[2]}) // "Right shit" by 3 to divide by 8 and average the output
+	,.valid_i(unpack_valid_w)
+	,.data_i({1'b0, unpacked_data_w}) // "Right shit" by 3 to divide by 8 and average the output
 	// Gx to Elastic Stage
 	,.ready_i(mag_ready_w)
 	,.valid_o(gx_valid_w)
@@ -222,8 +180,8 @@ module uart_axis
 	,.reset_i(reset_i)
 	// Unpacker to Gy
 	,.ready_o(gy_ready_w)
-	,.valid_i(blur_valid_w)
-	,.data_i({1'b0, blur_data_w[2]})
+	,.valid_i(unpack_valid_w)
+	,.data_i({1'b0, unpacked_data_w})
 	// Gy to Elastic Stage
 	,.ready_i(mag_ready_w)
 	,.valid_o(gy_valid_w)
@@ -250,10 +208,9 @@ module uart_axis
 
 	always_comb begin
 		case (button_i)
-			3'b001: begin output_mux_l  = blur_data_w[2];  mux_valid_l = mag_valid_w; end
+			3'b001: begin output_mux_l  = unpacked_data_w; mux_valid_l = unpack_valid_w; end
 			3'b010: begin output_mux_l  = gx_data_w[2];    mux_valid_l = mag_valid_w; end
 			3'b100: begin output_mux_l  = gy_data_w[2];    mux_valid_l = mag_valid_w; end
-			3'b011: begin output_mux_l  = unpacked_data_w; mux_valid_l = unpack_valid_w; end
 			default: begin output_mux_l = mag_data_w[2];   mux_valid_l = mag_valid_w; end
 		endcase
 	end

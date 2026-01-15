@@ -61,6 +61,8 @@ struct camera_operate{
     void  (*cameraInit) (void);
     void (*setJpegSize)(uint8_t size);
 };
+#define QVGA_WIDTH   320
+#define QVGA_HEIGHT  240
 #define res_160x120 		0	//160x120
 #define res_176x144 		1	//176x144
 #define res_320x240 		2	//320x240
@@ -144,6 +146,6 @@ void arducam_start_capture(void);
 void arducam_stop_capture(void);
 
 /* Read raw YUV422 image data from Arducam and pack luma values onto 1bpp local buffer. */
-esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint16_t w, uint16_t h, uint8_t* adaptive_th, uint8_t capture_num);
+esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint8_t* adaptive_th, uint8_t capture_num, uint8_t scale);
 
 #endif

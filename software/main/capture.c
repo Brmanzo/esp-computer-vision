@@ -81,7 +81,10 @@ void singleCapture(void)
 {
     static uint8_t capture_num = 0;
     static uint8_t adaptive_th = 0;
-    const uint16_t W = 320, H = 240;
+    uint8_t downsample_factor  = 1;
+    
+    const uint16_t W = QVGA_WIDTH/downsample_factor;
+    const uint16_t H = QVGA_HEIGHT/downsample_factor;
     const size_t tx_bytes = ((size_t)W * H + 7) / 8;
 
     arducam_camlock_take();
@@ -113,7 +116,7 @@ void singleCapture(void)
         return;
     }
     // Reads Raw YUV422 from fifo and packs to 1bpp grayscale
-    esp_err_t re = arducam_read_and_pack_stream(gray_q_tx, tx_bytes, W, H, &adaptive_th, capture_num);
+    esp_err_t re = arducam_read_and_pack_stream(gray_q_tx, tx_bytes, &adaptive_th, capture_num, downsample_factor);
     
     arducam_camlock_give();
 
