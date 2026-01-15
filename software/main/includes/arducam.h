@@ -23,7 +23,6 @@
 #define WRITE_BIT                  0x80
 #define ARDUCAM_ADDR               0x30
 
-
 /* uart pin source */
 #define UART_NUM    UART_NUM_0
 #define BAUD_RATE   921600
@@ -93,6 +92,7 @@ struct camera_operate{
 #define VSYNC_MASK         		0x01
 #define SHUTTER_MASK       		0x02
 #define CAP_DONE_MASK      		0x08
+#define RECALIBRATE_INTERVAL      20
 
 #define FIFO_SIZE1				0x42  //Camera write FIFO size[7:0] for burst to read
 #define FIFO_SIZE2				0x43  //Camera write FIFO size[15:8]
@@ -144,6 +144,6 @@ void arducam_start_capture(void);
 void arducam_stop_capture(void);
 
 /* Read raw YUV422 image data from Arducam and pack luma values onto 1bpp local buffer. */
-esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint16_t w, uint16_t h, uint8_t* adaptive_th);
+esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint16_t w, uint16_t h, uint8_t* adaptive_th, uint8_t capture_num);
 
 #endif

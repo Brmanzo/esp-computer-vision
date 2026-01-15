@@ -6,6 +6,7 @@
 #include "includes/uart.h"
 
 static void camera_task(void *arg) {
+    
     for (;;) {
         singleCapture();
         vTaskDelay(pdMS_TO_TICKS(10));

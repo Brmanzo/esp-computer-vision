@@ -6,7 +6,6 @@
 #include "includes/ov2640.h"
 #include "includes/spi.h"
 
-
 /* -------------------------------------- Device Init -------------------------------------- */
 /* Initialization sequence for the ArduCAM-M-2MP device. */
 void arducam_power_up_sensor(void) {
@@ -208,7 +207,7 @@ static inline uint8_t luma_to_bit(uint8_t y, uint8_t threshold) {
 }
 
 /* Reads Arducam FIFO and packs Luma (Y) values, 1 bit per pixel onto a byte. */
-esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint16_t w, uint16_t h, uint8_t* adaptive_th)
+esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint16_t w, uint16_t h, uint8_t* adaptive_th, uint8_t capture_num)
 {
     const size_t npix    = (size_t)w * h;
     const size_t out_len = (npix + 7) / 8;
@@ -249,7 +248,7 @@ esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint16_t w,
     bool keep = false; // Skip U, Keep Y (assuming correct phase from previous fix)
 
     // MODE A: PACKING (Using existing threshold)
-    if (*adaptive_th > 0) {
+    if (capture_num < RECALIBRATE_INTERVAL) {
         while (remaining) {
             size_t n = remaining > RJPEG_PULL_CHUNK ? RJPEG_PULL_CHUNK : remaining;
             bool keep_cs = (remaining > n); 
@@ -301,7 +300,7 @@ esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint16_t w,
         // Compute Average
         if (count_luma > 0) {
             uint8_t avg = (uint8_t)(sum_luma / count_luma);
-            uint8_t bias = 25; // Bias to favor darker pixels
+            uint8_t bias = 0; // Bias to favor darker pixels
             *adaptive_th = avg + bias;
             if (avg > 230) *adaptive_th = 255;
 

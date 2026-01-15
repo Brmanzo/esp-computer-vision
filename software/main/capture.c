@@ -79,6 +79,7 @@ static void uart_rx_task(void *arg)
 
 void singleCapture(void)
 {
+    static uint8_t capture_num = 0;
     static uint8_t adaptive_th = 0;
     const uint16_t W = 320, H = 240;
     const size_t tx_bytes = ((size_t)W * H + 7) / 8;
@@ -89,7 +90,7 @@ void singleCapture(void)
     arducam_set_capture();
     arducam_reset_fifo();
     arducam_start_capture();
-
+    capture_num++;
     // Poll Arducam and stop capture when done
     const TickType_t t0 = xTaskGetTickCount();
     while (!spi_get_bit(ARDUCHIP_TRIG, CAP_DONE_MASK)) {
@@ -112,7 +113,7 @@ void singleCapture(void)
         return;
     }
     // Reads Raw YUV422 from fifo and packs to 1bpp grayscale
-    esp_err_t re = arducam_read_and_pack_stream(gray_q_tx, tx_bytes, W, H, &adaptive_th);
+    esp_err_t re = arducam_read_and_pack_stream(gray_q_tx, tx_bytes, W, H, &adaptive_th, capture_num);
     
     arducam_camlock_give();
 
@@ -125,8 +126,9 @@ void singleCapture(void)
     /* ---------------- Transmit Packed 1bpp Data to FPGA for Image Processing ---------------- */
     
     // Skip fpga and publish if sampling for adaptive threshold only
-    if (adaptive_th == 0) {
+    if (capture_num >= RECALIBRATE_INTERVAL) {
         free(gray_q_tx);
+        capture_num = 0;
         return;
     }
 
