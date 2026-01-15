@@ -1,0 +1,9 @@
+{
+    "top": "mag",
+    "files":
+    ["rtl/blocks/mag.sv"
+    ,"rtl/lib/elastic.sv"
+    ,"rtl/vendor/dff.sv"
+    ,"rtl/vendor/inv.sv"
+    ]
+}

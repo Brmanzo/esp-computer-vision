@@ -1,0 +1,8 @@
+{
+    "top": "rle_encode",
+    "files":
+    ["rtl/blocks/rle_encode.sv"
+    ,"rtl/lib/elastic.sv"
+    ,"rtl/lib/counter_roll.sv"
+    ]
+}

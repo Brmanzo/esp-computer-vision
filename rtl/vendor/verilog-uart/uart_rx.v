@@ -55,7 +55,6 @@ module uart_rx #
     output wire                   busy,
     output wire                   overrun_error,
     output wire                   frame_error,
-    output wire                   rts,
 
     /*
      * Configuration
@@ -83,7 +82,6 @@ assign m_axis_tvalid = m_axis_tvalid_reg;
 assign busy = busy_reg;
 assign overrun_error = overrun_error_reg;
 assign frame_error = frame_error_reg;
-assign rts = (m_axis_tvalid_reg && !m_axis_tready);
 
 always @(posedge clk) begin
     if (rst) begin

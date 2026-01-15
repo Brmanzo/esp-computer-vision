@@ -64,7 +64,6 @@ module uart #
     output wire                   rx_busy,
     output wire                   rx_overrun_error,
     output wire                   rx_frame_error,
-    output wire                   rts,
 
     /*
      * Configuration
@@ -107,7 +106,6 @@ uart_rx_inst (
     .busy(rx_busy),
     .overrun_error(rx_overrun_error),
     .frame_error(rx_frame_error),
-    .rts(rts),
     // configuration
     .prescale(prescale)
 );

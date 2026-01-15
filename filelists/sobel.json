@@ -1,0 +1,11 @@
+{
+    "top": "sobel",
+    "files":
+    ["rtl/blocks/sobel.sv"
+    ,"rtl/lib/counter.sv"
+    ,"rtl/lib/counter_roll.sv"
+    ,"rtl/lib/elastic.sv"
+    ,"rtl/lib/ram_1r1w_sync.sv"
+    ,"rtl/lib/delaybuffer.sv"
+    ]
+}

@@ -1,0 +1,8 @@
+{
+    "top": "packer",
+    "files":
+    ["rtl/blocks/packer.sv"
+    ,"rtl/lib/elastic.sv"
+    ,"rtl/lib/counter_roll.sv"
+    ]
+}

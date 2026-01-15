@@ -10,6 +10,7 @@ __pycache__/
 
 # FPGA / EDA outputs
 *.json
+!filelists/*.json
 *.yslog
 *.nplog
 *.asc
