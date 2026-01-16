@@ -3,7 +3,9 @@ module sobel
   #(
      parameter linewidth_px_p = 16
     ,parameter in_width_p  = 2
-    ,parameter out_width_p = 32)
+    ,parameter out_width_p = 32
+    ,parameter kernel_width_p = 3
+    ,parameter weight_width_p = 2)
    (input  [0:0]            clk_i
    ,input  [0:0]            reset_i
    ,input  [0:0]            valid_i
@@ -11,12 +13,12 @@ module sobel
    ,input  [in_width_p-1:0] data_i
    ,output [0:0]            valid_o
    ,input  [0:0]            ready_i
-   ,input logic signed [8:0][1:0] weights_i
+   ,input logic signed [(kernel_width_p*kernel_width_p)-1:0][weight_width_p-1:0] weights_i
    ,output signed [out_width_p-1:0] data_o
    );
 
-   logic [in_width_p-1:0] window_l [2:0][2:0];
-   logic [in_width_p-1:0] ram_1_ol, ram_2_ol;
+   localparam extension_width_lp = out_width_p - in_width_p;
+
 
    /* ------------------------------------ Elastic Handshaking Logic ------------------------------------ */
    // Provided Elastic State Machine Logic
@@ -38,39 +40,35 @@ module sobel
    /* ------------------------------------ FIFO RAM Instantiations ------------------------------------ */
    // Both RAMs step forward with each new pixel input (enable_w) so that delay is exactly one row each.
    // RAM 1 produces a delay of one row. Reads off of data_i as the bottom row of the kernel receives new data.
-   /* verilator lint_off PINCONNECTEMPTY */
-   delaybuffer
-   #(.width_p(in_width_p)
-   ,.delay_p(linewidth_px_p - 1))
-   ram_1_delaybuffer_inst
-   (.clk_i(clk_i)
-   ,.reset_i(reset_i)
-   ,.data_i(data_i)
-   ,.valid_i(enable_w)
-   ,.ready_o()
-   ,.valid_o()
-   ,.data_o(ram_1_ol)
-   ,.ready_i(1'b1)
-   );
-   // RAM 2 produces a delay of two rows. Reads off of output of RAM 1 as the middle row receives new data.
-   delaybuffer
-   #(.width_p(in_width_p)
-   ,.delay_p(linewidth_px_p - 1))
-   ram_2_delaybuffer_inst
-   (.clk_i(clk_i)
-   ,.reset_i(reset_i)
-   ,.data_i(ram_1_ol)
-   ,.valid_i(enable_w)
-   ,.ready_o()
-   ,.valid_o()
-   ,.data_o(ram_2_ol)
-   ,.ready_i(1'b1));
+   logic [in_width_p-1:0] ram_ol [0:kernel_width_p-1];
+   assign ram_ol[0] = data_i;
+
+   generate
+      for (genvar i = 0; i < kernel_width_p - 1; i++) begin : GEN_Buffer
+         delaybuffer
+         #(.width_p(in_width_p)
+         ,.delay_p(linewidth_px_p - 1))
+         ram_1_delaybuffer_inst
+         (.clk_i(clk_i)
+         ,.reset_i(reset_i)
+         ,.data_i(ram_ol[i])
+         ,.valid_i(enable_w)
+         ,.ready_o()
+         ,.valid_o()
+         ,.data_o(ram_ol[i+1])
+         ,.ready_i(1'b1)
+         );
+      end
+   endgenerate
+
    /* ------------------------------------ Window Register Logic ------------------------------------ */
    // Row major Order(window_l[row][col])
+   logic [in_width_p-1:0] window_l [kernel_width_p-1:0][kernel_width_p-1:0];
+
    always_ff @(posedge clk_i) begin
       if (reset_i) begin
-         for (int i = 0; i < 3; i++) begin
-            for (int j = 0; j < 3; j++) begin
+         for (int i = 0; i < kernel_width_p; i++) begin
+            for (int j = 0; j < kernel_width_p; j++) begin
                window_l[i][j] <= '0;
             end
          end
@@ -78,39 +76,32 @@ module sobel
          /* ------------------------------- Internal Connections ------------------------------- */ 
          // Line feeds from right to left within window
          // Bottom line
-         window_l[2][1] <= window_l[2][2];
-         window_l[2][0] <= window_l[2][1];
-
-         // Middle line
-         window_l[1][1] <= window_l[1][2];
-         window_l[1][0] <= window_l[1][1];
-
-         // Top line
-         window_l[0][1] <= window_l[0][2];
-         window_l[0][0] <= window_l[0][1];
+         for (int r = 0; r < kernel_width_p; r++) begin
+            for (int c = 0; c < kernel_width_p - 1; c++) begin
+               window_l[r][c] <= window_l[r][c+1];
+            end
+         end
          /* -------------------------------- Input Connections -------------------------------- */ 
          // Load new data into the rightmost column of the window
-         // Bottom line <- Newest data from input
-         window_l[2][2] <= data_i;
-         // Middle line <- Once seen data from first RAM
-         window_l[1][2] <= ram_1_ol;
          // Top line <- Twice seen data from second RAM
-         window_l[0][2] <= ram_2_ol;
+         for (int r = 0; r < kernel_width_p; r++) begin
+            window_l[r][kernel_width_p-1] <= ram_ol[kernel_width_p-1 - r];
+         end
       end
    end
    /* ------------------------------------ Output Logic ------------------------------------ */
    logic signed [out_width_p-1:0] acc_l;
-   logic signed [out_width_p-1:0] pp_l;
    always_comb begin
       acc_l = '0;
-      for (int r = 0; r < 3; r++) begin
-         for (int c = 0; c < 3; c++) begin
-            // When binary inputs, use bitwise AND instead of multiplication
+      for (int r = 0; r < kernel_width_p; r++) begin
+         for (int c = 0; c < kernel_width_p; c++) begin
+            // When binary inputs, only add the weight if the input pixel is a 1
             if (in_width_p == 1) begin
-               pp_l = signed'(out_width_p'($signed(weights_i[r*3 + c])) & out_width_p'(window_l[r][c]));
-               acc_l = acc_l + pp_l;
+               if (window_l[r][c] != '0) begin
+                  acc_l = acc_l + $signed({{extension_width_lp{1'b0}}, weights_i[r*kernel_width_p + c]});
+               end
             end else begin
-               acc_l = acc_l + ($signed(weights_i[r*3 + c]) * $signed(window_l[r][c]));
+               acc_l = acc_l + ($signed(weights_i[r*kernel_width_p + c]) * $signed(window_l[r][c]));
             end
          end
       end

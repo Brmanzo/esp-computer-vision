@@ -1,6 +1,6 @@
 `define IMAGE_W 320 // Change with software capture width
 `define UART_W 8
-`define WC_SUM 9
+`define WC_SUM 25
 
 `define QUANTIZED_W 1
 `define PACK_NUM 8
@@ -59,36 +59,42 @@ module uart_axis
 
 	function automatic weight_t gx_w(input int unsigned i);
 		unique case (i)
-			0: gx_w = 2'sd1;  1: gx_w = 2'sd0;  2: gx_w = -2'sd1;
-			3: gx_w = 2'sd1;  4: gx_w = 2'sd0;  5: gx_w = -2'sd1;
-			6: gx_w = 2'sd1;  7: gx_w = 2'sd0;  8: gx_w = -2'sd1;
+			 0: gx_w = 2'sd1;  1: gx_w = 2'sd1;  2: gx_w = 2'sd0; 3:  gx_w = -2'sd1; 4:  gx_w = -2'sd1;
+			 5: gx_w = 2'sd1;  6: gx_w = 2'sd1;  7: gx_w = 2'sd0; 8:  gx_w = -2'sd1; 9:  gx_w = -2'sd1;
+			10: gx_w = 2'sd1; 11: gx_w = 2'sd1; 12: gx_w = 2'sd0; 13: gx_w = -2'sd1; 14: gx_w = -2'sd1;
+			15: gx_w = 2'sd1; 16: gx_w = 2'sd1; 17: gx_w = 2'sd0; 18: gx_w = -2'sd1; 19: gx_w = -2'sd1;
+			20: gx_w = 2'sd1; 21: gx_w = 2'sd1; 22: gx_w = 2'sd0; 23: gx_w = -2'sd1; 24: gx_w = -2'sd1;
+
+			
 			default: gx_w = '0;
 		endcase
 	endfunction
 
-	logic signed [8:0][1:0] gx_weights_w;
+	logic signed [24:0][1:0] gx_weights_w;
 
 	genvar j;
 	generate
-		for (j = 0; j < 9; j++) begin : gen_gx
+		for (j = 0; j < 25; j++) begin : gen_gx
 			assign gx_weights_w[j] = gx_w(j);  // gx_w returns weight_t (signed [2:0])
 		end
 	endgenerate
 
 	function automatic weight_t gy_w(input int unsigned i);
 		unique case (i)
-			0: gy_w =  2'sd1;  1: gy_w =  2'sd1;  2: gy_w =  2'sd1;
-			3: gy_w =  2'sd0;  4: gy_w =  2'sd0;  5: gy_w =  2'sd0;
-			6: gy_w = -2'sd1;  7: gy_w = -2'sd1;  8: gy_w = -2'sd1;
+			 0: gy_w =  2'sd1;  1: gy_w =  2'sd1;  2: gy_w =  2'sd1; 3:  gy_w = 2'sd1; 4:   gy_w = 2'sd1;
+			 5: gy_w =  2'sd1;  6: gy_w =  2'sd1;  7: gy_w =  2'sd1; 8:  gy_w = 2'sd1; 9:   gy_w = 2'sd1;
+			10: gy_w = 2'sd0;  11: gy_w = 2'sd0;  12: gy_w =  2'sd0; 13: gy_w = 2'sd0; 14:  gy_w = 2'sd0;
+			15: gy_w = -2'sd1; 16: gy_w = -2'sd1; 17: gy_w = -2'sd1; 18: gy_w = -2'sd1; 19: gy_w = -2'sd1;
+			20: gy_w = -2'sd1; 21: gy_w = -2'sd1; 22: gy_w = -2'sd1; 23: gy_w = -2'sd1; 24: gy_w = -2'sd1;
 			default: gy_w = '0;
 		endcase
 	endfunction
 
-	logic signed [8:0][1:0] gy_weights_w;
+	logic signed [24:0][1:0] gy_weights_w;
 
 	genvar k;
 	generate
-		for (k = 0; k < 9; k++) begin : gen_gy
+		for (k = 0; k < 25; k++) begin : gen_gy
 			assign gy_weights_w[k] = gy_w(k);  // gy_w returns weight_t (signed [2:0])
 		end
 	endgenerate
@@ -155,7 +161,8 @@ module uart_axis
 	sobel
 	#(.linewidth_px_p(`IMAGE_W)
 	,.in_width_p(`QUANTIZED_W + 1) // Zero pad inputs
-	,.out_width_p(sobel_out_width_lp))
+	,.out_width_p(sobel_out_width_lp)
+	,.kernel_width_p(5))
 	sobel_gx_inst
 	(.clk_i(clk_i)
 	,.reset_i(reset_i)
@@ -174,7 +181,8 @@ module uart_axis
 	sobel
 	#(.linewidth_px_p(`IMAGE_W)
 	,.in_width_p(`QUANTIZED_W + 1)
-	,.out_width_p(sobel_out_width_lp))
+	,.out_width_p(sobel_out_width_lp)
+	,.kernel_width_p(5))
 	sobel_gy_inst
 	(.clk_i(clk_i)
 	,.reset_i(reset_i)
@@ -209,9 +217,9 @@ module uart_axis
 	always_comb begin
 		case (button_i)
 			3'b001: begin output_mux_l  = unpacked_data_w; mux_valid_l = unpack_valid_w; end
-			3'b010: begin output_mux_l  = gx_data_w[2];    mux_valid_l = mag_valid_w; end
-			3'b100: begin output_mux_l  = gy_data_w[2];    mux_valid_l = mag_valid_w; end
-			default: begin output_mux_l = mag_data_w[2];   mux_valid_l = mag_valid_w; end
+			3'b010: begin output_mux_l  = gx_data_w[4];    mux_valid_l = mag_valid_w; end
+			3'b100: begin output_mux_l  = gy_data_w[4];    mux_valid_l = mag_valid_w; end
+			default: begin output_mux_l = mag_data_w[4];   mux_valid_l = mag_valid_w; end
 		endcase
 	end
 

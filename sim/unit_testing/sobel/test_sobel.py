@@ -68,8 +68,8 @@ weights = [1]*9
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p", [("16", "2", output_width(2)), ("32", "1", output_width(1))])
-def test_each(test_name, simulator, linewidth_px_p, in_width_p, out_width_p):
+@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p, kernel_width_p", [("16", "2", output_width(2), "3"), ("32", "1", output_width(1), "5")])
+def test_each(test_name, simulator, linewidth_px_p, in_width_p, out_width_p, kernel_width_p):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
@@ -79,8 +79,8 @@ def test_each(test_name, simulator, linewidth_px_p, in_width_p, out_width_p):
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p", [("16", "2", output_width(2)), ("32", "1", output_width(1))])
-def test_all(simulator, linewidth_px_p, in_width_p, out_width_p):
+@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p, kernel_width_p", [("16", "2", output_width(2), "3"), ("32", "1", output_width(1), "5")])
+def test_all(simulator, linewidth_px_p, in_width_p, out_width_p, kernel_width_p):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
@@ -104,8 +104,8 @@ def test_style(simulator, linewidth_px_p, in_width_p, out_width_p):
 
 class SobelModel():
     def __init__(self, dut, weights: List[List[int]] = None):
-
-        self._f = np.ones((3,3), dtype=int)
+        self._kernel_width = dut.kernel_width_p.value
+        self._f = np.ones((self._kernel_width,self._kernel_width), dtype=int)
         self._dut = dut
         self._data_o = dut.data_o
         self._data_i = dut.data_i
@@ -116,7 +116,7 @@ class SobelModel():
 
         # We're going to initialize _buf with NaN so that we can
         # detect when the output should be not an X in simulation
-        self._buf = np.zeros((3,self._linewidth_px_p))/0
+        self._buf = np.zeros((self._kernel_width,self._linewidth_px_p))/0
         self._deqs = 0
         self._enqs = 0
 
@@ -140,7 +140,7 @@ class SobelModel():
         return buf
 
     def apply_kernel(self, buf):
-        window = buf[:,-3:]
+        window = buf[:,-self._kernel_width:]
         # Now take the dot product between the window, and the kernel
         prod = np.multiply(self.k, window)
         result = prod.sum()
@@ -473,9 +473,9 @@ async def single_test(dut):
     l = 1
 
     rate = 1
-    kernel = [[1, 1, 1],
-              [1, 1, 1],
-              [1, 1, 1]]
+    kernel_width = int(dut.kernel_width_p.value) 
+    kernel = [[1]*kernel_width for _ in range(kernel_width)]
+    
     model = SobelModel(dut, kernel)
     m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, 1), l)
@@ -525,9 +525,8 @@ async def out_fuzz_test(dut):
 
     timeout = 2 * l * int(1/rate)
 
-    kernel = [[1, 1, 1],
-              [1, 1, 1],
-              [1, 1, 1]]
+    kernel_width = int(dut.kernel_width_p.value) 
+    kernel = [[1]*kernel_width for _ in range(kernel_width)]
     model = SobelModel(dut, kernel)
     m = ModelRunner(dut, model)
     om = OutputModel(dut, CountingGenerator(dut, rate), l)
@@ -543,7 +542,7 @@ async def out_fuzz_test(dut):
     valid_i.value = 0
 
     weights_i = dut.weights_i
-    weights_i.value = pack_weights([1, 1, 1, 1, 1, 1, 1, 1, 1], 2)
+    weights_i.value = pack_weights([1]*(kernel_width*kernel_width), 2)
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, reset_i, 10)
 
@@ -575,9 +574,8 @@ async def in_fuzz_test(dut):
 
     timeout = 2 * l * int(1/rate)
 
-    kernel = [[1, 1, 1],
-              [1, 1, 1],
-              [1, 1, 1]]
+    kernel_width = int(dut.kernel_width_p.value) 
+    kernel = [[1]*kernel_width for _ in range(kernel_width)]
     model = SobelModel(dut, kernel)
     m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, 1), l)
@@ -592,7 +590,7 @@ async def in_fuzz_test(dut):
     valid_i.value = 0
 
     weights_i = dut.weights_i
-    weights_i.value = pack_weights([1, 1, 1, 1, 1, 1, 1, 1, 1], 2)
+    weights_i.value = pack_weights([1]*(kernel_width*kernel_width), 2)
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, reset_i, 10)
 
@@ -623,9 +621,9 @@ async def inout_fuzz_test(dut):
 
     timeout = 2 * l * int(1/rate) * int(1/rate) 
 
-    kernel = [[1, 1, 1],
-              [1, 1, 1],
-              [1, 1, 1]]
+    kernel_width = int(dut.kernel_width_p.value) 
+    kernel = [[1]*kernel_width for _ in range(kernel_width)]
+
     model = SobelModel(dut, kernel)
     m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, rate), l)
@@ -645,7 +643,7 @@ async def inout_fuzz_test(dut):
     valid_i.value = 0
 
     weights_i = dut.weights_i
-    weights_i.value = pack_weights([1, 1, 1, 1, 1, 1, 1, 1, 1], 2)
+    weights_i.value = pack_weights([1]*(kernel_width*kernel_width), 2)
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, reset_i, 10)
 
@@ -675,10 +673,9 @@ async def full_bw_test(dut):
     rate = 1
 
     timeout = l + 1
+    kernel_width = int(dut.kernel_width_p.value) 
+    kernel = [[1]*kernel_width for _ in range(kernel_width)]
 
-    kernel = [[1, 1, 1],
-              [1, 1, 1],
-              [1, 1, 1]]
     model = SobelModel(dut, kernel)
     m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, rate), l)
@@ -694,7 +691,8 @@ async def full_bw_test(dut):
     valid_i.value = 0
 
     weights_i = dut.weights_i
-    weights_i.value = pack_weights([1, 1, 1, 1, 1, 1, 1, 1, 1], 2)
+
+    weights_i.value = pack_weights([1]*(kernel_width*kernel_width), 2)
 
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, reset_i, 10)
@@ -725,12 +723,19 @@ async def full_bw_Gx_test(dut):
 
     l = dut.linewidth_px_p.value * 4
     rate = 1
+    kernel_width = int(dut.kernel_width_p.value) 
 
     timeout = l + 1
-
-    kernel = [[-1, 0, 1],
-              [-1, 0, 1],
-              [-1, 0, 1]]
+    if kernel_width == 3:
+        kernel = [[-1, 0, 1],
+                  [-1, 0, 1],
+                  [-1, 0, 1]]
+    elif kernel_width == 5:
+        kernel = [[-1, -1, 0, 1, 1],
+                [-1, -1, 0, 1, 1],
+                [-1, -1, 0, 1, 1],
+                [-1, -1, 0, 1, 1],
+                [-1, -1, 0, 1, 1]]
     model = SobelModel(dut, kernel)
     m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, rate), l)
@@ -746,7 +751,10 @@ async def full_bw_Gx_test(dut):
     valid_i.value = 0
 
     weights_i = dut.weights_i
-    weights_i.value = pack_weights([-1, 0, 1, -1, 0, 1, -1, 0, 1], 2)
+    if kernel_width == 3:
+        weights_i.value = pack_weights([-1, 0, 1, -1, 0, 1, -1, 0, 1], 2)
+    elif kernel_width == 5:
+        weights_i.value = pack_weights([-1, -1, 0, 1, 1, -1, -1, 0, 1, 1, -1, -1, 0, 1, 1, -1, -1, 0, 1, 1, -1, -1, 0, 1, 1], 2)
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, reset_i, 10)
 
@@ -776,12 +784,18 @@ async def full_bw_Gy_test(dut):
 
     l = dut.linewidth_px_p.value * 4
     rate = 1
-
+    kernel_width = int(dut.kernel_width_p.value) 
     timeout = l + 1
-
-    kernel = [[-1, -1, -1],
-              [ 0,  0,  0],
-              [ 1,  1,  1]]
+    if kernel_width == 3:
+        kernel = [[-1, -1, -1],
+                  [ 0,  0,  0],
+                  [ 1,  1,  1]]
+    elif kernel_width == 5:
+        kernel = [[-1, -1, -1, -1, -1],
+                  [-1, -1, -1, -1, -1],
+                  [ 0,  0,  0,  0,  0],
+                  [ 1,  1,  1,  1,  1],
+                  [ 1,  1,  1,  1,  1]]
     model = SobelModel(dut, kernel)
     m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, rate), l)
@@ -797,7 +811,10 @@ async def full_bw_Gy_test(dut):
     valid_i.value = 0
 
     weights_i = dut.weights_i
-    weights_i.value = pack_weights([-1, -1, -1, 0, 0, 0, 1, 1, 1], 2)
+    if kernel_width == 3:
+        weights_i.value = pack_weights([-1, -1, -1, 0, 0, 0, 1, 1, 1], 2)
+    elif kernel_width == 5:
+        weights_i.value = pack_weights([-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 2)
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, reset_i, 10)
 
