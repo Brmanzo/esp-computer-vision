@@ -1,60 +1,123 @@
 `timescale 1ns / 1ps
 
 module skid_buffer #(
-    parameter DATA_WIDTH = 8,
-    parameter DEPTH = 16,
-    parameter HEADROOM = 4 // Assert RTS when only 4 slots remain
+    parameter width_p = 8,
+    parameter depth_p = 16,
+    parameter headroom_p = 4 // Assert RTS when only 4 slots remain
 )(
-    input  wire clk,
-    input  wire rst,
+    input [0:0] clk_i,
+    input [0:0] reset_i,
 
-    // Input (from UART RX)
-    input  wire [DATA_WIDTH-1:0] s_axis_tdata,
-    input  wire                  s_axis_tvalid,
-    output wire                  s_axis_tready,
+    input  [width_p-1:0] data_i,
+    input  [0:0]         valid_i,
+    output [0:0]         ready_o,
 
-    // Output (to Downstream)
-    output wire [DATA_WIDTH-1:0] m_axis_tdata,
-    output wire                  m_axis_tvalid,
-    input  wire                  m_axis_tready,
+    output [width_p-1:0] data_o,
+    output [0:0]         valid_o,
+    input  [0:0]         ready_i,
 
     // Flow Control
-    output wire                  rts // High = STOP SENDING
+    output [0:0]         rts_o // High = STOP SENDING
 );
+    /* ------------------------------------ Pointer Declarations ------------------------------------ */
+    logic [$clog2(depth_p)-1:0] read_ptr_r, read_ptr_n, write_ptr_r;
+    logic [$clog2(depth_p)-1:0] prev_write_ptr_r = '0;
+    logic [0:0] read_wrap_l, write_wrap_l;
 
-    // Internal storage
-    reg [DATA_WIDTH-1:0] mem [0:DEPTH-1];
-    reg [$clog2(DEPTH):0] write_ptr = 0;
-    reg [$clog2(DEPTH):0] read_ptr = 0;
-    
-    wire [$clog2(DEPTH):0] count = write_ptr - read_ptr;
-    
-    // RTS Logic: Assert 'Busy' if we don't have enough headroom for the "skid"
-    // The ESP32 might send 1-2 bytes AFTER we say stop, so we need space for them.
-    assign rts = (count >= (DEPTH - HEADROOM));
+    wire [$clog2(depth_p):0] write_n_sink_w;
+    wire [0:0] read_wrap_n_sink_w;
 
-    // Standard FIFO Logic
-    wire empty = (write_ptr == read_ptr);
-    wire full  = (count == DEPTH);
-
-    assign s_axis_tready = !full;
-    assign m_axis_tvalid = !empty;
-    assign m_axis_tdata  = mem[read_ptr[($clog2(DEPTH)-1):0]];
-
-    always @(posedge clk) begin
-        if (rst) begin
-            write_ptr <= 0;
-            read_ptr <= 0;
-        end else begin
-            // Write
-            if (s_axis_tvalid && s_axis_tready) begin
-                mem[write_ptr[($clog2(DEPTH)-1):0]] <= s_axis_tdata;
-                write_ptr <= write_ptr + 1;
-            end
-            // Read
-            if (m_axis_tvalid && m_axis_tready) begin
-                read_ptr <= read_ptr + 1;
-            end
-        end
+    /* ------------------------------------ Full/Empty Logic ------------------------------------ */
+    always_ff @ (posedge clk_i) begin
+        prev_write_ptr_r <= write_ptr_r;
     end
+
+    wire [0:0] empty_w = (write_ptr_r == read_ptr_r) && (write_wrap_l == read_wrap_l);
+    wire [0:0] full_w  = (write_ptr_r == read_ptr_r) && (write_wrap_l != read_wrap_l);
+
+    assign ready_o = ~full_w;
+    assign valid_o = ~empty_w;
+
+    wire [0:0] write_en_w = ready_o && valid_i;
+    wire [0:0] read_en_w = ready_i && valid_o;
+
+    // RTS Logic: Assert 'Busy' if we don't have enough headroom_p for the "skid"
+    // The ESP32 might send 1-2 bytes AFTER we say stop, so we need space for them.
+    assign rts_o = ({write_wrap_l, write_ptr_r} - {read_wrap_l, read_ptr_r} >= (depth_p - headroom_p));
+    /* ------------------------------------ Bypass Logic ------------------------------------ */
+    logic [width_p-1:0] data_bypass_w;
+
+    // Elastic Head to latch input for bypass logic
+    elastic
+    #(.width_p(width_p))
+    elastic_inst
+    (.clk_i(clk_i)
+    ,.reset_i(reset_i)
+    ,.data_i(data_i)
+    ,.valid_i(valid_i)
+    ,.ready_o()
+    ,.valid_o()
+    ,.data_o(data_bypass_w)
+    ,.ready_i(ready_i)
+    );
+
+    wire  [width_p-1:0] ram_data_w;
+    logic [width_p-1:0] data_l;
+    assign data_o = data_l;
+
+    wire bypass_enable_w = (prev_write_ptr_r == read_ptr_r) && ~full_w;
+
+    always_comb begin
+    if (bypass_enable_w) begin
+        data_l = data_bypass_w;
+    end else begin
+        data_l = ram_data_w;
+    end
+    end
+    /* ------------------------------- Pointer Counter Instantiation ------------------------------- */
+    // Read Counter
+    counter
+    #(.width_p($clog2(depth_p) + 1), // One extra bit for full/empty distinction
+    .reset_val_p('0))
+    read_counter_inst
+    (.clk_i(clk_i)
+    ,.reset_i(reset_i)
+    ,.up_i(read_en_w) // Increment if ready_i and valid_o
+    ,.down_i(1'b0) // Only increments then rolls over
+    ,.count_o({read_wrap_l, read_ptr_r})
+    ,.next_count_o({read_wrap_n_sink_w, read_ptr_n})
+    );
+
+    // Write Counter
+    counter
+    #(.width_p($clog2(depth_p) + 1) // One extra bit for full/empty distinction
+    ,.reset_val_p('0))
+    write_counter_inst
+    (.clk_i(clk_i)
+    ,.reset_i(reset_i)
+    ,.up_i(write_en_w) // Increment if ready_o and valid_i
+    ,.down_i(1'b0) // Only increments then rolls over
+    ,.count_o({write_wrap_l, write_ptr_r})
+    ,.next_count_o(write_n_sink_w)
+    );
+
+    /* ------------------------------------ RAM Instantiation ------------------------------------ */
+    // FIFO RAM
+    ram_1r1w_sync
+    #(.width_p(width_p) // Width of FIFO specified by width_p
+    ,.depth_p(1<<$clog2(depth_p)) // Depth of FIFO specified by depth_p
+    )
+    ram_1r1w_sync_inst
+    (.clk_i(clk_i)
+    ,.reset_i(reset_i)
+
+    ,.wr_valid_i(write_en_w) // Disable write when bypassing
+    ,.wr_data_i(data_i)
+    ,.wr_addr_i(write_ptr_r)
+
+    ,.rd_valid_i(1'b1)
+    ,.rd_addr_i(read_ptr_n)
+    ,.rd_data_o(ram_data_w)
+    );
+
 endmodule

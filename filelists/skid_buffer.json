@@ -1,0 +1,9 @@
+{
+    "top": "skid_buffer",
+    "files":
+    ["rtl/blocks/skid_buffer.sv"
+    ,"rtl/lib/counter.sv"
+    ,"rtl/lib/elastic.sv"
+    ,"rtl/lib/ram_1r1w_sync.sv"
+    ]
+}

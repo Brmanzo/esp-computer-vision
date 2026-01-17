@@ -10,12 +10,15 @@ module counter
 	 ,input [0:0] reset_i
 	 ,input [0:0] up_i
 	 ,input [0:0] down_i
-	 ,output [width_p-1:0] count_o);
+	 ,output [width_p-1:0] count_o
+	 ,output [width_p-1:0] next_count_o
+	 );
 
 	logic [width_p-1:0] count_r, count_n;
 
 	assign count_o = count_r;
-
+	assign next_count_o = count_n;
+	
 	always_ff @(posedge clk_i) begin
 		// Reset immediately
 		if (reset_i) begin
