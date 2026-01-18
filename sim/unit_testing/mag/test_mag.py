@@ -7,6 +7,7 @@ import numpy as np
 import queue
 from functools import reduce
 from itertools import product
+from decimal import Decimal
 
 # I don't like this, but it's convenient.
 _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
@@ -25,6 +26,7 @@ from cocotb.regression import TestFactory
 from cocotb.utils import get_sim_time
 from cocotb.triggers import Timer, ClockCycles, RisingEdge, FallingEdge, with_timeout
 from cocotb.types import LogicArray, Range
+from cocotb.result import SimTimeoutError
 
 from cocotb_test.simulator import run
 
@@ -251,6 +253,8 @@ class OutputModel():
         self._coro = None
 
     async def wait(self, t):
+        if self._coro is None:
+            raise RuntimeError("Output Model never started")
         await with_timeout(self._coro, t, 'ns')
 
     def nproduced(self):
@@ -320,6 +324,8 @@ class InputModel():
         self._coro = None
 
     async def wait(self, t):
+        if self._coro is None:
+            raise RuntimeError("Input Model never started")
         await with_timeout(self._coro, t, 'ns')
 
     def nconsumed(self):
@@ -381,12 +387,12 @@ class ModelRunner():
 
         self._events = queue.SimpleQueue()
 
-        self._coro_run_in = None
-        self._coro_run_out = None
+        self._coro_run_input = None
+        self._coro_run_output = None
 
     def start(self):
         """Start model"""
-        if self._coro_run_in is not None:
+        if self._coro_run_input is not None:
             raise RuntimeError("Model already started")
         self._coro_run_input = cocotb.start_soon(self._run_input(self._model))
         self._coro_run_output = cocotb.start_soon(self._run_output(self._model))
@@ -401,19 +407,19 @@ class ModelRunner():
         while True:
             await self._rv_out.handshake(None)
             assert (self._events.qsize() > 0), "Error! Module produced output without valid input"
-            input_time = self._events.get(get_sim_time(units='ns'))
+            input_time = self._events.get()
             self._model.produce()
       
     def stop(self) -> None:
         """Stop monitor"""
-        if self._coro_run is None:
+        if self._coro_run_input is None or self._coro_run_output is None:
             raise RuntimeError("Monitor never started")
         self._coro_run_input.kill()
         self._coro_run_output.kill()
         self._coro_run_input = None
         self._coro_run_output = None
 
-@cocotb.test()
+@cocotb.test
 async def reset_test(dut):
     """Test for Initialization"""
     clk_i = dut.clk_i
@@ -421,7 +427,7 @@ async def reset_test(dut):
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, reset_i, 10)
 
-@cocotb.test()
+@cocotb.test
 async def init_test(dut):
     """Test for Basic Connectivity"""
 
@@ -437,11 +443,11 @@ async def init_test(dut):
     await reset_sequence(clk_i, reset_i, 10)
 
 
-    await Timer(1, units="ns")
+    await Timer(Decimal(1.0), units="ns")
 
     assert_resolvable(dut.mag_o)
 
-@cocotb.test()
+@cocotb.test
 async def single_test(dut):
     """Test to transmit a single element in at most two cycles."""
 
@@ -490,7 +496,7 @@ async def single_test(dut):
     dut.ready_i.value = 0
 
 
-@cocotb.test()
+@cocotb.test
 async def full_bw_test(dut):
     """Input random data elements at 100% line rate"""
 
@@ -527,11 +533,11 @@ async def full_bw_test(dut):
 
     try:
         await om.wait(timeout)
-    except cocotb.result.SimTimeoutError:
+    except SimTimeoutError:
         assert 0, f"Test timed out. Could not transmit {l} elements in {timeout} ns, with output rate {rate}"
 
 
-@cocotb.test()
+@cocotb.test
 async def fuzz_random_test(dut):
     """Add random data elements at 50% line rate"""
 
@@ -568,5 +574,5 @@ async def fuzz_random_test(dut):
 
     try:
         await om.wait(timeout)
-    except cocotb.result.SimTimeoutError:
+    except SimTimeoutError:
         assert 0, f"Test timed out. Could not transmit {l} elements in {timeout} ns, with output rate {rate}"

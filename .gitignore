@@ -3,6 +3,9 @@ build/
 run/
 lint/
 
+# VSCode
+*.code-workspace
+
 # Python
 __pycache__/
 *.pyc

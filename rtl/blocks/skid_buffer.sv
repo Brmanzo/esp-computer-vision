@@ -43,7 +43,9 @@ module skid_buffer #(
 
     // RTS Logic: Assert 'Busy' if we don't have enough headroom_p for the "skid"
     // The ESP32 might send 1-2 bytes AFTER we say stop, so we need space for them.
-    assign rts_o = ({write_wrap_l, write_ptr_r} - {read_wrap_l, read_ptr_r} >= (depth_p - headroom_p));
+    wire [$clog2(depth_p):0] occupancy_w;
+    assign occupancy_w = {write_wrap_l, write_ptr_r} - {read_wrap_l, read_ptr_r};
+    assign rts_o = (occupancy_w >= (depth_p - headroom_p));
     /* ------------------------------------ Bypass Logic ------------------------------------ */
     logic [width_p-1:0] data_bypass_w;
 
