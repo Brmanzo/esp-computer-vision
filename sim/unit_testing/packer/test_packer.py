@@ -37,7 +37,7 @@ random.seed(42)
 
 timescale = "1ps/1ps"
 
-tests = ['reset_test', 'init_test', 'single_test', 'full_bw_test', 'fuzz_random_test']
+tests = ['reset_test', 'init_test', 'single_test', 'full_bw_test', 'fuzz_random_test', 'flush_test']
 
 def fxp_to_float(signal, frac):
     """Convert an unsigned fixed-point cocotb signal to a float."""
@@ -89,6 +89,7 @@ class PackerModel():
         self._unpacked_width_p = dut.unpacked_width_p.value
         self._packed_num_p     = dut.packed_num_p.value
         self._packed_width_p   = dut.packed_width_p.value
+        self._flush_i          = dut.flush_i
 
         self._step         = 0
         self._acc          = 0
@@ -105,12 +106,17 @@ class PackerModel():
         self._acc = self._acc | (u << (self._unpacked_width_p * self._step))
         self._enqs += 1
 
-        if self._step == self._packed_num_p - 1:
+        assert_resolvable(self._flush_i)
+        flush = (int(self._flush_i) == 1)
+
+        completed = (self._step == self._packed_num_p - 1) or flush
+        if completed:
             self._q.put(self._acc & ((1 << self._packed_width_p) - 1))
             self._acc = 0
             self._step = 0
         else:
             self._step += 1
+        return completed
 
     def produce(self):
         assert_resolvable(self._packed_o)
@@ -130,7 +136,7 @@ class PackerModel():
             f"Mismatch on output #{self._deqs}: expected 0x{expected:02X}, got 0x{got:02X}"
         )
 
-        if self._step == 0:
+        if self._step == 0 or self._dut.flush_i.value == 1:
             self._packed_buf = None
 
 class ReadyValidInterface():
@@ -171,13 +177,22 @@ class ReadyValidInterface():
             await self._handshake()
 
 class RandomDataGenerator():
-    def __init__(self, dut):
+    def __init__(self, dut, flush_rate):
         self._dut = dut
         self._width_p = dut.unpacked_width_p.value
+        self._flush_rate = flush_rate
 
     def generate(self):
-        x_i = random.randint(0, (1 << self._width_p) - 1)
-        return (x_i)
+        if self._flush_rate == 0:
+            x_i = random.randint(0, (1 << self._width_p) - 1)
+            return (x_i)
+        else:
+            x_i = random.randint(0, (1 << self._width_p) - 1)
+            if random.randint(1, int(1/self._flush_rate)) == 1:
+                flush_i = 1
+            else:
+                flush_i = 0
+            return (x_i, flush_i)
     
 class EdgeCaseGenerator():
 
@@ -349,7 +364,10 @@ class InputModel():
         ready_o = self._dut.ready_o
         valid_i = self._dut.valid_i
         unpacked_i = self._dut.unpacked_i
+        flush_i = self._dut.flush_i
         unpacked_width_p = self._dut.unpacked_width_p.value
+
+        flush_i.value = 0
 
         await delay_cycles(self._dut, 1, False)
 
@@ -358,22 +376,36 @@ class InputModel():
 
         await delay_cycles(self._dut, 2, False)
 
-        data = self._data.generate() & ((1 << unpacked_width_p) - 1)
+        def get_data():
+            # Unpack generated data and flush values
+            next_item = self._data.generate()
+            if isinstance(next_item, tuple):
+                data, flush = next_item
+            else:
+                data = next_item
+                flush = 0
+
+            # Mask data to width
+            data = int(data) & ((1 << int(unpacked_width_p)) - 1)
+            flush = int(flush) & 1
+            return data, flush
+        
+        data, flush = get_data()
 
         # Precondition: Falling Edge of Clock
         while self._nin < self._length:
             produce = self._rate.generate()
             valid_i.value = produce
             unpacked_i.value = data
+            flush_i.value = flush
 
-            
             await RisingEdge(clk_i)
             assert_resolvable(ready_o)
 
             fire_in = (int(valid_i.value) == 1) and (int(ready_o.value) == 1)
             if(fire_in):
                 self._nin += 1
-                data = self._data.generate()
+                data, flush = get_data()
 
             await FallingEdge(clk_i)
             
@@ -384,17 +416,18 @@ class ModelRunner():
 
         self._clk_i = dut.clk_i
         self._reset_i = dut.reset_i
+        self._flush_i = dut.flush_i
 
         self._rv_in = ReadyValidInterface(self._clk_i, self._reset_i,
                                           dut.valid_i, dut.ready_o)
         self._rv_out = ReadyValidInterface(self._clk_i, self._reset_i,
                                            dut.valid_o, dut.ready_i)
-        
-        self._num_packed_p  = dut.packed_num_p.value
+
+        self._num_packed_p  = int(dut.packed_num_p.value)
 
         self._model = model
 
-        self._events = queue.SimpleQueue()
+        self._completed_packs = 0
 
         self._coro_run_in = None
         self._coro_run_out = None
@@ -409,16 +442,20 @@ class ModelRunner():
     async def _run_input(self, model):
         while True:
             await self._rv_in.handshake(None)
-            self._model.consume()
-            self._events.put(get_sim_time(units='ns'))
+            completed = self._model.consume()
+            if completed:
+                self._completed_packs += 1
 
     async def _run_output(self, model):
         while True:
             await self._rv_out.handshake(None)
-            assert (self._events.qsize() >= self._num_packed_p), "Error! Module produced output without {} valid input".format(self._num_packed_p)
+
+            assert self._completed_packs > 0, (
+                    f"Output fired with n_inputs={n} (<{self._num_packed_p}) "
+                    f"but flush was not asserted (flush={int(self._flush_i.value)})."
+                )
+            self._completed_packs -= 1
             self._model.produce()
-            for _ in range(self._num_packed_p): # Four valid inputs per valid output
-                _ = self._events.get()
             
     def stop(self) -> None:
         """Stop monitor"""
@@ -448,6 +485,7 @@ async def init_test(dut):
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
+    dut.flush_i.value = 0
 
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, reset_i, 10)
@@ -461,7 +499,7 @@ async def init_test(dut):
 async def single_test(dut):
     """Test to transmit a single element in at most two cycles."""
 
-    eg = RandomDataGenerator(dut)
+    eg = RandomDataGenerator(dut, flush_rate=0)
     l_out = 1
     l_in = l_out * dut.packed_num_p.value
     rate = 1
@@ -476,9 +514,11 @@ async def single_test(dut):
     reset_i = dut.reset_i
     ready_i = dut.ready_i
     valid_i = dut.valid_i
+    flush_i = dut.flush_i
 
     ready_i.value = 0
     valid_i.value = 0
+    flush_i.value = 0
 
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, reset_i, 10)
@@ -512,7 +552,7 @@ async def single_test(dut):
 async def full_bw_test(dut):
     """Input random data elements at 100% line rate"""
 
-    eg = RandomDataGenerator(dut)
+    eg = RandomDataGenerator(dut, flush_rate=0)
     l_out = 50
     l_in = l_out * dut.packed_num_p.value
     rate = 1
@@ -528,9 +568,11 @@ async def full_bw_test(dut):
 
     ready_i = dut.ready_i
     valid_i = dut.valid_i
+    flush_i = dut.flush_i
 
     ready_i.value = 0
     valid_i.value = 0
+    flush_i.value = 0
 
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, reset_i, 10)
@@ -553,7 +595,7 @@ async def full_bw_test(dut):
 async def fuzz_random_test(dut):
     """Add random data elements at 50% line rate"""
 
-    eg = RandomDataGenerator(dut)
+    eg = RandomDataGenerator(dut, flush_rate=0)
     l_out = 50
     l_in = l_out * dut.packed_num_p.value
     rate = 0.5
@@ -569,9 +611,54 @@ async def fuzz_random_test(dut):
 
     ready_i = dut.ready_i
     valid_i = dut.valid_i
+    flush_i = dut.flush_i
 
     ready_i.value = 0
     valid_i.value = 0
+    flush_i.value = 0
+
+    await clock_start_sequence(clk_i)
+    await reset_sequence(clk_i, reset_i, 10)
+
+    await FallingEdge(dut.clk_i)
+
+    m.start()
+    om.start()
+    im.start()
+
+    await RisingEdge(dut.ready_i)
+    await RisingEdge(dut.clk_i)
+
+    CLK_NS = 10
+    timeout_cycles = int((l_in + l_out) * (1/rate) * dut.packed_num_p.value) + 50
+    timeout_ns = timeout_cycles * CLK_NS
+    await om.wait(timeout_ns)
+
+@cocotb.test
+async def flush_test(dut):
+    """Input random data elements at 100% line rate"""
+
+    eg = RandomDataGenerator(dut, flush_rate=0.1)
+    l_out = 50
+    l_in = l_out * dut.packed_num_p.value
+    rate = 1
+
+    timeout = max(l_out, l_in) * int(1/rate) * int(1/rate) 
+
+    m = ModelRunner(dut, PackerModel(dut))
+    om = OutputModel(dut, RateGenerator(dut, rate), l_out)
+    im = InputModel(dut, eg, RateGenerator(dut, rate), l_in)
+
+    clk_i = dut.clk_i
+    reset_i = dut.reset_i
+
+    ready_i = dut.ready_i
+    valid_i = dut.valid_i
+    flush_i = dut.flush_i
+
+    ready_i.value = 0
+    valid_i.value = 0
+    flush_i.value = 0
 
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, reset_i, 10)
