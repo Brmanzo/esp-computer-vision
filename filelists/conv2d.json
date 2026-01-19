@@ -1,7 +1,7 @@
 {
-    "top": "sobel",
+    "top": "conv2d",
     "files":
-    ["rtl/blocks/sobel.sv"
+    ["rtl/blocks/conv2d.sv"
     ,"rtl/lib/counter.sv"
     ,"rtl/lib/counter_roll.sv"
     ,"rtl/lib/elastic.sv"

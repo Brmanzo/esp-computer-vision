@@ -1,11 +1,11 @@
 `timescale 1ns / 1ps
-module sobel
-  #(
-     parameter linewidth_px_p = 16
-    ,parameter in_width_p  = 2
-    ,parameter out_width_p = 32
-    ,parameter kernel_width_p = 3
-    ,parameter weight_width_p = 2)
+module conv2d
+  #(parameter linewidth_px_p = 160
+   ,parameter linecount_px_p = 120
+   ,parameter in_width_p  = 2
+   ,parameter out_width_p = 32
+   ,parameter kernel_width_p = 3
+   ,parameter weight_width_p = 2)
    (input  [0:0]            clk_i
    ,input  [0:0]            reset_i
    ,input  [0:0]            valid_i
@@ -19,23 +19,54 @@ module sobel
 
    localparam extension_width_lp = out_width_p - in_width_p;
 
+   /* ---------------------------------------- Kernel Validation ---------------------------------------- */
+   wire  [0:0] enable_w;
+   assign enable_w = valid_i & ready_o;
+
+   localparam int xw_lp = (linewidth_px_p <= 1) ? 1 : $clog2(linewidth_px_p);
+   localparam int yw_lp = (linecount_px_p <= 1) ? 1 : $clog2(linecount_px_p);
+
+   logic [xw_lp-1:0] x_pos_l;
+   logic [yw_lp-1:0] y_pos_l;
+
+   wire [0:0] last_col_w = (x_pos_l == xw_lp'(linewidth_px_p - 1));
+   wire [0:0] last_row_w = (y_pos_l == yw_lp'(linecount_px_p - 1));
+
+   always_ff @(posedge clk_i) begin
+      // Update x and y position counters
+      if (reset_i) begin
+         x_pos_l <= '0;
+         y_pos_l <= '0;
+      end else if (enable_w) begin
+         if (last_col_w) begin
+            x_pos_l <= '0;
+            y_pos_l <= (last_row_w) ? '0 : (y_pos_l + 1);
+         end else begin
+            x_pos_l <= x_pos_l + 1;
+         end
+      end
+   end
+
+   wire [0:0] valid_x_pos_w = (x_pos_l >= (kernel_width_p - 1));
+   wire [0:0] valid_y_pos_w = (y_pos_l >= (kernel_width_p - 1));
+   wire [0:0] valid_kernel_pos_w = valid_x_pos_w && valid_y_pos_w;
+
+   wire [0:0] produce_w = valid_kernel_pos_w & enable_w;
 
    /* ------------------------------------ Elastic Handshaking Logic ------------------------------------ */
    // Provided Elastic State Machine Logic
    logic [0:0] valid_r;
-   wire  [0:0] enable_w;
-   
-   assign enable_w = valid_i & ready_o;
-   assign ready_o = ~valid_o | ready_i;
+
 
    always_ff @(posedge clk_i) begin
       if (reset_i) begin
          valid_r <= 1'b0;
       end else if (ready_o) begin
-         valid_r <= enable_w;
+         valid_r <= produce_w;
       end
    end
    assign valid_o = valid_r;
+   assign ready_o = ~valid_r | ready_i;
 
    /* ------------------------------------ FIFO RAM Instantiations ------------------------------------ */
    // Both RAMs step forward with each new pixel input (enable_w) so that delay is exactly one row each.

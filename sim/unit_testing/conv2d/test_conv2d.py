@@ -103,7 +103,7 @@ def test_style(simulator, linewidth_px_p, in_width_p, out_width_p):
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"])
 
-class SobelModel():
+class Conv2dModel():
     def __init__(self, dut, weights: List[List[int]]):
         self._kernel_width = dut.kernel_width_p.value
         self._f = np.ones((self._kernel_width,self._kernel_width), dtype=int)
@@ -465,7 +465,7 @@ async def single_test(dut):
     kernel_width = int(dut.kernel_width_p.value) 
     kernel = [[1]*kernel_width for _ in range(kernel_width)]
     
-    model = SobelModel(dut, kernel)
+    model = Conv2dModel(dut, kernel)
     m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, 1), l)
     im = InputModel(dut, CountingDataGenerator(dut), RateGenerator(dut, rate), l)
@@ -516,7 +516,7 @@ async def out_fuzz_test(dut):
 
     kernel_width = int(dut.kernel_width_p.value) 
     kernel = [[1]*kernel_width for _ in range(kernel_width)]
-    model = SobelModel(dut, kernel)
+    model = Conv2dModel(dut, kernel)
     m = ModelRunner(dut, model)
     om = OutputModel(dut, CountingGenerator(dut, rate), l)
     im = InputModel(dut, CountingDataGenerator(dut), RateGenerator(dut, 1), l)
@@ -565,7 +565,7 @@ async def in_fuzz_test(dut):
 
     kernel_width = int(dut.kernel_width_p.value) 
     kernel = [[1]*kernel_width for _ in range(kernel_width)]
-    model = SobelModel(dut, kernel)
+    model = Conv2dModel(dut, kernel)
     m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, 1), l)
     im = InputModel(dut, CountingDataGenerator(dut), CountingGenerator(dut, rate), l)
@@ -613,7 +613,7 @@ async def inout_fuzz_test(dut):
     kernel_width = int(dut.kernel_width_p.value) 
     kernel = [[1]*kernel_width for _ in range(kernel_width)]
 
-    model = SobelModel(dut, kernel)
+    model = Conv2dModel(dut, kernel)
     m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, rate), l)
     im = InputModel(dut, CountingDataGenerator(dut), RateGenerator(dut, rate), l)
@@ -665,7 +665,7 @@ async def full_bw_test(dut):
     kernel_width = int(dut.kernel_width_p.value) 
     kernel = [[1]*kernel_width for _ in range(kernel_width)]
 
-    model = SobelModel(dut, kernel)
+    model = Conv2dModel(dut, kernel)
     m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, rate), l)
     im = InputModel(dut, CountingDataGenerator(dut), RateGenerator(dut, rate), l)
@@ -725,7 +725,7 @@ async def full_bw_Gx_test(dut):
                 [-1, -1, 0, 1, 1],
                 [-1, -1, 0, 1, 1],
                 [-1, -1, 0, 1, 1]]
-    model = SobelModel(dut, kernel)
+    model = Conv2dModel(dut, kernel)
     m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, rate), l)
     im = InputModel(dut, CountingDataGenerator(dut), RateGenerator(dut, rate), l)
@@ -785,7 +785,7 @@ async def full_bw_Gy_test(dut):
                   [ 0,  0,  0,  0,  0],
                   [ 1,  1,  1,  1,  1],
                   [ 1,  1,  1,  1,  1]]
-    model = SobelModel(dut, kernel)
+    model = Conv2dModel(dut, kernel)
     m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, rate), l)
     im = InputModel(dut, CountingDataGenerator(dut), RateGenerator(dut, rate), l)

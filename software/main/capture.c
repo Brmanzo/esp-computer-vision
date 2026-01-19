@@ -11,6 +11,7 @@
 #include "includes/wifi_cam.h"
 
 #define GPIO_BYPASS_FPGA    GPIO_NUM_3
+#define KERNEL_W            3
 
 /* -------------------------------------- Packet Encoding -------------------------------------- */
 enum packet_contents {
@@ -61,13 +62,13 @@ static void uart_rx_task(void *arg)
 {
     // ESP_LOGI("uart", "rx task started");
     rx_ctx_t *ctx = (rx_ctx_t*)arg;
-    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(4000);
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(300);
 
     while (ctx->got < ctx->expect) {
         int r = uart_read_bytes(UART_NUM_1,
                                 ctx->dst + ctx->got,
                                 ctx->expect - ctx->got,
-                                pdMS_TO_TICKS(50));
+                                pdMS_TO_TICKS(20));
         if (r < 0) { ctx->error = true; break; }
         if (r > 0) ctx->got += (size_t)r;
 
@@ -86,6 +87,12 @@ void singleCapture(void)
     const uint16_t W = QVGA_WIDTH/downsample_factor;
     const uint16_t H = QVGA_HEIGHT/downsample_factor;
     const size_t tx_bytes = ((size_t)W * H + 7) / 8;
+
+    // Downsample if needed
+    const uint16_t W_rx = (QVGA_WIDTH/downsample_factor)  - (KERNEL_W - 1);
+    const uint16_t H_rx = (QVGA_HEIGHT/downsample_factor) - (KERNEL_W - 1);
+    // Received output activation is smaller
+    const size_t rx_bytes = ((size_t)W_rx * H_rx + 7) / 8; // For FPGA processed data
 
     arducam_camlock_take();
 
@@ -135,14 +142,14 @@ void singleCapture(void)
         return;
     }
 
-    uint8_t *gray_q_rx = (uint8_t*)heap_caps_malloc(tx_bytes, MALLOC_CAP_8BIT);
+    uint8_t *gray_q_rx = (uint8_t*)heap_caps_malloc(rx_bytes, MALLOC_CAP_8BIT);
     if (!gray_q_rx) {
         ESP_LOGE("main", "OOM gray_q_rx");
         free(gray_q_tx);
         return;
     }
     // Create FPGA rx task and transmit over uart
-    rx_ctx_t rx = {.expect = tx_bytes,
+    rx_ctx_t rx = {.expect = rx_bytes,
                    .dst = gray_q_rx,
                    .got = 0, .done = false,
                    .error = false
@@ -175,7 +182,13 @@ void singleCapture(void)
         return;
     }
     /* ----------------------------- Package and Publish Frame ----------------------------- */
-    size_t packet_len = DATA_START + tx_bytes + 2;
+    const bool bypass = gpio_get_level(GPIO_BYPASS_FPGA);
+
+    const size_t payload_bytes = bypass ? tx_bytes : rx_bytes;
+    const uint16_t outW = bypass ? W    : W_rx;
+    const uint16_t outH = bypass ? H    : H_rx;
+
+    size_t packet_len = DATA_START + payload_bytes + 2;
     uint8_t *packet = heap_caps_malloc(packet_len, MALLOC_CAP_8BIT);
     if (!packet) {
         ESP_LOGE("main", "packet malloc failed");
@@ -185,20 +198,20 @@ void singleCapture(void)
     }
 
     // Encode Image dimensions in header
-    encapsulate(packet, 0, "header", W, H);
+    encapsulate(packet, 0, "header", outW, outH);
     // Encode Data length in header
-    encapsulate(packet, (uint16_t)tx_bytes, "data len", W, H);
+    encapsulate(packet, (uint16_t)payload_bytes, "data len", outW, outH);
     // Package 1bpp data within packet body
-    if (gpio_get_level(GPIO_BYPASS_FPGA)) {
+    if (bypass) {
         // Bypass FPGA processing and send original packed data
         memcpy(packet + DATA_START, gray_q_tx, tx_bytes);
     } else {
-        memcpy(packet + DATA_START, gray_q_rx, tx_bytes);
+        memcpy(packet + DATA_START, gray_q_rx, rx_bytes);
     }
     // Encode footer with packet end markers
-    packet[DATA_START + tx_bytes + 0] = 0xFF;
-    packet[DATA_START + tx_bytes + 1] = 0xFD;
-    
+    packet[DATA_START + payload_bytes + 0] = 0xFF;
+    packet[DATA_START + payload_bytes + 1] = 0xFD;
+
     free(gray_q_tx);
     free(gray_q_rx);
     
