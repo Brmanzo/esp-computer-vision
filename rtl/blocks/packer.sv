@@ -27,14 +27,14 @@ module packer
 	assign ready_o = (last_w || flush_i) ? elastic_ready_ow : 1'b1;
 	
 	// Determine if flush is occurring with input
-	wire  [0:0] flush_in_w      = flush_i && in_fire_w;
 	wire  [0:0] flush_partial_w = flush_i && partial_w && !in_fire_w;
+	wire  [0:0] flush_in_w      = flush_i && in_fire_w;
 
 	// Output when either completing final pack, when flush on input, or when flushing without input
 	// flush_i is decoupled from valid_i, so we can flush even if no input is valid
 	// If flush_i asserted multiple cycles in a row, we want to bypass valid data to the output without packing.
 	wire  [0:0] out_fire_w   = (last_w && in_fire_w) || flush_in_w || (flush_partial_w && elastic_ready_ow);
-	
+
 	/* ------------------------------------ Counter Logic ------------------------------------ */
 	localparam int count_width_lp = $clog2(packed_num_p);
 	logic [count_width_lp-1:0] counter_r;
@@ -51,7 +51,7 @@ module packer
 	end
 
 	/* ------------------------------------ Packing Logic ------------------------------------ */
-	logic [packed_width_p-1:0]         packed_r, packed_n;
+	logic [packed_width_p-1:0] packed_r, packed_n;
 
 	always_ff @(posedge clk_i) begin
         if (reset_i) begin

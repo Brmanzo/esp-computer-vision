@@ -1,0 +1,10 @@
+{
+    "top": "framer",
+    "files":
+    ["rtl/blocks/framer.sv"
+    ,"rtl/lib/elastic.sv"
+    ,"rtl/lib/counter.sv"
+    ,"rtl/lib/counter_roll.sv"
+    ,"rtl/blocks/packer.sv"
+    ]
+}

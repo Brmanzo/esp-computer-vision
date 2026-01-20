@@ -3,7 +3,7 @@
     "files":
     ["rtl/top/uart_axis.sv"
     ,"rtl/blocks/mag.sv"
-    ,"rtl/blocks/sobel.sv"
+    ,"rtl/blocks/conv2d.sv"
     ,"rtl/blocks/packer.sv"
     ,"rtl/blocks/unpacker.sv"
     ,"rtl/lib/counter.sv"
@@ -18,5 +18,6 @@
     ,"rtl/vendor/verilog-uart/uart_tx.v"
     ,"rtl/vendor/verilog-uart/uart.v"
     ,"rtl/blocks/skid_buffer.sv"
+    ,"rtl/blocks/framer.sv"
     ]
 }
