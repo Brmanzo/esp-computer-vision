@@ -51,28 +51,61 @@ void encapsulate(uint8_t *packet, uint16_t packet_len, char *mode, uint16_t w, u
 /* -------------------------------------- UART RX Task -------------------------------------- */
 
 typedef struct {
-    size_t expect;
-    uint8_t *dst;
-    volatile size_t got;
-    volatile bool done;
-    volatile bool error;
+    uint8_t *dst;     // destination buffer
+    size_t   cap;     // total buffer capacity
+    size_t   got;     // bytes received so far
+    bool     done;
+    bool     error;
 } rx_ctx_t;
 
 static void uart_rx_task(void *arg)
 {
-    // ESP_LOGI("uart", "rx task started");
-    rx_ctx_t *ctx = (rx_ctx_t*)arg;
-    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(300);
+    rx_ctx_t *ctx = (rx_ctx_t *)arg;
 
-    while (ctx->got < ctx->expect) {
-        int r = uart_read_bytes(UART_NUM_1,
-                                ctx->dst + ctx->got,
-                                ctx->expect - ctx->got,
-                                pdMS_TO_TICKS(20));
-        if (r < 0) { ctx->error = true; break; }
-        if (r > 0) ctx->got += (size_t)r;
+    const TickType_t deadline =
+        xTaskGetTickCount() + pdMS_TO_TICKS(300);
 
-        if (xTaskGetTickCount() > deadline) { ctx->error = true; break; }
+    bool saw_0d = false;
+
+    while (true) {
+        int r = uart_read_bytes(
+            UART_NUM_1,
+            ctx->dst + ctx->got,
+            ctx->cap - ctx->got,     // capacity, not expected
+            pdMS_TO_TICKS(20)
+        );
+        if (r < 0) {
+            ctx->error = true;
+            break;
+        }
+        if (r > 0) {
+            for (int i = 0; i < r; i++) {
+                uint8_t b = ctx->dst[ctx->got + i];
+                if (saw_0d) {
+                    if (b == 0x0A) {
+                        ctx->got += i + 1;   // include tail
+                        ctx->done = true;
+                        vTaskDelete(NULL);
+                        return;
+                    }
+                    saw_0d = false;
+                }
+                if (b == 0x0D) {
+                    saw_0d = true;
+                }
+            }
+            ctx->got += (size_t)r;
+        }
+
+        if (xTaskGetTickCount() > deadline) {
+            ctx->error = true;
+            break;
+        }
+
+        if (ctx->got >= ctx->cap) {
+            ctx->error = true; // overflow protection
+            break;
+        }
     }
     ctx->done = true;
     vTaskDelete(NULL);
@@ -149,11 +182,12 @@ void singleCapture(void)
         return;
     }
     // Create FPGA rx task and transmit over uart
-    rx_ctx_t rx = {.expect = rx_bytes,
-                   .dst = gray_q_rx,
-                   .got = 0, .done = false,
-                   .error = false
-                  };
+    rx_ctx_t rx = {
+        .dst = gray_q_rx,
+        .cap = rx_bytes,
+        .got = 0, .done = false,
+        .error = false
+    };
     uart_flush_input(UART_NUM_1);
     xTaskCreatePinnedToCore(uart_rx_task, "uart_rx", 4096, &rx, 10, NULL, 0);
     
@@ -176,7 +210,7 @@ void singleCapture(void)
     while (!rx.done) vTaskDelay(pdMS_TO_TICKS(10));
 
     if (rx.error) {
-        ESP_LOGW("uart", "rx failed: got %u/%u bytes", (unsigned)rx.got, (unsigned)rx.expect);
+        ESP_LOGW("uart", "rx failed: got %u/%u bytes", (unsigned)rx.got, (unsigned)rx.cap);
         free(gray_q_tx);
         free(gray_q_rx);
         return;

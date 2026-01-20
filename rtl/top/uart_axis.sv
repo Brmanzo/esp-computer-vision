@@ -1,4 +1,5 @@
 `define IMAGE_W 320 // Change with software capture width
+`define IMAGE_H 240 // Change with software capture height
 `define UART_W 8
 `define WC_SUM 25
 
@@ -20,7 +21,7 @@ module uart_axis
 	);
 
 	// Zero pack the QUANTIZED_W from 1 to 2 bits, max pixel value is 1, worst case sum is 9 per convolution
-	localparam int sobel_out_width_lp = $clog2(((((32'd1<<(`QUANTIZED_W + 1)))-1)*`WC_SUM)+1) + 1;
+	localparam int conv2d_out_width_lp = $clog2(((((32'd1<<(`QUANTIZED_W + 1)))-1)*`WC_SUM)+1) + 1;
 
 	// UART Interface Wires
 	wire [0:0]                        uart_ready_w;
@@ -37,24 +38,27 @@ module uart_axis
 	wire [0:0]                        unpack_valid_w;
 	wire [`QUANTIZED_W-1:0]           unpacked_data_w;
 
-	// Sobel Wires
+	// conv2d Wires
 	wire [0:0]                        gx_ready_w, gy_ready_w;
 	wire [0:0]                        gx_valid_w, gy_valid_w;
-	wire [sobel_out_width_lp-1:0]     gx_data_w, gy_data_w;
+	wire [conv2d_out_width_lp-1:0]     gx_data_w, gy_data_w;
 
 	// Magnitude Wires
 	wire [0:0]                        mag_ready_w;
 	wire [0:0]                        mag_valid_w;
-	wire [sobel_out_width_lp:0]       mag_data_w;
+	wire [conv2d_out_width_lp:0]       mag_data_w;
 
 	// Mux Logic
 	logic [0:0]                       output_mux_l;
 	logic [0:0]                       mux_valid_l;
 
-	// Packer Wires
-	wire [0:0]                        pack_ready_w;
-	wire [0:0]                        pack_valid_w;
-	wire [`QUANTIZED_W*`PACK_NUM-1:0] packed_data_w;
+	// Framer Wires
+	wire [0:0]   				      framer_ready_w;
+	wire [0:0]   				      framer_valid_w;
+	wire [`UART_W-1:0]   			  framer_data_w;
+
+	localparam int out_width_lp  = `IMAGE_W - (`KERNEL_W - 1);
+	localparam int out_height_lp = `IMAGE_H - (`KERNEL_W - 1);
 
 	// Predefined Kernel weights for gx and gy gradients	
 	typedef logic signed [`WEIGHT_W-1:0] weight_t;
@@ -111,8 +115,8 @@ module uart_axis
 	,.rxd(rx_serial_i) // ESP_RX_i pin 4
 	// Packer to UART
 	,.s_axis_tready(uart_ready_w)
-	,.s_axis_tvalid(pack_valid_w)
-	,.s_axis_tdata(packed_data_w)
+	,.s_axis_tvalid(framer_valid_w)
+	,.s_axis_tdata(framer_data_w)
 	// UART to AXIS
 	,.m_axis_tready(skid_ready_w)
 	,.m_axis_tvalid(uart_valid_w)
@@ -150,25 +154,27 @@ module uart_axis
 	,.ready_o(unpack_ready_w)
 	,.valid_i(skid_valid_w)
 	,.packed_i(skid_data_w)
-	// Unpacker to Sobel Filters
+	// Unpacker to conv2d Filters
 	,.ready_i(gx_ready_w & gy_ready_w)
 	,.valid_o(unpack_valid_w)
 	,.unpacked_o(unpacked_data_w)
 	);
 
-	// Sobel Filter for Gx gradient
-	sobel
+	// conv2d Filter for Gx gradient
+	conv2d
 	#(.linewidth_px_p(`IMAGE_W)
+	,.linecount_px_p(`IMAGE_H)
 	,.in_width_p(`QUANTIZED_W + 1) // Zero pad inputs
-	,.out_width_p(sobel_out_width_lp)
-	,.kernel_width_p(`KERNEL_W))
-	sobel_gx_inst
+	,.out_width_p(conv2d_out_width_lp)
+	,.kernel_width_p(`KERNEL_W)
+	,.weight_width_p(`WEIGHT_W))
+	conv2d_gx_inst
 	(.clk_i(clk_i)
 	,.reset_i(reset_i)
 	// Unpacker to Gx
 	,.ready_o(gx_ready_w)
 	,.valid_i(unpack_valid_w)
-	,.data_i({1'b0, unpacked_data_w}) // "Right shit" by 3 to divide by 8 and average the output
+	,.data_i({1'b0, unpacked_data_w}) // "Right shift" by 3 to divide by 8 and average the output
 	// Gx to Elastic Stage
 	,.ready_i(mag_ready_w)
 	,.valid_o(gx_valid_w)
@@ -176,13 +182,15 @@ module uart_axis
 	,.weights_i(gx_weights_w)
 	);
 
-	// Sobel Filter for Gy gradient
-	sobel
+	// conv2d Filter for Gy gradient
+	conv2d
 	#(.linewidth_px_p(`IMAGE_W)
+	,.linecount_px_p(`IMAGE_H)
 	,.in_width_p(`QUANTIZED_W + 1)
-	,.out_width_p(sobel_out_width_lp)
-	,.kernel_width_p(`KERNEL_W))
-	sobel_gy_inst
+	,.out_width_p(conv2d_out_width_lp)
+	,.kernel_width_p(`KERNEL_W)
+	,.weight_width_p(`WEIGHT_W))
+	conv2d_gy_inst
 	(.clk_i(clk_i)
 	,.reset_i(reset_i)
 	// Unpacker to Gy
@@ -198,7 +206,7 @@ module uart_axis
 
 	// Magnitude calculated from Gx and Gy
 	mag
-	#(.width_in_p(sobel_out_width_lp))
+	#(.width_in_p(conv2d_out_width_lp))
 	mag_inst
 	(.clk_i(clk_i)
 	,.reset_i(reset_i)
@@ -208,7 +216,7 @@ module uart_axis
 	,.gx_i(gx_data_w)
 	,.gy_i(gy_data_w)
 	// Magnitude to Packer
-	,.ready_i(pack_ready_w)
+	,.ready_i(framer_ready_w)
 	,.valid_o(mag_valid_w)
 	,.mag_o(mag_data_w)
 	);
@@ -221,22 +229,24 @@ module uart_axis
 			default: begin output_mux_l = mag_data_w[2];   mux_valid_l = mag_valid_w; end
 		endcase
 	end
-
-	// Packer to pack 4 2-bit magnitude values into each 8-bit UART output
-	packer
+	// Packs 8 pixels onto a single byte, adds footer at end of frame and sends to UART
+	framer
 	#(.unpacked_width_p(`QUANTIZED_W)
-	,.packed_num_p(`PACK_NUM))
-	packer_inst
+	,.packed_num_p(`PACK_NUM)
+	,.packet_len_elems_p(out_height_lp * out_width_lp)
+	,.tail_byte_0_p(8'h0D)
+	,.tail_byte_1_p(8'h0A))
+	framer_inst
 	(.clk_i(clk_i)
 	,.reset_i(reset_i)
-	// Magnitude to Packer
-	,.ready_o(pack_ready_w)
-	,.valid_i(mux_valid_l)
+	// Mux to Framer
 	,.unpacked_i(output_mux_l)
-	// Packer to UART output
+	,.valid_i(mux_valid_l)
+	,.ready_o(framer_ready_w)
+	// Framer to Packer
+	,.data_o(framer_data_w)
+	,.valid_o(framer_valid_w)
 	,.ready_i(uart_ready_w)
-	,.valid_o(pack_valid_w)
-	,.packed_o(packed_data_w)
 	);
 
 endmodule
