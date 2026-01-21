@@ -52,7 +52,7 @@ module top
     #()
   sync_b
     (.clk_i(clk_25mhz_o)
-    ,.reset_i(1'b0)
+    ,.rst_i(1'b0)
     ,.en_i(1'b1)
     ,.d_i(reset_sync_r)
     ,.q_o(reset_r));

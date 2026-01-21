@@ -1,96 +1,95 @@
 `timescale 1ns / 1ps
-module unpacker
-	#(parameter unpacked_width_p  = 2
-	 ,parameter packed_num_p = 4
-	 ,parameter packed_width_p = unpacked_width_p * packed_num_p)
-	(input  [0:0]                  clk_i
-	,input  [0:0]                  reset_i
+module unpacker #(
+   parameter  int unsigned  UnpackedWidth = 2
+  ,parameter  int unsigned  PackedNum     = 4
+  ,parameter  int unsigned  PackedWidth   = UnpackedWidth * PackedNum
+  ,localparam int unsigned  CountWidth    = $clog2(PackedNum)
+  ,localparam int unsigned  OffsetWidth   = $clog2(PackedWidth)
+  ,localparam int unsigned  ExtendWidth   = PackedWidth - UnpackedWidth
+)  (
+   input  [0:0] clk_i
+  ,input  [0:0] rst_i
 
-	,input  [packed_width_p-1:0]   packed_i
-	,input  [0:0]                  valid_i
-	,output [0:0]                  ready_o
+  ,input  [PackedWidth-1:0] packed_i
+  ,input  [0:0]             valid_i
+  ,output [0:0]             ready_o
 
-	,output [unpacked_width_p-1:0] unpacked_o
-	,output [0:0]                  valid_o
-	,input  [0:0]                  ready_i
-	);
+  ,output [UnpackedWidth-1:0] unpacked_o
+  ,output [0:0]               valid_o
+  ,input  [0:0]               ready_i
+);
 
-	// Counter logic
-	localparam int count_width_lp = $clog2(packed_num_p);
-	wire  [count_width_lp-1:0] counter_w;
-	wire  [count_width_lp-1:0] max_count_w = count_width_lp'(packed_num_p - 1);
+  /* -------------------------- Counter Logic -------------------------- */
+  wire  [CountWidth-1:0] counter;
+  wire  [CountWidth-1:0] max_count = CountWidth'(PackedNum - 1);
 
-	// Unpacking logic
-	logic [0:0]                        unpacking_r;
-	logic [packed_width_p-1:0]         shift_reg_l;
-	logic [packed_width_p-1:0]         unpacked_ol;
+  /* -------------------------- Unpacking Logic -------------------------- */
+  logic [0:0]               unpacking;
+  logic [PackedWidth-1:0]   shift_reg;
+  logic [UnpackedWidth-1:0] unpacked;
 
-	// Maintain offset of current shift/select within shift_reg_l
-	logic [$clog2(packed_width_p)-1:0] offset_l;
+  // Maintain offset of current shift/select within shift_reg
+  logic [OffsetWidth-1:0] offset;
 
-	// Mask to select the unpacked data from buffer (Replicating proper bit width)
-	wire [packed_width_p-1:0] mask_l = {{(packed_width_p - unpacked_width_p){1'b0}},
-										{unpacked_width_p{1'b1}}};
-	
-	// Handshaking logic
-	wire  [0:0] elastic_ready_ow;
-	wire  [0:0] in_fire_w = valid_i && ready_o;
-	wire  [0:0] out_fire_w = unpacking_r && elastic_ready_ow;
-	wire  [0:0] last_w = (counter_w == max_count_w);
-	wire  [0:0] done_w = last_w && out_fire_w;
+  // Mask to select the unpacked data from buffer (Replicating proper bit width)
+  wire [PackedWidth-1:0] mask = {{ExtendWidth{1'b0}}, max_count};
 
-	// Current State Logic
-	always_ff @(posedge clk_i) begin
-		if (reset_i) begin
-			shift_reg_l <= 0;
-			unpacking_r <= 1'b0;
-		end else begin
-			if (in_fire_w) begin
-				shift_reg_l <= packed_i;
-				unpacking_r <= 1'b1;
-			end else if (done_w && !in_fire_w) begin
-				unpacking_r <= 1'b0;
-			end
-		end 
-	end
+  /* -------------------------- Handshaking Logic -------------------------- */
+  wire  [0:0] elastic_ready;
+  wire  [0:0] in_fire  = valid_i && ready_o;
+  wire  [0:0] out_fire = unpacking && elastic_ready;
+  wire  [0:0] last     = (counter == max_count);
+  wire  [0:0] done     = last && out_fire;
+  assign ready_o       = (~unpacking) || done;
 
-	assign ready_o = (~unpacking_r) || done_w;
+  /* -------------------------- Current State Logic -------------------------- */
+  always_ff @(posedge clk_i) begin
+    if (rst_i) begin
+      shift_reg <= '0;
+      unpacking <= 1'b0;
+    end else begin
+      if (in_fire) begin
+        shift_reg <= packed_i;
+        unpacking <= 1'b1;
+      end else if (done && !in_fire) begin
+        unpacking <= 1'b0;
+      end
+    end
+  end
 
-	// Counter to increment unpacking offset
-	counter_roll
-	#(.width_p($clog2(packed_num_p))
-	,.reset_val_p('0)
-	)
-	counter_roll_inst
-	(.clk_i(clk_i)
-	,.reset_i(reset_i)
-	,.max_val_i(max_count_w)
-	,.up_i(out_fire_w)
-	,.down_i('0)
-	,.count_o(counter_w)
-	);
+  /* -------------------------- Data Path Logic -------------------------- */
+  always_comb begin
+    offset = OffsetWidth'(counter * UnpackedWidth);
+    unpacked = UnpackedWidth'((shift_reg >> offset) & mask);
+  end
 
-	// Elastic Buffer to decouple unpacking from downstream logic
-	elastic
-	#(.width_p(unpacked_width_p)
-	,.datapath_gate_p(1)
-	,.datapath_reset_p(1)
-	)
-	elastic_inst
-	(.clk_i(clk_i)
-	,.reset_i(reset_i)
-	,.data_i(unpacked_ol[unpacked_width_p-1:0])
-	,.valid_i(unpacking_r)
-	,.ready_o(elastic_ready_ow)
-	,.valid_o(valid_o)
-	,.data_o(unpacked_o)
-	,.ready_i(ready_i)
-	);
-	
-	// Unpacking logic
-	always_comb begin
-		offset_l    = counter_w * unpacked_width_p;
-		unpacked_ol = (shift_reg_l >> offset_l) & mask_l;
-	end
+  // Counter to increment unpacking offset
+  counter_roll #(
+     .Width   (CountWidth)
+    ,.ResetVal('0)
+  ) counter_roll_inst (
+     .clk_i    (clk_i)
+    ,.rst_i    (rst_i)
+    ,.max_val_i(max_count)
+    ,.up_i     (out_fire)
+    ,.down_i   ('0)
+    ,.count_o  (counter)
+  );
+
+  // Elastic Buffer to decouple unpacking from downstream logic
+  elastic #(
+     .Width(UnpackedWidth)
+    ,.DatapathGate (1)
+    ,.DatapathReset(1)
+  ) elastic_inst (
+     .clk_i  (clk_i)
+    ,.rst_i  (rst_i)
+    ,.data_i (unpacked)
+    ,.valid_i(unpacking)
+    ,.ready_o(elastic_ready)
+    ,.valid_o(valid_o)
+    ,.data_o (unpacked_o)
+    ,.ready_i(ready_i)
+  );
 
 endmodule

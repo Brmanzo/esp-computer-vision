@@ -49,8 +49,8 @@ def float_to_fxp(value, frac):
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("unpacked_width_p, packed_num_p", [("2", "4"), ("1", "8")])
-def test_each(test_name, simulator, unpacked_width_p, packed_num_p):
+@pytest.mark.parametrize("UnpackedWidth, PackedNum", [("2", "4"), ("1", "8")])
+def test_each(test_name, simulator, UnpackedWidth, PackedNum):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
@@ -60,8 +60,8 @@ def test_each(test_name, simulator, unpacked_width_p, packed_num_p):
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("unpacked_width_p, packed_num_p", [("2", "4"), ("1", "8")])
-def test_all(simulator, unpacked_width_p, packed_num_p):
+@pytest.mark.parametrize("UnpackedWidth, PackedNum", [("2", "4"), ("1", "8")])
+def test_all(simulator, UnpackedWidth, PackedNum):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
@@ -86,9 +86,9 @@ class PackerModel():
         self._dut              = dut
         self._unpacked_i       = dut.unpacked_i
         self._packed_o         = dut.packed_o
-        self._unpacked_width_p = dut.unpacked_width_p.value
-        self._packed_num_p     = dut.packed_num_p.value
-        self._packed_width_p   = dut.packed_width_p.value
+        self._UnpackedWidth = dut.UnpackedWidth.value
+        self._PackedNum     = dut.PackedNum.value
+        self._PackedWidth   = dut.PackedWidth.value
         self._flush_i          = dut.flush_i
 
         self._step         = 0
@@ -101,17 +101,17 @@ class PackerModel():
     
     def consume(self):
         assert_resolvable(self._unpacked_i)
-        u = int(self._unpacked_i.value) & ((1 << int(self._unpacked_width_p)) - 1)
+        u = int(self._unpacked_i.value) & ((1 << int(self._UnpackedWidth)) - 1)
         
-        self._acc = self._acc | (u << (self._unpacked_width_p * self._step))
+        self._acc = self._acc | (u << (self._UnpackedWidth * self._step))
         self._enqs += 1
 
         assert_resolvable(self._flush_i)
         flush = (int(self._flush_i) == 1)
 
-        completed = (self._step == self._packed_num_p - 1) or flush
+        completed = (self._step == self._PackedNum - 1) or flush
         if completed:
-            self._q.put(self._acc & ((1 << self._packed_width_p) - 1))
+            self._q.put(self._acc & ((1 << self._PackedWidth) - 1))
             self._acc = 0
             self._step = 0
         else:
@@ -121,7 +121,7 @@ class PackerModel():
     def produce(self):
         assert_resolvable(self._packed_o)
 
-        got = self._packed_o.value.integer & ((1 << self._packed_width_p) - 1)
+        got = self._packed_o.value.integer & ((1 << self._PackedWidth) - 1)
 
         assert self._q.qsize() > 0, (
             "Output fired but model has no completed expected byte. "
@@ -142,12 +142,12 @@ class PackerModel():
 class ReadyValidInterface():
     def __init__(self, clk, reset, valid, ready):
         self._clk_i = clk
-        self._reset_i = reset
+        self._rst_i = reset
         self._ready = ready
         self._valid = valid
 
     def is_in_reset(self):
-        if((not self._reset_i.value.is_resolvable) or self._reset_i.value  == 1):
+        if((not self._rst_i.value.is_resolvable) or self._rst_i.value  == 1):
             return True
         
     def assert_resolvable(self):
@@ -179,7 +179,7 @@ class ReadyValidInterface():
 class RandomDataGenerator():
     def __init__(self, dut, flush_rate):
         self._dut = dut
-        self._width_p = dut.unpacked_width_p.value
+        self._width_p = dut.UnpackedWidth.value
         self._flush_rate = flush_rate
 
     def generate(self):
@@ -246,13 +246,13 @@ class RateGenerator():
 class OutputModel():
     def __init__(self, dut, g, l):
         self._clk_i = dut.clk_i
-        self._reset_i = dut.reset_i
+        self._rst_i = dut.rst_i
         self._dut = dut
         
-        self._rv_in = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
                                           dut.valid_i, dut.ready_o)
 
-        self._rv_out = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
                                            dut.valid_o, dut.ready_i)
         self._generator = g
         self._length = l
@@ -289,13 +289,13 @@ class OutputModel():
         self._nout = 0
         clk_i = self._clk_i
         ready_i = self._dut.ready_i
-        reset_i = self._dut.reset_i
+        rst_i = self._dut.rst_i
         valid_o = self._dut.valid_o
 
         await FallingEdge(clk_i)
 
-        if(not (reset_i.value.is_resolvable and reset_i.value == 0)):
-            await FallingEdge(reset_i)
+        if(not (rst_i.value.is_resolvable and rst_i.value == 0)):
+            await FallingEdge(rst_i)
 
         # Precondition: Falling Edge of Clock
         while self._nout < self._length:
@@ -319,10 +319,10 @@ class OutputModel():
 class InputModel():
     def __init__(self, dut, data, rate, l):
         self._clk_i = dut.clk_i
-        self._reset_i = dut.reset_i
+        self._rst_i = dut.rst_i
         self._dut = dut
         
-        self._rv_in = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
                                           dut.valid_i, dut.ready_o)
 
         self._rate = rate
@@ -360,19 +360,19 @@ class InputModel():
 
         self._nin = 0
         clk_i = self._clk_i
-        reset_i = self._dut.reset_i
+        rst_i = self._dut.rst_i
         ready_o = self._dut.ready_o
         valid_i = self._dut.valid_i
         unpacked_i = self._dut.unpacked_i
         flush_i = self._dut.flush_i
-        unpacked_width_p = self._dut.unpacked_width_p.value
+        UnpackedWidth = self._dut.UnpackedWidth.value
 
         flush_i.value = 0
 
         await delay_cycles(self._dut, 1, False)
 
-        if(not (reset_i.value.is_resolvable and reset_i.value == 0)):
-            await FallingEdge(reset_i)
+        if(not (rst_i.value.is_resolvable and rst_i.value == 0)):
+            await FallingEdge(rst_i)
 
         await delay_cycles(self._dut, 2, False)
 
@@ -386,7 +386,7 @@ class InputModel():
                 flush = 0
 
             # Mask data to width
-            data = int(data) & ((1 << int(unpacked_width_p)) - 1)
+            data = int(data) & ((1 << int(UnpackedWidth)) - 1)
             flush = int(flush) & 1
             return data, flush
         
@@ -415,15 +415,15 @@ class ModelRunner():
     def __init__(self, dut, model):
 
         self._clk_i = dut.clk_i
-        self._reset_i = dut.reset_i
+        self._rst_i = dut.rst_i
         self._flush_i = dut.flush_i
 
-        self._rv_in = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
                                           dut.valid_i, dut.ready_o)
-        self._rv_out = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
                                            dut.valid_o, dut.ready_i)
 
-        self._num_packed_p  = int(dut.packed_num_p.value)
+        self._num_packed_p  = int(dut.PackedNum.value)
 
         self._model = model
 
@@ -470,16 +470,16 @@ class ModelRunner():
 async def reset_test(dut):
     """Test for Initialization"""
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
 @cocotb.test
 async def init_test(dut):
     """Test for Basic Connectivity"""
 
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
 
     dut.unpacked_i.value = 0
 
@@ -488,7 +488,7 @@ async def init_test(dut):
     dut.flush_i.value = 0
 
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
 
     await Timer(Decimal(1.0), units="ns")
@@ -501,7 +501,7 @@ async def single_test(dut):
 
     eg = RandomDataGenerator(dut, flush_rate=0)
     l_out = 1
-    l_in = l_out * dut.packed_num_p.value
+    l_in = l_out * dut.PackedNum.value
     rate = 1
 
     timeout = max(l_out, l_in) * int(1/rate) * int(1/rate) 
@@ -511,7 +511,7 @@ async def single_test(dut):
     im = InputModel(dut, eg, RateGenerator(dut, rate), l_in)
 
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
     ready_i = dut.ready_i
     valid_i = dut.valid_i
     flush_i = dut.flush_i
@@ -521,7 +521,7 @@ async def single_test(dut):
     flush_i.value = 0
 
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
     # Wait one cycle for reset to start
     await FallingEdge(dut.clk_i)
@@ -536,7 +536,7 @@ async def single_test(dut):
     await RisingEdge(dut.valid_i)
     await RisingEdge(dut.clk_i)
 
-    timeout_cycles = int((l_in + l_out) * (1/rate) * dut.packed_num_p.value) + 50
+    timeout_cycles = int((l_in + l_out) * (1/rate) * dut.PackedNum.value) + 50
     timeout = False
     try:
         await om.wait(timeout_cycles)
@@ -554,7 +554,7 @@ async def full_bw_test(dut):
 
     eg = RandomDataGenerator(dut, flush_rate=0)
     l_out = 50
-    l_in = l_out * dut.packed_num_p.value
+    l_in = l_out * dut.PackedNum.value
     rate = 1
 
     timeout = max(l_out, l_in) * int(1/rate) * int(1/rate) 
@@ -564,7 +564,7 @@ async def full_bw_test(dut):
     im = InputModel(dut, eg, RateGenerator(dut, rate), l_in)
 
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
 
     ready_i = dut.ready_i
     valid_i = dut.valid_i
@@ -575,7 +575,7 @@ async def full_bw_test(dut):
     flush_i.value = 0
 
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
     await FallingEdge(dut.clk_i)
 
@@ -587,7 +587,7 @@ async def full_bw_test(dut):
     await RisingEdge(dut.clk_i)
 
     CLK_NS = 10
-    timeout_cycles = int((l_in + l_out) * (1/rate) * dut.packed_num_p.value) + 50
+    timeout_cycles = int((l_in + l_out) * (1/rate) * dut.PackedNum.value) + 50
     timeout_ns = timeout_cycles * CLK_NS
     await om.wait(timeout_ns)
 
@@ -597,7 +597,7 @@ async def fuzz_random_test(dut):
 
     eg = RandomDataGenerator(dut, flush_rate=0)
     l_out = 50
-    l_in = l_out * dut.packed_num_p.value
+    l_in = l_out * dut.PackedNum.value
     rate = 0.5
 
     timeout = max(l_out, l_in) * int(1/rate) * int(1/rate) 
@@ -607,7 +607,7 @@ async def fuzz_random_test(dut):
     im = InputModel(dut, eg, RateGenerator(dut, rate), l_in)
 
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
 
     ready_i = dut.ready_i
     valid_i = dut.valid_i
@@ -618,7 +618,7 @@ async def fuzz_random_test(dut):
     flush_i.value = 0
 
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
     await FallingEdge(dut.clk_i)
 
@@ -630,7 +630,7 @@ async def fuzz_random_test(dut):
     await RisingEdge(dut.clk_i)
 
     CLK_NS = 10
-    timeout_cycles = int((l_in + l_out) * (1/rate) * dut.packed_num_p.value) + 50
+    timeout_cycles = int((l_in + l_out) * (1/rate) * dut.PackedNum.value) + 50
     timeout_ns = timeout_cycles * CLK_NS
     await om.wait(timeout_ns)
 
@@ -640,7 +640,7 @@ async def flush_test(dut):
 
     eg = RandomDataGenerator(dut, flush_rate=0.1)
     l_out = 50
-    l_in = l_out * dut.packed_num_p.value
+    l_in = l_out * dut.PackedNum.value
     rate = 1
 
     timeout = max(l_out, l_in) * int(1/rate) * int(1/rate) 
@@ -650,7 +650,7 @@ async def flush_test(dut):
     im = InputModel(dut, eg, RateGenerator(dut, rate), l_in)
 
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
 
     ready_i = dut.ready_i
     valid_i = dut.valid_i
@@ -661,7 +661,7 @@ async def flush_test(dut):
     flush_i.value = 0
 
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
     await FallingEdge(dut.clk_i)
 
@@ -673,6 +673,6 @@ async def flush_test(dut):
     await RisingEdge(dut.clk_i)
 
     CLK_NS = 10
-    timeout_cycles = int((l_in + l_out) * (1/rate) * dut.packed_num_p.value) + 50
+    timeout_cycles = int((l_in + l_out) * (1/rate) * dut.PackedNum.value) + 50
     timeout_ns = timeout_cycles * CLK_NS
     await om.wait(timeout_ns)

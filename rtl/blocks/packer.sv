@@ -1,98 +1,98 @@
 `timescale 1ns / 1ps
-module packer
-	#(parameter unpacked_width_p = 2
- 	,parameter  packed_num_p     = 4
-	,parameter  packed_width_p   = unpacked_width_p * packed_num_p
-	)
-	(input  [0:0] clk_i
-	,input  [0:0] reset_i
+module packer #(
+   parameter  int unsigned UnpackedWidth = 2
+  ,parameter  int unsigned PackedNum     = 4
+  ,parameter  int unsigned PackedWidth   = UnpackedWidth * PackedNum
+  ,localparam int unsigned CountWidth    = $clog2(PackedNum)
+  ,localparam int unsigned OffsetWidth   = $clog2(PackedWidth)
+)  (
+   input  [0:0] clk_i
+  ,input  [0:0] rst_i
 
-	,input  [unpacked_width_p-1:0] unpacked_i
-	,input  [0:0] flush_i
-	,input  [0:0] valid_i
-	,output [0:0] ready_o
+  ,input  [UnpackedWidth-1:0] unpacked_i
+  ,input  [0:0]               flush_i
+  ,input  [0:0]               valid_i
+  ,output [0:0]               ready_o
 
-	,output [packed_width_p-1:0] packed_o
-	,output [0:0] valid_o
-	,input  [0:0] ready_i
-	);
+  ,output [PackedWidth-1:0] packed_o
+  ,output [0:0]             valid_o
+  ,input  [0:0]             ready_i
+);
 
-	/*  ------------------------------------ Flush Logic ------------------------------------ */
-	wire  [0:0] elastic_ready_ow;
-	wire  [0:0] last_w       = (counter_r == max_count_w);
-	wire  [0:0] partial_w    = (counter_r != '0);
+  /*  ------------------------------------ Flush Logic ------------------------------------ */
+  wire  [0:0] elastic_ready;
+  wire  [0:0] last       = (counter_q == max_count);
+  wire  [0:0] partial    = (counter_q != '0);
 
-	wire  [0:0] in_fire_w    = valid_i && ready_o;
-	// Block upstream data while receiving fourth input or while flushing
-	assign ready_o = (last_w || flush_i) ? elastic_ready_ow : 1'b1;
-	
-	// Determine if flush is occurring with input
-	wire  [0:0] flush_partial_w = flush_i && partial_w && !in_fire_w;
-	wire  [0:0] flush_in_w      = flush_i && in_fire_w;
+  wire  [0:0] in_fire    = valid_i && ready_o;
+  // Block upstream data while receiving fourth input or while flushing
+  assign ready_o         = (last || flush_i) ? elastic_ready : 1'b1;
 
-	// Output when either completing final pack, when flush on input, or when flushing without input
-	// flush_i is decoupled from valid_i, so we can flush even if no input is valid
-	// If flush_i asserted multiple cycles in a row, we want to bypass valid data to the output without packing.
-	wire  [0:0] out_fire_w   = (last_w && in_fire_w) || flush_in_w || (flush_partial_w && elastic_ready_ow);
+  // Determine if flush is occurring with input
+  wire  [0:0] flush_partial = flush_i && partial && !in_fire;
+  wire  [0:0] flush_in      = flush_i && in_fire;
 
-	/* ------------------------------------ Counter Logic ------------------------------------ */
-	localparam int count_width_lp = $clog2(packed_num_p);
-	logic [count_width_lp-1:0] counter_r;
-	wire  [count_width_lp-1:0] max_count_w = count_width_lp'(packed_num_p - 1);
+  // Output when either completing final pack, when flush on input, or when flushing without input
+  // flush_i is decoupled from valid_i, so we can flush even if no input is valid
+  // If flush_i asserted multiple cycles in a row, we want to bypass valid data to the output without packing.
+  wire [0:0] out_fire = (last && in_fire) || flush_in ||
+                        (flush_partial && elastic_ready);
 
-	always_ff @(posedge clk_i) begin
-		if (reset_i) begin 
-			counter_r <= '0;
-		end else if (out_fire_w) begin
-			counter_r <= '0;
-		end else if (in_fire_w) begin 
-			counter_r <= counter_r + 1;
-		end
-	end
+  /* ------------------------------------ Counter Logic ------------------------------------ */
+  logic [CountWidth-1:0] counter_q, counter_d;
+  wire  [CountWidth-1:0] max_count = CountWidth'(PackedNum - 1);
 
-	/* ------------------------------------ Packing Logic ------------------------------------ */
-	logic [packed_width_p-1:0] packed_r, packed_n;
+  always_ff @(posedge clk_i) begin
+    if (rst_i) counter_q <= '0;
+    else counter_q <= counter_d;
+  end
 
-	always_ff @(posedge clk_i) begin
-        if (reset_i) begin
-            packed_r <= '0;
-        end else if (out_fire_w) begin
-            // We just sent the full word to elastic; clear buffer for next frame
-            packed_r <= '0;
-        end else if (in_fire_w) begin
-            // We accepted a partial chunk; accumulate it
-            packed_r <= packed_n;
-        end
+  always_comb  begin
+    counter_d = counter_q; // Default
+    // Clear counter on proper pack or flush
+    if (out_fire)     counter_d = '0;
+    // Increment counter on accepted input
+    else if (in_fire) counter_d = counter_q + 1;
+  end
+
+  /* ------------------------------------ Packing Logic ------------------------------------ */
+  logic [PackedWidth-1:0] packed_q, packed_d;
+
+  always_ff @(posedge clk_i) begin
+      if (rst_i)         packed_q <= '0;
+      // We just sent the full word to elastic; clear buffer for next frame
+      else if (out_fire) packed_q <= '0;
+      // We accepted a partial chunk; accumulate it
+      else if (in_fire)  packed_q <= packed_d;
     end
 
-	// Maintain offset of current shift/select within shift_reg_l
-	logic [$clog2(packed_width_p)-1:0] offset_l;
-	logic [packed_width_p-1:0]         shift_reg_l;
+  // Maintain offset of current shift/select within shift_reg
+  logic [OffsetWidth-1:0] offset;
+  logic [PackedWidth-1:0] shift_reg;
 
-	// Apply shift and accumulate
-	always_comb begin
-		offset_l = counter_r * unpacked_width_p;
-		shift_reg_l = {{(packed_width_p-unpacked_width_p){1'b0}}, unpacked_i};
-		packed_n = packed_r | (shift_reg_l << offset_l);
-	end
+  // Apply shift and accumulate
+  always_comb begin
+    offset    = OffsetWidth'(counter_q * UnpackedWidth);
+    shift_reg = PackedWidth'(unpacked_i);
+    packed_d  = packed_q | (shift_reg << offset);
+  end
 
-	/* ------------------------------------ Elastic Interface ------------------------------------ */
-	wire [packed_width_p-1:0] elastic_data_iw = flush_partial_w ? packed_r : packed_n;
+  /* ------------------------------------ Elastic Interface ------------------------------------ */
+  wire [PackedWidth-1:0] elastic_data = flush_partial ? packed_q : packed_d;
 
-	elastic
-	#(.width_p(packed_width_p)
-	,.datapath_gate_p(1)
-	,.datapath_reset_p(1)
-	)
-	elastic_inst
-	(.clk_i(clk_i)
-	,.reset_i(reset_i)
-	,.data_i(elastic_data_iw)
-	,.valid_i(out_fire_w)
-	,.ready_o(elastic_ready_ow)
-	,.valid_o(valid_o)
-	,.data_o(packed_o)
-	,.ready_i(ready_i)
-	);
+  elastic #(
+     .Width        (PackedWidth)
+    ,.DatapathGate (1)
+    ,.DatapathReset(1)
+  ) elastic_inst (
+     .clk_i  (clk_i)
+    ,.rst_i  (rst_i)
+    ,.data_i (elastic_data)
+    ,.valid_i(out_fire)
+    ,.ready_o(elastic_ready)
+    ,.valid_o(valid_o)
+    ,.data_o (packed_o)
+    ,.ready_i(ready_i)
+  );
 
 endmodule
