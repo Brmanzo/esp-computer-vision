@@ -1,7 +1,8 @@
-## DO NOT MODIFY ANYTHING IN THIS FILE WITHOUT PERMISSION FROM THE INSTRUCTOR OR TAs
+# Find repo root first
+REPO_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
 
-# Path to the repository root
-REPO_ROOT ?= $(shell git rev-parse --show-toplevel)
+# Include user overrides from repo root (works no matter current directory)
+-include $(REPO_ROOT)/config.mk
 
 # If you have the tools installed in a non-standard path,
 # you can override these to specify the path to the executable.

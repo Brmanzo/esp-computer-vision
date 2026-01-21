@@ -1,0 +1,15 @@
+# User overrides (local, not committed)
+
+YOSYS      := $(HOME)/yosys-0.57/bin/yosys
+NETLISTSVG := $(HOME)/.npm-global/bin/netlistsvg
+RSVG       := /usr/bin/rsvg-convert
+
+IVERILOG   := /usr/bin/iverilog
+VERILATOR  := /usr/bin/verilator
+VERIBLE    := $(HOME)/tools/verible/bin/verible-verilog-lint
+PYTHON3    := $(HOME)/esp/.hwvenv/bin/python
+
+NEXTPNR    := /usr/bin/nextpnr-ice40
+ICEPROG    := /usr/bin/iceprog
+ICEPACK    := /usr/bin/icepack
+ICETIME    := /usr/bin/icetime

@@ -1,20 +1,28 @@
-# Path to the repository root
-REPO_ROOT ?= $(shell git rev-parse --show-toplevel)
+# Find repo root first
+REPO_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
+
+# Include user overrides from repo root (works no matter current directory)
+-include $(REPO_ROOT)/config.mk
+export PYTHONPATH := $(REPO_ROOT)/sim/util:$(PYTHONPATH)
 
 # If you have iverilog or verilator installed in a non-standard path,
 # you can override these to specify the path to the executable.
-IVERILOG ?= iverilog
+IVERILOG  ?= iverilog
 VERILATOR ?= verilator
+VERIBLE   ?= verible-verilog-lint
+PYTHON3   ?= python
 
-# This is a little bit hacky, but sufficient. In order to make sure
-# that students can edit the filelist, that make knows about updates
-# to that filelist *and* the files themselves, and that pytest can
-# read the filelist, we store the listlist in a json file. We then
-# read the json file while checking dependencies.
+# Ensure user-local bins are visible when running under make
+export PATH := $(HOME)/.local/bin:$(PATH)
+
 FILELIST ?= $(REPO_ROOT)/filelists/top.json
-SIM_SOURCES = $(shell python3 $(REPO_ROOT)/sim/util/get_filelist.py $(FILELIST))
-SIM_SOURCES := $(addprefix $(REPO_ROOT)/,$(SIM_SOURCES))
-SIM_TOP     = $(shell python3 $(REPO_ROOT)/sim/util/get_top.py $(FILELIST))
+SIM_SOURCES = $(shell $(PYTHON3) $(REPO_ROOT)/sim/util/get_filelist.py $(FILELIST))
+SIM_SOURCES := $(foreach f,$(SIM_SOURCES),$(if $(filter /%,$(f)),$(f),$(REPO_ROOT)/$(f)))
+SIM_TOP     = $(shell $(PYTHON3) $(REPO_ROOT)/sim/util/get_top.py $(FILELIST))
+
+FILE_ABS := $(if $(FILE),$(if $(filter /%,$(FILE)),$(FILE),$(REPO_ROOT)/$(FILE)),)
+
+LINT_SOURCES := $(if $(FILE_ABS),$(FILE_ABS),$(SIM_SOURCES))
 
 all: help
 
@@ -22,11 +30,22 @@ all: help
 test: results.json
 
 results.json: $(FILELIST) $(SIM_SOURCES)
-	pytest -rA
+	$(PYTHON3) -m pytest -rA
 
 # lint runs the Verilator linter on your code.
-lint:
-	$(VERILATOR) --lint-only -top $(SIM_TOP) $(SIM_SOURCES) -Wall
+lint: lint-verilator lint-verible
+
+lint-verilator:
+	@command -v $(VERILATOR) >/dev/null || { \
+		echo "ERROR: $(VERILATOR) not found in PATH"; exit 1; }
+	$(VERILATOR) --lint-only -Wall \
+	  $(if $(FILE_ABS),,$(if $(SIM_TOP),-top $(SIM_TOP),)) \
+	  $(LINT_SOURCES)
+
+lint-verible:
+	@command -v $(VERIBLE) >/dev/null || { \
+		echo "ERROR: $(VERIBLE) not found in PATH"; exit 1; }
+	$(VERIBLE) --lint_fatal --parse_fatal $(LINT_SOURCES)
 
 # Remove all compiler outputs
 sim-clean:
@@ -63,4 +82,9 @@ vars-help: vars-intro-help sim-vars-help
 
 help: targets-help vars-help 
 
-.PHONY: all test lint sim-clean extraclean sim-help vars-intro-help sim-vars-help clean targets-help vars-help help test results.json
+print-config:
+	@echo "REPO_ROOT=$(REPO_ROOT)"
+	@echo "config.mk included? (check by printing YOSYS=$(YOSYS))"
+	@echo "YOSYS=$(YOSYS)"
+
+.PHONY: all test lint lint-verilator lint-verible sim-clean extraclean sim-help vars-intro-help sim-vars-help clean targets-help vars-help help test results.json

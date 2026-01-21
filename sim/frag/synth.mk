@@ -1,9 +1,12 @@
-# Path to the repository root
-REPO_ROOT ?= $(shell git rev-parse --show-toplevel)
+# Find repo root first
+REPO_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
 
-YOSYS ?= /usr/local/bin/yosys
-NETLISTSVG ?= /home/brmanzo/.npm-global/bin/netlistsvg
-RSVG ?= /usr/bin/rsvg-convert
+# Include user overrides from repo root (works no matter current directory)
+-include $(REPO_ROOT)/config.mk
+
+YOSYS      ?= yosys
+NETLISTSVG ?= netlistsvg
+RSVG       ?= rsvg-convert
 
 FILELIST ?= $(REPO_ROOT)/filelists/top.json
 TOP_SV   ?= $(REPO_ROOT)/rtl/top/top.sv

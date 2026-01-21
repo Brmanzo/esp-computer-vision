@@ -3,6 +3,9 @@ build/
 run/
 lint/
 
+# Config files
+/sim/frag/config.mk
+
 # VSCode
 *.code-workspace
 
@@ -24,3 +27,4 @@ __pycache__/
 build/
 managed_components/
 software/dependencies.lock
+software/sdkconfig
