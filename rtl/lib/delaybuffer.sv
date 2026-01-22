@@ -23,12 +23,12 @@ module delaybuffer
 	logic [width_p-1:0] elastic_data_d, elastic_data_q;
 
 	elastic
-	#(.width_p(width_p)
-	,.datapath_gate_p(1)
+	#(.Width(width_p)
+	,.DatapathGate(1)
 	)
 	elastic_head_inst
 	(.clk_i(clk_i)
-	,.reset_i(reset_i)
+	,.rst_i(reset_i)
 	,.data_i(data_i)
 	,.valid_i(valid_i)
 	,.ready_o(ready_o)
@@ -46,12 +46,12 @@ module delaybuffer
 	end
 
 	counter_roll
-	#(.width_p($clog2(delay_p))
-	,.reset_val_p('0)
+	#(.Width($clog2(delay_p))
+	,.ResetVal('0)
 	)
 	read_counter_inst
 	(.clk_i(clk_i)
-	,.reset_i(reset_i)
+	,.rst_i(reset_i)
 	,.max_val_i(delay_p-1)
 	,.up_i(put_data_w)
 	,.down_i('0)
