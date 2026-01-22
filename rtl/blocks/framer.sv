@@ -1,140 +1,152 @@
 `timescale 1ns / 1ps
 
-module framer
-#(parameter unpacked_width_p  = 1
- ,parameter packed_num_p = 8
- ,parameter packed_width_p = unpacked_width_p * packed_num_p
- ,parameter packet_len_elems_p = 1024 // Number of packed elements per packet
- ,parameter tail_byte_0_p = 8'h0D
- ,parameter tail_byte_1_p = 8'h0A
- )
-(input  [0:0]                   clk_i
-,input  [0:0]                   reset_i
+module framer #(
+   parameter int unsigned  UnpackedWidth  = 1
+  ,parameter int unsigned  PackedNum      = 8
+  ,parameter int unsigned  PackedWidth    = UnpackedWidth * PackedNum
+  ,parameter int unsigned  PacketLenElems = 1024 // Number of packed elements per packet
+  ,parameter logic [7:0]   TailByte0      = 8'h0D
+  ,parameter logic [7:0]   TailByte1      = 8'h0A
+  ,localparam int unsigned CountWidth     = $clog2(PacketLenElems)
+)  (
+   input  [0:0] clk_i
+  ,input  [0:0] rst_i
 
-,input  [0:0]                   valid_i
-,output [0:0]                   ready_o
-,input  [unpacked_width_p-1:0]  unpacked_i
+  ,input  [0:0]               valid_i
+  ,output [0:0]               ready_o
+  ,input  [UnpackedWidth-1:0] unpacked_i
 
-,output [0:0]                   valid_o
-,input [0:0]                    ready_i
-,output [packed_width_p-1:0]    data_o
+  ,output [0:0]             valid_o
+  ,input  [0:0]             ready_i
+  ,output [PackedWidth-1:0] data_o
 );
-    // FSM States
-    typedef enum logic [1:0] {forward_s, footer_0_s, footer_1_s} fsm_e;
-	fsm_e state_r, state_n;
+  // FSM States
+  typedef enum logic [1:0] {Forward, Footer0, Footer1} fsm_e;
+  fsm_e state_q, state_d;
 
-    // Packer Wires
-    wire  [0:0]                pack_ready_w;
-    wire  [0:0]                pack_valid_w;
-    wire  [packed_width_p-1:0] packed_data_w;
+  // Packer Wires
+  wire  [0:0]             pack_ready;
+  wire  [0:0]             pack_valid;
+  wire  [PackedWidth-1:0] packed_data;
 
-    logic [0:0] last_input_seen_r;
+  // Handshake Wires
+  wire  [0:0] in_fire  = valid_i && ready_o;
+  wire  [0:0] out_fire = valid_o && ready_i;
 
-    // Output Assignments
-    assign valid_o = (state_r == forward_s) ?  pack_valid_w : 1'b1;
-    // Forward data from packer until footer state, then send tail bytes
-    assign data_o  = (state_r == forward_s) ?  packed_data_w :
-                     (state_r == footer_0_s) ? tail_byte_0_p :
-                     tail_byte_1_p;
-    assign ready_o = (state_r == forward_s) && pack_ready_w && !last_input_seen_r;
+  /* ---------------------------------------- Counter Logic ---------------------------------------- */
+  logic [CountWidth-1:0]               counter_q, counter_d;
+  wire  [CountWidth-1:0] max_count_w = CountWidth'(PacketLenElems - 1);
+  wire  [0:0] counter_max_w          = (counter_q == max_count_w);
 
-    // Handshake Wires
-    wire  [0:0] in_fire_w  = valid_i && ready_o;
-    wire  [0:0] out_fire_w = valid_o && ready_i;
+  // Saturating counter to track number of packed inputs
+  always_ff @(posedge clk_i) begin
+    if (rst_i) counter_q <= '0;
+    else       counter_q <= counter_d;
+  end
 
-    /* ---------------------------------------- Counter Logic ---------------------------------------- */
-    localparam int count_width_lp      = $clog2(packet_len_elems_p);
-    wire  [count_width_lp-1:0] max_count_w = count_width_lp'(packet_len_elems_p - 1);
-    logic [count_width_lp-1:0] counter_r;
-    wire  [0:0] counter_max_w = (counter_r == max_count_w);
-
-    // Saturating counter to track number of packed inputs
-    always_ff @(posedge clk_i) begin
-        if (reset_i) begin
-            counter_r <= '0;
-        // Reset counter when exiting second footer write
-        end else if (state_r == footer_1_s && out_fire_w) begin
-            counter_r <= '0;
-        // Increment counter when accepting input in forward state
-        end else if (state_r == forward_s && in_fire_w) begin
-            // Saturate at max count
-            if (!counter_max_w) begin
-                counter_r <= counter_r + 1'b1;
-            end
-        end
+  always_comb begin
+    counter_d = counter_q; // Default hold
+    // Reset counter when finishing footer
+    if (state_q == Footer1 && out_fire) begin
+      counter_d = '0;
+    // Increment counter when accepting input in forward state
+    end else if (state_q == Forward && in_fire) begin
+      // Saturate at max count
+      if (!counter_max_w) counter_d = counter_q + 1'b1;
     end
+  end
 
-    /* ------------------------------------------- FSM Logic ------------------------------------------- */
-    // Current state logic
-    always_ff @(posedge clk_i) begin
-        if (reset_i) begin
-            state_r <= forward_s;
-        end else if (out_fire_w) begin
-            state_r <= state_n;
-        end
-    end
-    
-    // Next state logic
-    always_comb begin
-        state_n = state_r;
-        case (state_r)
-            forward_s: begin
-                if (last_input_seen_r && out_fire_w) begin
-                    state_n = footer_0_s;
-                end
-            end
-            footer_0_s: begin
-                if (out_fire_w) begin
-                    state_n = footer_1_s;
-                end
-            end
-            footer_1_s: begin
-                if (out_fire_w) begin
-                    state_n = forward_s;
-                end
-            end
-            default: begin
-                state_n = forward_s;
-            end
-        endcase
-    end
+  /* ------------------------------------------- FSM Logic ------------------------------------------- */
+  wire  [0:0] last_input = in_fire && counter_max_w;
+  logic [0:0] flushing;
 
-    // Data Logic
-    logic [0:0] flush_packer_r;
-    wire  [0:0] last_in_fire_w = in_fire_w && counter_max_w;
+  logic [0:0] rx_complete;
+  wire  [0:0] tx_complete = rx_complete && out_fire;
 
-    always_ff @(posedge clk_i) begin
-        if (reset_i) begin
-            flush_packer_r    <= 1'b0;
-            last_input_seen_r <= 1'b0;
-        end else begin
-            // Delay flush by one cycle
-            flush_packer_r <= last_in_fire_w;
-            // Last footer byte sent, clear last input seen
-            if (state_r == footer_1_s && out_fire_w) begin
-                last_input_seen_r <= 1'b0;
-            end else if (last_in_fire_w) begin
-                last_input_seen_r <= 1'b1; // Last input accepted
-            end
-        end
+    // Flushing logic to flush packer when receiving last input
+  always_ff @(posedge clk_i) begin
+    if (rst_i) flushing <= 1'b0;
+    else       flushing <= last_input;
+  end
+
+  // RX Complete logic to track when a full packet has been received
+  always_ff @(posedge clk_i) begin
+    if (rst_i)                               rx_complete <= 1'b0;
+    else if (state_q == Footer1 && out_fire) rx_complete <= 1'b0;
+    else if (last_input)                     rx_complete <= 1'b1;
+  end
+
+  // Current state logic
+  always_ff @(posedge clk_i) begin
+    if (rst_i) begin
+      state_q <= Forward;
+      data_q  <= '0;
+      valid_q <= 1'b0;
+    end else begin
+      data_q  <= data_d;
+      valid_q <= valid_d;
+      if (out_fire) begin
+        state_q <= state_d;
+      end
     end
-    /* ------------------------------------------ Packer Inst ------------------------------------------ */
-    // Packer to pack 4 2-bit magnitude values into each 8-bit UART output
-	packer
-	#(.unpacked_width_p(unpacked_width_p)
-	,.packed_num_p(packed_num_p))
-	packer_inst
-	(.clk_i(clk_i)
-	,.reset_i(reset_i)
-	// Magnitude to Packer
-	,.unpacked_i(unpacked_i)
-    ,.flush_i(flush_packer_r)
-	,.valid_i(valid_i && !last_input_seen_r)
-	,.ready_o(pack_ready_w)
-	// Packer to UART output
-	,.packed_o(packed_data_w)
-	,.valid_o(pack_valid_w)
-	,.ready_i((state_r == forward_s) ? ready_i : 1'b0)
-	);
+  end
+
+  // Next state logic
+  always_comb begin
+    state_d = state_q;
+    case (state_q)
+      Forward: begin
+        if (tx_complete) state_d = Footer0;
+      end
+      Footer0: begin
+        if (out_fire)    state_d = Footer1;
+      end
+      Footer1: begin
+        if (out_fire)    state_d = Forward;
+      end
+      default:           state_d = Forward;
+    endcase
+  end
+
+  // Data output is either packed data or footer bytes
+  logic [PackedWidth-1:0] data_q,  data_d;
+  assign data_o  = data_d;
+  // Valid output unless packer is not valid in forward state
+  logic [0:0]             valid_q, valid_d;
+  assign valid_o = valid_d;
+  // Forward data from packer until footer state, then send tail bytes
+  // Only ready to accept new input data in forward state and not complete
+  assign ready_o = (state_q == Forward) && pack_ready && !rx_complete;
+
+  // Data Logic
+  always_comb begin
+    data_d  = data_q;  // Default hold
+    valid_d = valid_q; // Default hold
+    case (state_q)
+      Forward: begin data_d = packed_data; valid_d = pack_valid; end
+      Footer0: begin data_d = TailByte0;   valid_d = 1'b1;       end
+      Footer1: begin data_d = TailByte1;   valid_d = 1'b1;       end
+      default: begin data_d = data_q;      valid_d = valid_q;    end
+    endcase
+  end
+  
+  /* ------------------------------------------ Packer Inst ------------------------------------------ */
+  // Packer to pack 4 2-bit magnitude values into each 8-bit UART output
+  packer #(
+     .UnpackedWidth(UnpackedWidth)
+    ,.PackedNum    (PackedNum)
+  ) packer_inst (
+     .clk_i(clk_i)
+    ,.rst_i(rst_i)
+
+    ,.unpacked_i(unpacked_i)
+    ,.flush_i   (flushing)
+    ,.valid_i   (valid_i && !rx_complete)
+    ,.ready_o   (pack_ready)
+
+    ,.packed_o  (packed_data)
+    ,.valid_o   (pack_valid)
+    ,.ready_i   ((state_q == Forward) ? ready_i : 1'b0) // Only accept output in forward state
+  );
 
 endmodule

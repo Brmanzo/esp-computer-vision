@@ -129,12 +129,12 @@ class MagModel():
 class ReadyValidInterface():
     def __init__(self, clk, reset, ready, valid):
         self._clk_i = clk
-        self._reset_i = reset
+        self._rst_i = reset
         self._ready = ready
         self._valid = valid
 
     def is_in_reset(self):
-        if((not self._reset_i.value.is_resolvable) or self._reset_i.value  == 1):
+        if((not self._rst_i.value.is_resolvable) or self._rst_i.value  == 1):
             return True
         
     def assert_resolvable(self):
@@ -168,8 +168,8 @@ class RandomDataGenerator():
         self._dut = dut
 
     def generate(self):
-        a_i = random.randint(0, (1 << self._dut.width_in_p.value) - 1)
-        b_i = random.randint(0, (1 << self._dut.width_in_p.value) - 1)
+        a_i = random.randint(0, (1 << self._dut.Width.value) - 1)
+        b_i = random.randint(0, (1 << self._dut.Width.value) - 1)
         return (a_i, b_i)
     
 class EdgeCaseGenerator():
@@ -224,13 +224,13 @@ class RateGenerator():
 class OutputModel():
     def __init__(self, dut, g, l):
         self._clk_i = dut.clk_i
-        self._reset_i = dut.reset_i
+        self._rst_i = dut.rst_i
         self._dut = dut
         
-        self._rv_in = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
                                           dut.valid_i, dut.ready_o)
 
-        self._rv_out = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
                                            dut.valid_o, dut.ready_i)
         self._generator = g
         self._length = l
@@ -266,13 +266,13 @@ class OutputModel():
         self._nout = 0
         clk_i = self._clk_i
         ready_i = self._dut.ready_i
-        reset_i = self._dut.reset_i
+        rst_i = self._dut.rst_i
         valid_o = self._dut.valid_o
 
         await FallingEdge(clk_i)
 
-        if(not (reset_i.value.is_resolvable and reset_i.value == 0)):
-            await FallingEdge(reset_i)
+        if(not (rst_i.value.is_resolvable and rst_i.value == 0)):
+            await FallingEdge(rst_i)
 
         # Precondition: Falling Edge of Clock
         while self._nout < self._length:
@@ -296,10 +296,10 @@ class OutputModel():
 class InputModel():
     def __init__(self, dut, data, rate, l):
         self._clk_i = dut.clk_i
-        self._reset_i = dut.reset_i
+        self._rst_i = dut.rst_i
         self._dut = dut
         
-        self._rv_in = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
                                           dut.valid_i, dut.ready_o)
 
         self._rate = rate
@@ -336,7 +336,7 @@ class InputModel():
 
         self._nin = 0
         clk_i = self._clk_i
-        reset_i = self._dut.reset_i
+        rst_i = self._dut.rst_i
         ready_o = self._dut.ready_o
         valid_i = self._dut.valid_i
         gx_i = self._dut.gx_i
@@ -344,8 +344,8 @@ class InputModel():
 
         await delay_cycles(self._dut, 1, False)
 
-        if(not (reset_i.value.is_resolvable and reset_i.value == 0)):
-            await FallingEdge(reset_i)
+        if(not (rst_i.value.is_resolvable and rst_i.value == 0)):
+            await FallingEdge(rst_i)
 
         await delay_cycles(self._dut, 2, False)
 
@@ -376,11 +376,11 @@ class ModelRunner():
     def __init__(self, dut, model):
 
         self._clk_i = dut.clk_i
-        self._reset_i = dut.reset_i
+        self._rst_i = dut.rst_i
 
-        self._rv_in = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
                                           dut.valid_i, dut.ready_o)
-        self._rv_out = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
                                            dut.valid_o, dut.ready_i)
 
         self._model = model
@@ -423,16 +423,16 @@ class ModelRunner():
 async def reset_test(dut):
     """Test for Initialization"""
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
 @cocotb.test
 async def init_test(dut):
     """Test for Basic Connectivity"""
 
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
 
     dut.gx_i.value = 0
     dut.gy_i.value = 0
@@ -440,7 +440,7 @@ async def init_test(dut):
     dut.valid_i.value = 0
 
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
 
     await Timer(Decimal(1.0), units="ns")
@@ -462,7 +462,7 @@ async def single_test(dut):
     im = InputModel(dut, eg, RateGenerator(dut, rate), l)
 
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
     ready_i = dut.ready_i
     valid_i = dut.valid_i
 
@@ -470,7 +470,7 @@ async def single_test(dut):
     valid_i.value = 0
 
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
     # Wait one cycle for reset to start
     await FallingEdge(dut.clk_i)
@@ -511,7 +511,7 @@ async def full_bw_test(dut):
     im = InputModel(dut, eg, RateGenerator(dut, rate), l)
 
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
 
     ready_i = dut.ready_i
     valid_i = dut.valid_i
@@ -520,7 +520,7 @@ async def full_bw_test(dut):
     valid_i.value = 0
 
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
     await FallingEdge(dut.clk_i)
 
@@ -552,7 +552,7 @@ async def fuzz_random_test(dut):
     im = InputModel(dut, eg, RateGenerator(dut, rate), l)
 
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
 
     ready_i = dut.ready_i
     valid_i = dut.valid_i
@@ -561,7 +561,7 @@ async def fuzz_random_test(dut):
     valid_i.value = 0
 
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
     await FallingEdge(dut.clk_i)
 

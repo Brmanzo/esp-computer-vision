@@ -1,49 +1,43 @@
 `timescale 1ns / 1ps
-module counter
-	#(parameter width_p = 4,
-		// Students: Using lint_off/lint_on commands to avoid lint checks,
-		// will result in 0 points for the lint grade.
-		/* verilator lint_off WIDTHTRUNC */
-		parameter [width_p-1:0] reset_val_p = '0)
-		/* verilator lint_on WIDTHTRUNC */
-	 (input [0:0] clk_i
-	 ,input [0:0] reset_i
-	 ,input [0:0] up_i
-	 ,input [0:0] down_i
-	 ,output [width_p-1:0] count_o
-	 ,output [width_p-1:0] next_count_o
-	 );
+module counter #(
+   parameter int unsigned         Width = 4
+  ,parameter logic [Width-1:0] ResetVal = '0
+)  (
+   input [0:0] clk_i
+  ,input [0:0] rst_i
 
-	logic [width_p-1:0] count_r, count_n;
+  ,input [0:0] up_i
+  ,input [0:0] down_i
 
-	assign count_o = count_r;
-	assign next_count_o = count_n;
-	
-	always_ff @(posedge clk_i) begin
-		// Reset immediately
-		if (reset_i) begin
-			count_r <= reset_val_p;
-		// Otherwise iterate to next state on positive edge
-		end else begin
-			count_r <= count_n;
-		end
-	end
+  ,output [Width-1:0] count_o
+  ,output [Width-1:0] next_count_o
+);
 
-	always_comb begin
-		count_n = count_r;
-		// Reset has highest priority
-		if (reset_i == 1'b1) begin
-			count_n = reset_val_p;
-		// If exclusively up, increment
-		end else if (up_i == 1'b1 && down_i == 1'b0) begin 
-			count_n = count_r + 1'b1;
-		// If exclusively down, decrement
-		end else if (up_i == 1'b0 && down_i == 1'b1) begin
-			count_n = count_r - 1'b1;
-		// Otherwise hold
-		end else begin
-			count_n = count_r;
-		end
-	end
+  logic [Width-1:0] count_q, count_d;
+
+  assign count_o = count_q;
+  assign next_count_o = count_d;
+
+  wire [0:0] only_up  = (up_i == 1'b1 && down_i == 1'b0);
+  wire [0:0] only_down = (up_i == 1'b0 && down_i == 1'b1);
+
+  always_ff @(posedge clk_i) begin
+    // Reset immediately
+    if (rst_i) count_q <= ResetVal;
+    // Otherwise iterate to next state on positive edge
+    else         count_q <= count_d;
+  end
+
+  always_comb begin
+    count_d = count_q;
+    // Reset has highest priority
+    if (rst_i) count_d = ResetVal;
+    // If exclusively up, increment
+    else if (only_up) count_d = count_q + 1'b1;
+    // If exclusively down, decrement
+    else if (only_down) count_d = count_q - 1'b1;
+    // Otherwise hold
+    else count_d = count_q;
+  end
 
 endmodule
