@@ -1,3 +1,4 @@
+/* verilator lint_off WIDTHEXPAND */
 /*
 
 Copyright (c) 2014-2017 Alex Forencich
@@ -140,3 +141,4 @@ always @(posedge clk) begin
 end
 
 endmodule
+/* verilator lint_off WIDTHEXPAND */

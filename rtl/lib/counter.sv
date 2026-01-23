@@ -10,13 +10,13 @@ module counter #(
   ,input [0:0] down_i
 
   ,output [Width-1:0] count_o
-  ,output [Width-1:0] next_count_o
+  ,output [Width-2:0] next_count_o
 );
 
   logic [Width-1:0] count_q, count_d;
 
   assign count_o = count_q;
-  assign next_count_o = count_d;
+  assign next_count_o = count_d[Width-2:0];
 
   wire [0:0] only_up  = (up_i == 1'b1 && down_i == 1'b0);
   wire [0:0] only_down = (up_i == 1'b0 && down_i == 1'b1);

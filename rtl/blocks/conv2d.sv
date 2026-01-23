@@ -1,3 +1,4 @@
+/* verilator lint_off PINCONNECTEMPTY */
 `timescale 1ns / 1ps
 module conv2d #(
    parameter  int unsigned LineWidthPx = 160
@@ -72,8 +73,8 @@ module conv2d #(
   /* ------------------------------------ FIFO RAM Instantiations ------------------------------------ */
   // Both RAMs step forward with each new pixel input (in_fire) so that delay is exactly one row each.
   // RAM 1 produces a delay of one row. Reads off of data_i as the bottom row of the kernel receives new data.
-  logic [WidthIn-1:0] mem [KernelWidth];
-  assign mem[0] = data_i;
+  logic [WidthIn-1:0] row_tap [KernelWidth];
+  assign row_tap[0] = data_i;
 
   generate
     for (genvar i = 0; i < KernelWidth - 1; i++) begin : gen_buffer
@@ -83,11 +84,11 @@ module conv2d #(
       ) ram_1_delaybuffer_inst (
          .clk_i  (clk_i)
         ,.rst_i  (rst_i)
-        ,.data_i (mem[i])
+        ,.data_i (row_tap[i])
         ,.valid_i(in_fire)
         ,.ready_o()
         ,.valid_o()
-        ,.data_o (mem[i+1])
+        ,.data_o (row_tap[i+1])
         ,.ready_i(1'b1)
       );
     end
@@ -116,7 +117,7 @@ module conv2d #(
         // Load new data into the rightmost column of the window
         // Top line <- Twice seen data from second RAM
         for (int r = 0; r < KernelWidth; r++) begin
-          window[r][KernelWidth-1] <= mem[KernelWidth-1 - r];
+          window[r][KernelWidth-1] <= row_tap[KernelWidth-1 - r];
         end
     end
   end

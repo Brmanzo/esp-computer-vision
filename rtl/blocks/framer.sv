@@ -129,7 +129,7 @@ module framer #(
       default: begin data_d = data_q;      valid_d = valid_q;    end
     endcase
   end
-  
+
   /* ------------------------------------------ Packer Inst ------------------------------------------ */
   // Packer to pack 4 2-bit magnitude values into each 8-bit UART output
   packer #(

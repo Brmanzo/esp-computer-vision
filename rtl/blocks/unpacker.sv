@@ -1,11 +1,10 @@
 `timescale 1ns / 1ps
 module unpacker #(
-   parameter  int unsigned  UnpackedWidth = 2
-  ,parameter  int unsigned  PackedNum     = 4
-  ,parameter  int unsigned  PackedWidth   = UnpackedWidth * PackedNum
-  ,localparam int unsigned  CountWidth    = $clog2(PackedNum)
-  ,localparam int unsigned  OffsetWidth   = $clog2(PackedWidth)
-  ,localparam int unsigned  ExtendWidth   = PackedWidth - UnpackedWidth
+   parameter  int unsigned  UnpackedWidth          = 2
+  ,parameter  int unsigned  PackedNum              = 4
+  ,parameter  int unsigned  PackedWidth            = UnpackedWidth * PackedNum
+  ,localparam int unsigned  CountWidth             = $clog2(PackedNum)
+  ,localparam int unsigned  OffsetWidth            = $clog2(PackedWidth)
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -30,10 +29,7 @@ module unpacker #(
 
   // Maintain offset of current shift/select within shift_reg
   logic [OffsetWidth-1:0] offset;
-
-  // Mask to select the unpacked data from buffer (Replicating proper bit width)
-  wire [PackedWidth-1:0] mask = {{ExtendWidth{1'b0}}, max_count};
-
+  
   /* -------------------------- Handshaking Logic -------------------------- */
   wire  [0:0] elastic_ready;
   wire  [0:0] in_fire  = valid_i && ready_o;
@@ -60,7 +56,7 @@ module unpacker #(
   /* -------------------------- Data Path Logic -------------------------- */
   always_comb begin
     offset = OffsetWidth'(counter * UnpackedWidth);
-    unpacked = UnpackedWidth'((shift_reg >> offset) & mask);
+    unpacked = shift_reg[offset +: UnpackedWidth]; // Start at offset, select UnpackedWidth bits
   end
 
   // Counter to increment unpacking offset

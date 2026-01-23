@@ -12,6 +12,9 @@ VERILATOR ?= verilator
 VERIBLE   ?= verible-verilog-lint
 PYTHON3   ?= python
 
+VERIBLE_EXCLUDES := %/rtl/vendor/%
+VERIBLE_SOURCES := $(filter-out $(VERIBLE_EXCLUDES),$(LINT_SOURCES))
+
 # Ensure user-local bins are visible when running under make
 export PATH := $(HOME)/.local/bin:$(PATH)
 
@@ -45,7 +48,7 @@ lint-verilator:
 lint-verible:
 	@command -v $(VERIBLE) >/dev/null || { \
 		echo "ERROR: $(VERIBLE) not found in PATH"; exit 1; }
-	$(VERIBLE) --lint_fatal --parse_fatal $(LINT_SOURCES)
+	$(VERIBLE) --lint_fatal --parse_fatal $(VERIBLE_SOURCES)
 
 # Remove all compiler outputs
 sim-clean:

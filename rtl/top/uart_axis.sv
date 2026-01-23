@@ -1,4 +1,5 @@
 `timescale 1ns / 1ps
+/* verilator lint_off PINCONNECTEMPTY */
 module uart_axis #(
    parameter int unsigned ImageWidth     = 320
   ,parameter int unsigned ImageHeight    = 240
@@ -26,7 +27,7 @@ module uart_axis #(
   ,output [0:0] uart_rts_o
 
   ,output [5:1] led_o
-  );
+);
 
   // UART Interface Wires
   wire [0:0]                uart_ready;
@@ -51,7 +52,9 @@ module uart_axis #(
   // Magnitude Wires
   wire [0:0]              mag_ready;
   wire [0:0]              mag_valid;
+  /* verilator lint_off UNUSEDSIGNAL */
   wire [ConvOutWidth:0]   mag_data;
+  /* verilator lint_on UNUSEDSIGNAL */
 
   // Mux Logic
   logic [0:0]             mux_data;
@@ -61,6 +64,8 @@ module uart_axis #(
   wire [0:0]              framer_ready;
   wire [0:0]              framer_valid;
   wire [BusWidth-1:0]     framer_data;
+
+  assign led_o[5:1] = 5'b0;
 
   // Predefined Kernel weights for gx and gy gradients
   typedef logic signed [WeightWidth-1:0] weight_t;
@@ -119,7 +124,11 @@ module uart_axis #(
     ,.m_axis_tvalid(uart_valid)
     ,.m_axis_tdata (uart_data)
 
-    ,.prescale(16'd10) // Fclk / (baud * 8), 25 MHz / (312,500 * 8) = 20 //10
+    ,.tx_busy         ()
+    ,.rx_busy         ()
+    ,.rx_overrun_error()
+    ,.rx_frame_error  ()
+    ,.prescale        (16'd10) // Fclk / (baud * 8), 25 MHz / (312,500 * 8) = 10
   );
 
   skid_buffer #(

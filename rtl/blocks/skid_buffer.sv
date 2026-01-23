@@ -1,5 +1,5 @@
 `timescale 1ns / 1ps
-
+/* verilator lint_off PINCONNECTEMPTY */
 module skid_buffer #(
    parameter  int unsigned Width    = 8
   ,parameter  int unsigned Depth    = 16
@@ -25,8 +25,6 @@ module skid_buffer #(
   logic [AddrWidth-1:0] prev_write_ptr = '0;
   logic [0:0] read_wrap, write_wrap;
 
-  wire [0:0] read_wrap_n_sink_w;
-
   /* ------------------------------------ Full/Empty Logic ------------------------------------ */
   always_ff @ (posedge clk_i) begin
     if (rst_i) prev_write_ptr <= '0;
@@ -34,7 +32,7 @@ module skid_buffer #(
   end
 
   wire [0:0] ptr_overlap = (write_ptr == read_ptr_q);
-  wire [0:0] ptr_wrap    = (write_wrap != read_wrap); 
+  wire [0:0] ptr_wrap    = (write_wrap != read_wrap);
 
   wire [0:0] empty_w     = ptr_overlap && ~ptr_wrap;
   wire [0:0] full_w      = ptr_overlap &&  ptr_wrap;
@@ -87,7 +85,7 @@ module skid_buffer #(
     ,.up_i   (out_fire) // Increment if ready_i and valid_o
     ,.down_i (1'b0) // Only increments then rolls over
     ,.count_o({read_wrap, read_ptr_q})
-    ,.next_count_o({read_wrap_n_sink_w, read_ptr_d})
+    ,.next_count_o(read_ptr_d)
   );
 
   // Write Counter
