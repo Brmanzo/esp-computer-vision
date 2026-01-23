@@ -1,142 +1,142 @@
 `timescale 1ns / 1ps
-module conv2d
-  #(parameter linewidth_px_p = 160
-   ,parameter linecount_px_p = 120
-   ,parameter in_width_p  = 2
-   ,parameter out_width_p = 32
-   ,parameter kernel_width_p = 3
-   ,parameter weight_width_p = 2)
-   (input  [0:0]            clk_i
-   ,input  [0:0]            reset_i
-   ,input  [0:0]            valid_i
-   ,output [0:0]            ready_o
-   ,input  [in_width_p-1:0] data_i
-   ,output [0:0]            valid_o
-   ,input  [0:0]            ready_i
-   ,input logic signed [(kernel_width_p*kernel_width_p)-1:0][weight_width_p-1:0] weights_i
-   ,output signed [out_width_p-1:0] data_o
-   );
+module conv2d #(
+   parameter  int unsigned LineWidthPx = 160
+  ,parameter  int unsigned LineCountPx = 120
+  ,parameter  int unsigned WidthIn     = 2
+  ,parameter  int unsigned WidthOut    = 32
+  ,parameter  int unsigned KernelWidth = 3
+  ,parameter  int unsigned WeightWidth = 2
+  ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
+  ,localparam int unsigned ExtendWidth = WidthOut - WidthIn
+)  (
+   input  [0:0] clk_i
+  ,input  [0:0] rst_i
 
-   localparam extension_width_lp = out_width_p - in_width_p;
+  ,input  [0:0]         valid_i
+  ,output [0:0]         ready_o
+  ,input  [WidthIn-1:0] data_i
 
-   /* ---------------------------------------- Kernel Validation ---------------------------------------- */
-   wire  [0:0] enable_w;
-   assign enable_w = valid_i & ready_o;
+  ,output [0:0] valid_o
+  ,input  [0:0] ready_i
 
-   localparam int xw_lp = (linewidth_px_p <= 1) ? 1 : $clog2(linewidth_px_p);
-   localparam int yw_lp = (linecount_px_p <= 1) ? 1 : $clog2(linecount_px_p);
+  ,output logic signed [WidthOut-1:0] data_o
+  ,input  logic signed [KernelArea-1:0][WeightWidth-1:0] weights_i
+);
 
-   logic [xw_lp-1:0] x_pos_l;
-   logic [yw_lp-1:0] y_pos_l;
+  /* ---------------------------------------- Kernel Validation ---------------------------------------- */
+  wire [0:0] in_fire = valid_i & ready_o;
 
-   wire [0:0] last_col_w = (x_pos_l == xw_lp'(linewidth_px_p - 1));
-   wire [0:0] last_row_w = (y_pos_l == yw_lp'(linecount_px_p - 1));
+  localparam int XWidth = (LineWidthPx <= 1) ? 1 : $clog2(LineWidthPx);
+  localparam int YWidth = (LineCountPx <= 1) ? 1 : $clog2(LineCountPx);
 
-   always_ff @(posedge clk_i) begin
-      // Update x and y position counters
-      if (reset_i) begin
-         x_pos_l <= '0;
-         y_pos_l <= '0;
-      end else if (enable_w) begin
-         if (last_col_w) begin
-            x_pos_l <= '0;
-            y_pos_l <= (last_row_w) ? '0 : (y_pos_l + 1);
-         end else begin
-            x_pos_l <= x_pos_l + 1;
-         end
+  logic [XWidth-1:0] x_pos;
+  logic [YWidth-1:0] y_pos;
+
+  wire [0:0] last_col = (x_pos == XWidth'(LineWidthPx - 1));
+  wire [0:0] last_row = (y_pos == YWidth'(LineCountPx - 1));
+
+  always_ff @(posedge clk_i) begin
+    // Update x and y position counters
+    if (rst_i) begin
+      x_pos <= '0;
+      y_pos <= '0;
+    end else if (in_fire) begin
+      if (last_col) begin
+        x_pos <= '0;
+        y_pos <= (last_row) ? '0 : (y_pos + 1);
+      end else begin
+        x_pos <= x_pos + 1;
       end
-   end
+    end
+  end
 
-   wire [0:0] valid_x_pos_w = (x_pos_l >= (kernel_width_p - 1));
-   wire [0:0] valid_y_pos_w = (y_pos_l >= (kernel_width_p - 1));
-   wire [0:0] valid_kernel_pos_w = valid_x_pos_w && valid_y_pos_w;
+  wire [0:0] valid_x_pos = (x_pos >= (XWidth'(KernelWidth - 1)));
+  wire [0:0] valid_y_pos = (y_pos >= (YWidth'(KernelWidth - 1)));
 
-   wire [0:0] produce_w = valid_kernel_pos_w & enable_w;
+  wire [0:0] valid_kernel_pos = valid_x_pos && valid_y_pos;
 
-   /* ------------------------------------ Elastic Handshaking Logic ------------------------------------ */
-   // Provided Elastic State Machine Logic
-   logic [0:0] valid_r;
+  wire [0:0] produce = valid_kernel_pos & in_fire;
 
+  /* ------------------------------------ Elastic Handshaking Logic ------------------------------------ */
+  // Provided Elastic State Machine Logic
+  logic [0:0] valid_r;
 
-   always_ff @(posedge clk_i) begin
-      if (reset_i) begin
-         valid_r <= 1'b0;
-      end else if (ready_o) begin
-         valid_r <= produce_w;
-      end
-   end
-   assign valid_o = valid_r;
-   assign ready_o = ~valid_r | ready_i;
+  always_ff @(posedge clk_i) begin
+    if (rst_i)        valid_r <= 1'b0;
+    else if (ready_o) valid_r <= produce;
+  end
 
-   /* ------------------------------------ FIFO RAM Instantiations ------------------------------------ */
-   // Both RAMs step forward with each new pixel input (enable_w) so that delay is exactly one row each.
-   // RAM 1 produces a delay of one row. Reads off of data_i as the bottom row of the kernel receives new data.
-   logic [in_width_p-1:0] ram_ol [0:kernel_width_p-1];
-   assign ram_ol[0] = data_i;
+  assign valid_o =  valid_r;
+  assign ready_o = ~valid_r | ready_i;
 
-   generate
-      for (genvar i = 0; i < kernel_width_p - 1; i++) begin : GEN_Buffer
-         delaybuffer
-         #(.width_p(in_width_p)
-         ,.delay_p(linewidth_px_p - 1))
-         ram_1_delaybuffer_inst
-         (.clk_i(clk_i)
-         ,.reset_i(reset_i)
-         ,.data_i(ram_ol[i])
-         ,.valid_i(enable_w)
-         ,.ready_o()
-         ,.valid_o()
-         ,.data_o(ram_ol[i+1])
-         ,.ready_i(1'b1)
-         );
-      end
-   endgenerate
+  /* ------------------------------------ FIFO RAM Instantiations ------------------------------------ */
+  // Both RAMs step forward with each new pixel input (in_fire) so that delay is exactly one row each.
+  // RAM 1 produces a delay of one row. Reads off of data_i as the bottom row of the kernel receives new data.
+  logic [WidthIn-1:0] ram_ol [KernelWidth];
+  assign ram_ol[0] = data_i;
 
-   /* ------------------------------------ Window Register Logic ------------------------------------ */
-   // Row major Order(window_l[row][col])
-   logic [in_width_p-1:0] window_l [kernel_width_p-1:0][kernel_width_p-1:0];
+  generate
+    for (genvar i = 0; i < KernelWidth - 1; i++) begin : gen_buffer
+      delaybuffer #(
+         .Width(WidthIn)
+        ,.Delay (LineWidthPx - 1)
+      ) ram_1_delaybuffer_inst (
+         .clk_i  (clk_i)
+        ,.rst_i  (rst_i)
+        ,.data_i (ram_ol[i])
+        ,.valid_i(in_fire)
+        ,.ready_o()
+        ,.valid_o()
+        ,.data_o (ram_ol[i+1])
+        ,.ready_i(1'b1)
+      );
+    end
+  endgenerate
+  /* ------------------------------------ Window Register Logic ------------------------------------ */
+  // Row major Order(window[row][col])
+  logic [WidthIn-1:0] window [KernelWidth][KernelWidth];
 
-   always_ff @(posedge clk_i) begin
-      if (reset_i) begin
-         for (int i = 0; i < kernel_width_p; i++) begin
-            for (int j = 0; j < kernel_width_p; j++) begin
-               window_l[i][j] <= '0;
-            end
-         end
-      end else if (enable_w) begin
-         /* ------------------------------- Internal Connections ------------------------------- */ 
-         // Line feeds from right to left within window
-         // Bottom line
-         for (int r = 0; r < kernel_width_p; r++) begin
-            for (int c = 0; c < kernel_width_p - 1; c++) begin
-               window_l[r][c] <= window_l[r][c+1];
-            end
-         end
-         /* -------------------------------- Input Connections -------------------------------- */ 
-         // Load new data into the rightmost column of the window
-         // Top line <- Twice seen data from second RAM
-         for (int r = 0; r < kernel_width_p; r++) begin
-            window_l[r][kernel_width_p-1] <= ram_ol[kernel_width_p-1 - r];
-         end
-      end
-   end
-   /* ------------------------------------ Output Logic ------------------------------------ */
-   logic signed [out_width_p-1:0] acc_l;
-   always_comb begin
-      acc_l = '0;
-      for (int r = 0; r < kernel_width_p; r++) begin
-         for (int c = 0; c < kernel_width_p; c++) begin
-            // When binary inputs, only add the weight if the input pixel is a 1
-            if (in_width_p == 1) begin
-               if (window_l[r][c] != '0) begin
-                  acc_l = acc_l + $signed({{extension_width_lp{1'b0}}, weights_i[r*kernel_width_p + c]});
-               end
-            end else begin
-               acc_l = acc_l + ($signed(weights_i[r*kernel_width_p + c]) * $signed(window_l[r][c]));
-            end
-         end
-      end
-   end   
-   assign data_o = acc_l;
+  always_ff @(posedge clk_i) begin
+    if (rst_i) begin
+        for (int i = 0; i < KernelWidth; i++) begin
+          for (int j = 0; j < KernelWidth; j++) begin
+              window[i][j] <= '0;
+          end
+        end
+    end else if (in_fire) begin
+        /* ------------------------------- Internal Connections ------------------------------- */
+        // Line feeds from right to left within window
+        // Bottom line
+        for (int r = 0; r < KernelWidth; r++) begin
+          for (int c = 0; c < KernelWidth - 1; c++) begin
+              window[r][c] <= window[r][c+1];
+          end
+        end
+        /* -------------------------------- Input Connections -------------------------------- */
+        // Load new data into the rightmost column of the window
+        // Top line <- Twice seen data from second RAM
+        for (int r = 0; r < KernelWidth; r++) begin
+          window[r][KernelWidth-1] <= ram_ol[KernelWidth-1 - r];
+        end
+    end
+  end
+  /* ------------------------------------ Output Logic ------------------------------------ */
+  logic signed [WidthOut-1:0] acc_l;
+  always_comb begin
+    acc_l = '0;
+    for (int r = 0; r < KernelWidth; r++) begin
+        for (int c = 0; c < KernelWidth; c++) begin
+          // When binary inputs, only add the weight if the input pixel is a 1
+          if (WidthIn == 1) begin
+              if (window[r][c] != '0) begin
+                acc_l = acc_l + $signed({{ExtendWidth{1'b0}}, weights_i[r*KernelWidth + c]});
+              end
+          end else begin
+              acc_l = acc_l + ($signed(weights_i[r*KernelWidth + c]) * $signed(window[r][c]));
+          end
+        end
+    end
+  end
+  assign data_o = acc_l;
 
 endmodule

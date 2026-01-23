@@ -45,8 +45,8 @@ tests = ['reset_test'
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("width_p, depth_p, headroom_p", [(8, 16, 4), (8, 32, 8)])  
-def test_each(simulator, test_name, width_p, depth_p, headroom_p):
+@pytest.mark.parametrize("Width, Depth, HeadRoom", [(8, 16, 4), (8, 32, 8)])  
+def test_each(simulator, test_name, Width, Depth, HeadRoom):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
@@ -57,8 +57,8 @@ def test_each(simulator, test_name, width_p, depth_p, headroom_p):
 # between tests to ensure that reset is clearing all state.
 
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("width_p, depth_p, headroom_p", [(8, 16, 4), (8, 32, 8)])
-def test_all(simulator, width_p, depth_p, headroom_p):
+@pytest.mark.parametrize("Width, Depth, HeadRoom", [(8, 16, 4), (8, 32, 8)])
+def test_all(simulator, Width, Depth, HeadRoom):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
@@ -98,14 +98,14 @@ class SkidBufModel():
         self._q = queue.SimpleQueue()
         self._occupancy = 0
         
-        self._width_p = dut.width_p.value
-        self._depth_p = dut.depth_p.value
-        self._headroom_p = dut.headroom_p.value
+        self._Width = dut.Width.value
+        self._Depth = dut.Depth.value
+        self._HeadRoom = dut.HeadRoom.value
         self._deqs = 0
         self._enqs = 0
 
     def expect_rts(self):
-        thresh = int(self._depth_p) - int(self._headroom_p)
+        thresh = int(self._Depth) - int(self._HeadRoom)
         return self._occupancy >= thresh
 
     def consume(self):
@@ -126,14 +126,14 @@ class SkidBufModel():
 class ReadyValidInterface():
     def __init__(self, clk, reset, ready, valid):
         self._clk_i = clk
-        self._reset_i = reset
+        self._rst_i = reset
         self._ready = ready
         self._valid = valid
 
     def is_in_reset(self):
-        if (not self._reset_i.value.is_resolvable or self._reset_i.value  == 1):
+        if (not self._rst_i.value.is_resolvable or self._rst_i.value  == 1):
             return True
-        return int(self._reset_i.value) == 1
+        return int(self._rst_i.value) == 1
         
     def assert_resolvable(self):
         if(not self.is_in_reset()):
@@ -167,7 +167,7 @@ class RandomDataGenerator():
         self._dut = dut
 
     def generate(self):
-        value = random.randint(0, (1 << self._dut.width_p.value) - 1)
+        value = random.randint(0, (1 << self._dut.Width.value) - 1)
         return value
 
 class RateGenerator():
@@ -197,13 +197,13 @@ class CountingGenerator():
 class OutputModel():
     def __init__(self, dut, g, l):
         self._clk_i = dut.clk_i
-        self._reset_i = dut.reset_i
+        self._rst_i = dut.rst_i
         self._dut = dut
         
-        self._rv_in = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
                                           dut.ready_o, dut.valid_i)
 
-        self._rv_out = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
                                            dut.ready_i, dut.valid_o)
         self._generator = g
         self._length = l
@@ -239,13 +239,13 @@ class OutputModel():
         self._nout = 0
         clk_i = self._clk_i
         ready_i = self._dut.ready_i
-        reset_i = self._dut.reset_i
+        rst_i = self._dut.rst_i
         valid_o = self._dut.valid_o
 
         await FallingEdge(clk_i)
 
-        if(not (reset_i.value.is_resolvable and reset_i.value == 0)):
-            await FallingEdge(reset_i)
+        if(not (rst_i.value.is_resolvable and rst_i.value == 0)):
+            await FallingEdge(rst_i)
 
         # Precondition: Falling Edge of Clock
         while self._nout < self._length:
@@ -269,10 +269,10 @@ class OutputModel():
 class InputModel():
     def __init__(self, dut, data, rate, l):
         self._clk_i = dut.clk_i
-        self._reset_i = dut.reset_i
+        self._rst_i = dut.rst_i
         self._dut = dut
         
-        self._rv_in = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
                                           dut.ready_o, dut.valid_i)
 
         self._rate = rate
@@ -309,15 +309,15 @@ class InputModel():
 
         self._nin = 0
         clk_i = self._clk_i
-        reset_i = self._dut.reset_i
+        rst_i = self._dut.rst_i
         ready_o = self._dut.ready_o
         valid_i = self._dut.valid_i
         data_i = self._dut.data_i
 
         await delay_cycles(self._dut, 1, False)
 
-        if(not (reset_i.value.is_resolvable and reset_i.value == 0)):
-            await FallingEdge(reset_i)
+        if(not (rst_i.value.is_resolvable and rst_i.value == 0)):
+            await FallingEdge(rst_i)
 
         await delay_cycles(self._dut, 2, False)
 
@@ -346,12 +346,12 @@ class ModelRunner():
     def __init__(self, dut, model):
 
         self._clk_i = dut.clk_i
-        self._reset_i = dut.reset_i
+        self._rst_i = dut.rst_i
         self._dut = dut
 
-        self._rv_in = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
                                           dut.ready_o, dut.valid_i)
-        self._rv_out = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
                                            dut.ready_i, dut.valid_o)
 
         self._model = model
@@ -370,14 +370,14 @@ class ModelRunner():
         self._coro_run_check = cocotb.start_soon(self._run_check(self._model))
 
     def dut_occ_modulo(self):
-        pw = self._dut.write_ptr_r.value.n_bits  # clog2(depth)
+        pw = self._dut.write_ptr.value.n_bits  # clog2(depth)
         ptr_w = pw + 1
         mask = (1 << ptr_w) - 1
 
-        ww = int(self._dut.write_wrap_l.value)
-        wp = int(self._dut.write_ptr_r.value)
-        rw = int(self._dut.read_wrap_l.value)
-        rp = int(self._dut.read_ptr_r.value)
+        ww = int(self._dut.write_wrap.value)
+        wp = int(self._dut.write_ptr.value)
+        rw = int(self._dut.read_wrap.value)
+        rp = int(self._dut.read_ptr_q.value)
 
         w = ((ww << pw) | wp) & mask
         r = ((rw << pw) | rp) & mask
@@ -388,7 +388,7 @@ class ModelRunner():
         while True:
             await RisingEdge(self._clk_i)
 
-            if not (self._reset_i.value.is_resolvable and int(self._reset_i.value) == 0):
+            if not (self._rst_i.value.is_resolvable and int(self._rst_i.value) == 0):
                 continue
 
             await Timer(Decimal(1.0), "ns")  # allow comb to settle after sequential updates
@@ -397,7 +397,7 @@ class ModelRunner():
             got = int(self._dut.rts_o.value)
 
             occ_hw, _ = self.dut_occ_modulo()
-            thresh = int(self._dut.depth_p.value) - int(self._dut.headroom_p.value)
+            thresh = int(self._dut.Depth.value) - int(self._dut.HeadRoom.value)
             exp = 1 if occ_hw >= thresh else 0
             got = int(self._dut.rts_o.value)
             assert got == exp, (f"rts mismatch @ {get_sim_time('ns')}ns: "
@@ -435,11 +435,11 @@ async def reset_test(dut):
     """Test for Initialization"""
 
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
-    width_p = dut.width_p.value
+    rst_i = dut.rst_i
+    Width = dut.Width.value
 
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
 @cocotb.test
 async def single_test(dut):
@@ -453,7 +453,7 @@ async def single_test(dut):
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), l)
 
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
     ready_i = dut.ready_i
     valid_i = dut.valid_i
     ready_o = dut.ready_o
@@ -462,7 +462,7 @@ async def single_test(dut):
     ready_i.value = 0
     valid_i.value = 0    
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
     # Wait one cycle for reset to start
     await FallingEdge(dut.clk_i)
@@ -499,7 +499,7 @@ async def bypass_test(dut):
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), l)
 
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
     ready_i = dut.ready_i
     valid_i = dut.valid_i
     ready_o = dut.ready_o
@@ -508,7 +508,7 @@ async def bypass_test(dut):
     ready_i.value = 0
     valid_i.value = 0    
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
     # Wait one cycle for reset to start
     await FallingEdge(dut.clk_i)
@@ -536,10 +536,10 @@ async def bypass_test(dut):
 
 @cocotb.test
 async def fill_test(dut):
-    """Test if fifo_1r1w fills to depth_p elements"""
+    """Test if fifo_1r1w fills to Depth elements"""
 
-    depth_p = dut.depth_p.value
-    l = depth_p
+    Depth = dut.Depth.value
+    l = Depth
     rate = 1
 
     m = ModelRunner(dut, SkidBufModel(dut))
@@ -547,7 +547,7 @@ async def fill_test(dut):
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), l)
 
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
     ready_i = dut.ready_i
     valid_i = dut.valid_i
     ready_o = dut.ready_o
@@ -556,7 +556,7 @@ async def fill_test(dut):
     ready_i.value = 0
     valid_i.value = 0    
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
     # Wait one cycle for reset to start
     await FallingEdge(dut.clk_i)
@@ -570,20 +570,20 @@ async def fill_test(dut):
 
     success = False
     try:
-        await im.wait(depth_p)
+        await im.wait(Depth)
         success = True
     except:
         nconsumed = im.nconsumed()
 
     if(not success):
-        assert nconsumed != depth_p, f"Error! Could not fill fifo with {depth_p} elements in {depth_p} cycles. Fifo consumed {nconsumed} elements."
+        assert nconsumed != Depth, f"Error! Could not fill fifo with {Depth} elements in {Depth} cycles. Fifo consumed {nconsumed} elements."
         
 @cocotb.test
 async def fill_empty_test(dut):
-    """Test if fifo_1r1w fills to depth_p elements"""
+    """Test if fifo_1r1w fills to Depth elements"""
 
-    depth_p = dut.depth_p.value
-    l = depth_p
+    Depth = dut.Depth.value
+    l = Depth
     rate = 1
 
     m = ModelRunner(dut, SkidBufModel(dut))
@@ -591,7 +591,7 @@ async def fill_empty_test(dut):
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), l)
 
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
     ready_i = dut.ready_i
     valid_i = dut.valid_i
     ready_o = dut.ready_o
@@ -600,7 +600,7 @@ async def fill_empty_test(dut):
     ready_i.value = 0
     valid_i.value = 0    
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
     # Wait one cycle for reset to start
     await FallingEdge(dut.clk_i)
@@ -614,13 +614,13 @@ async def fill_empty_test(dut):
 
     success = False
     try:
-        await im.wait(depth_p)
+        await im.wait(Depth)
         success = True
     except:
         nconsumed = im.nconsumed()
 
     if(not success):
-        assert nconsumed != depth_p, f"Error! Could not fill fifo with {depth_p} elements in {depth_p} cycles. Fifo consumed {nconsumed} elements."
+        assert nconsumed != Depth, f"Error! Could not fill fifo with {Depth} elements in {Depth} cycles. Fifo consumed {nconsumed} elements."
 
     om = OutputModel(dut, RateGenerator(dut, 1), l)
     om.start()
@@ -631,19 +631,19 @@ async def fill_empty_test(dut):
     nproduced = 0
     success = False
     try:
-        await om.wait(depth_p)
+        await om.wait(Depth)
         success = True
     except:
         nproduced = om.nproduced()
 
     if(not success):
-        assert nproduced != depth_p, f"Error! Could not empty fifo with {depth_p} elements in {depth_p} cycles. Fifo produced {nproduced} elements."
+        assert nproduced != Depth, f"Error! Could not empty fifo with {Depth} elements in {Depth} cycles. Fifo produced {nproduced} elements."
 
 @cocotb.test
 async def out_fuzz_test(dut):
-    """Transmit 4 * depth_p random data elements at 50% line rate (Output/Consumer is fuzzed)"""
+    """Transmit 4 * Depth random data elements at 50% line rate (Output/Consumer is fuzzed)"""
 
-    l = dut.depth_p.value * 4
+    l = dut.Depth.value * 4
     rate = .5
 
     timeout = 2 * l * int(1/rate)
@@ -653,7 +653,7 @@ async def out_fuzz_test(dut):
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, 1), l)
 
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
     ready_i = dut.ready_i
     valid_i = dut.valid_i
     ready_o = dut.ready_o
@@ -662,7 +662,7 @@ async def out_fuzz_test(dut):
     ready_i.value = 0
     valid_i.value = 0    
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
     # Wait one cycle for reset to start
     await FallingEdge(dut.clk_i)
@@ -686,9 +686,9 @@ async def out_fuzz_test(dut):
 
 @cocotb.test
 async def in_fuzz_test(dut):
-    """Transmit 4 * depth_p random data elements at 50% line rate (Input/Producer is fuzzed)"""
+    """Transmit 4 * Depth random data elements at 50% line rate (Input/Producer is fuzzed)"""
 
-    l = dut.depth_p.value * 4
+    l = dut.Depth.value * 4
     rate = .5
 
     timeout = 2 * l * int(1/rate)
@@ -698,7 +698,7 @@ async def in_fuzz_test(dut):
     im = InputModel(dut, RandomDataGenerator(dut), CountingGenerator(dut, rate), l)
 
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
     ready_i = dut.ready_i
     valid_i = dut.valid_i
     ready_o = dut.ready_o
@@ -707,7 +707,7 @@ async def in_fuzz_test(dut):
     ready_i.value = 0
     valid_i.value = 0    
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
     # Wait one cycle for reset to start
     await FallingEdge(dut.clk_i)
@@ -730,9 +730,9 @@ async def in_fuzz_test(dut):
 
 @cocotb.test
 async def inout_fuzz_test(dut):
-    """Transmit 4 * depth_p random data elements at ~25% line rate (Both are fuzzed)"""
+    """Transmit 4 * Depth random data elements at ~25% line rate (Both are fuzzed)"""
 
-    l = dut.depth_p.value * 4
+    l = dut.Depth.value * 4
     rate = .5
 
     timeout = 2 * l * int(1/rate) * int(1/rate) 
@@ -742,7 +742,7 @@ async def inout_fuzz_test(dut):
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), l)
 
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
     ready_i = dut.ready_i
     valid_i = dut.valid_i
     ready_o = dut.ready_o
@@ -751,7 +751,7 @@ async def inout_fuzz_test(dut):
     ready_i.value = 0
     valid_i.value = 0    
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
     # Wait one cycle for reset to start
     await FallingEdge(dut.clk_i)
@@ -774,10 +774,10 @@ async def inout_fuzz_test(dut):
         
 @cocotb.test
 async def full_bw_test(dut):
-    """Transmit 8 * depth_p random data elements at 100% line rate"""
+    """Transmit 8 * Depth random data elements at 100% line rate"""
 
     # This is the InputModel
-    l = dut.depth_p.value * 8
+    l = dut.Depth.value * 8
     rate = 1
 
     timeout = l + 1
@@ -787,7 +787,7 @@ async def full_bw_test(dut):
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), l)
 
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
     ready_i = dut.ready_i
     valid_i = dut.valid_i
     ready_o = dut.ready_o
@@ -796,7 +796,7 @@ async def full_bw_test(dut):
     ready_i.value = 0
     valid_i.value = 0    
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
     await FallingEdge(dut.clk_i)
 

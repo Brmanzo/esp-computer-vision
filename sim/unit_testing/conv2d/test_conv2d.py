@@ -70,8 +70,8 @@ weights = [1]*9
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p, kernel_width_p", [("16", "2", output_width(2), "3"), ("32", "1", output_width(1), "5")])
-def test_each(test_name, simulator, linewidth_px_p, in_width_p, out_width_p, kernel_width_p):
+@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth", [("16", "2", output_width(2), "3"), ("32", "1", output_width(1), "5")])
+def test_each(test_name, simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
@@ -81,24 +81,24 @@ def test_each(test_name, simulator, linewidth_px_p, in_width_p, out_width_p, ker
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p, kernel_width_p", [("16", "2", output_width(2), "3"), ("32", "1", output_width(1), "5")])
-def test_all(simulator, linewidth_px_p, in_width_p, out_width_p, kernel_width_p):
+@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth", [("16", "2", output_width(2), "3"), ("32", "1", output_width(1), "5")])
+def test_all(simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
     runner(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p", [("16", "2", output_width(2))])
-def test_lint(simulator, linewidth_px_p, in_width_p, out_width_p):
+@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut", [("16", "2", output_width(2))])
+def test_lint(simulator, LineWidthPx, WidthIn, WidthOut):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("linewidth_px_p, in_width_p, out_width_p", [("16", "2", output_width(2))])
-def test_style(simulator, linewidth_px_p, in_width_p, out_width_p):
+@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut", [("16", "2", output_width(2))])
+def test_style(simulator, LineWidthPx, WidthIn, WidthOut):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
@@ -106,7 +106,7 @@ def test_style(simulator, linewidth_px_p, in_width_p, out_width_p):
 
 class Conv2DModel():
     def __init__(self, dut, weights: List[List[int]], input_height: int):
-        self._kernel_width = int(dut.kernel_width_p.value)
+        self._kernel_width = int(dut.KernelWidth.value)
         self._f = np.ones((self._kernel_width,self._kernel_width), dtype=int)
         self._dut = dut
         self._data_o = dut.data_o
@@ -114,7 +114,7 @@ class Conv2DModel():
 
         self._q = queue.SimpleQueue()
 
-        self._input_width = int(dut.linewidth_px_p.value)
+        self._input_width = int(dut.LineWidthPx.value)
         self._input_height = input_height
 
         # We're going to initialize _buf with NaN so that we can
@@ -202,12 +202,12 @@ class Conv2DModel():
 class ReadyValidInterface():
     def __init__(self, clk, reset, ready, valid):
         self._clk_i = clk
-        self._reset_i = reset
+        self._rst_i = reset
         self._ready = ready
         self._valid = valid
 
     def is_in_reset(self):
-        if((not self._reset_i.value.is_resolvable) or self._reset_i.value  == 1):
+        if((not self._rst_i.value.is_resolvable) or self._rst_i.value  == 1):
             return True
         
     def assert_resolvable(self):
@@ -272,13 +272,13 @@ class RateGenerator():
 class OutputModel():
     def __init__(self, dut, g, l):
         self._clk_i = dut.clk_i
-        self._reset_i = dut.reset_i
+        self._rst_i = dut.rst_i
         self._dut = dut
         
-        self._rv_in = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
                                           dut.valid_i, dut.ready_o)
 
-        self._rv_out = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
                                            dut.valid_o, dut.ready_i)
         self._generator = g
         self._length = l
@@ -312,13 +312,13 @@ class OutputModel():
         self._nout = 0
         clk_i = self._clk_i
         ready_i = self._dut.ready_i
-        reset_i = self._dut.reset_i
+        rst_i = self._dut.rst_i
         valid_o = self._dut.valid_o
 
         await FallingEdge(clk_i)
 
-        if(not (reset_i.value.is_resolvable and reset_i.value == 0)):
-            await FallingEdge(reset_i)
+        if(not (rst_i.value.is_resolvable and rst_i.value == 0)):
+            await FallingEdge(rst_i)
 
         # Precondition: Falling Edge of Clock
         while self._nout < self._length:
@@ -342,10 +342,10 @@ class OutputModel():
 class InputModel():
     def __init__(self, dut, data, rate, l):
         self._clk_i = dut.clk_i
-        self._reset_i = dut.reset_i
+        self._rst_i = dut.rst_i
         self._dut = dut
         
-        self._rv_in = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
                                           dut.valid_i, dut.ready_o)
 
         self._rate = rate
@@ -380,15 +380,15 @@ class InputModel():
 
         self._nin = 0
         clk_i = self._clk_i
-        reset_i = self._dut.reset_i
+        rst_i = self._dut.rst_i
         ready_o = self._dut.ready_o
         valid_i = self._dut.valid_i
         data_i = self._dut.data_i
 
         await delay_cycles(self._dut, 1, False)
 
-        if(not (reset_i.value.is_resolvable and reset_i.value == 0)):
-            await FallingEdge(reset_i)
+        if(not (rst_i.value.is_resolvable and rst_i.value == 0)):
+            await FallingEdge(rst_i)
 
         await delay_cycles(self._dut, 2, False)
 
@@ -399,11 +399,11 @@ class InputModel():
             success = 0
             valid_i.value = produce
             # Unsigned inputs should be zero extended as to not be misinterpreted by signed acc
-            if int(self._dut.in_width_p.value) < 8:
+            if int(self._dut.WidthIn.value) < 8:
                 # only non-negative values that fit in signed w-bit (0 .. 2^(w-1)-1)
-                data_i.value = din % (1 << (int(self._dut.in_width_p.value) - 1))
+                data_i.value = din % (1 << (int(self._dut.WidthIn.value) - 1))
             else:
-                data_i.value = din % (1 << int(self._dut.in_width_p.value))
+                data_i.value = din % (1 << int(self._dut.WidthIn.value))
 
             # Wait until ready
             while(produce and not success):
@@ -422,11 +422,11 @@ class InputModel():
 class ModelRunner():
     def __init__(self, dut, model):
         self._clk_i = dut.clk_i
-        self._reset_i = dut.reset_i
+        self._rst_i = dut.rst_i
 
-        self._rv_in = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
                                           dut.valid_i, dut.ready_o)
-        self._rv_out = ReadyValidInterface(self._clk_i, self._reset_i,
+        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
                                            dut.valid_o, dut.ready_i)
 
         self._model = model
@@ -473,16 +473,16 @@ async def reset_test(dut):
     """Test for Initialization"""
     print("DUT objects:", dir(dut))
     clk_i = dut.clk_i
-    reset_i = dut.reset_i
+    rst_i = dut.rst_i
     await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, reset_i, 10)
+    await reset_sequence(clk_i, rst_i, 10)
 
 @cocotb.test
 async def single_test(dut):
     """Drive pixels until the first VALID kernel position, then expect 1 output."""
 
-    W = int(dut.linewidth_px_p.value)
-    K = int(dut.kernel_width_p.value)
+    W = int(dut.LineWidthPx.value)
+    K = int(dut.KernelWidth.value)
 
     # Number of accepted inputs until first valid output position (x=K-1, y=K-1)
     N_first = (K - 1) * W + (K - 1) + 1
@@ -504,7 +504,7 @@ async def single_test(dut):
     dut.weights_i.value = pack_weights([1] * (K * K), 2)
 
     await clock_start_sequence(dut.clk_i)
-    await reset_sequence(dut.clk_i, dut.reset_i, 10)
+    await reset_sequence(dut.clk_i, dut.rst_i, 10)
     await FallingEdge(dut.clk_i)
 
     m.start()
@@ -538,8 +538,8 @@ async def out_fuzz_test(dut):
       - N_in is inputs to drive (warmup + l_out valid outputs)
     """
 
-    W = int(dut.linewidth_px_p.value)
-    K = int(dut.kernel_width_p.value)
+    W = int(dut.LineWidthPx.value)
+    K = int(dut.KernelWidth.value)
 
     # Observe 4 rows of VALID outputs
     l_out = (W - (K - 1)) * 4
@@ -565,7 +565,7 @@ async def out_fuzz_test(dut):
     dut.weights_i.value = pack_weights([1] * (K * K), 2)
 
     await clock_start_sequence(dut.clk_i)
-    await reset_sequence(dut.clk_i, dut.reset_i, 10)
+    await reset_sequence(dut.clk_i, dut.rst_i, 10)
     await FallingEdge(dut.clk_i)
 
     m.start()
@@ -603,8 +603,8 @@ async def in_fuzz_test(dut):
       - N_in is inputs to drive (warmup + l_out valid outputs)
     """
 
-    W = int(dut.linewidth_px_p.value)
-    K = int(dut.kernel_width_p.value)
+    W = int(dut.LineWidthPx.value)
+    K = int(dut.KernelWidth.value)
 
     # Observe 4 rows of VALID outputs
     l_out = (W - (K - 1)) * 4
@@ -630,7 +630,7 @@ async def in_fuzz_test(dut):
     dut.weights_i.value = pack_weights([1] * (K * K), 2)
 
     await clock_start_sequence(dut.clk_i)
-    await reset_sequence(dut.clk_i, dut.reset_i, 10)
+    await reset_sequence(dut.clk_i, dut.rst_i, 10)
     await FallingEdge(dut.clk_i)
 
     m.start()
@@ -668,8 +668,8 @@ async def inout_fuzz_test(dut):
       - timeouts scale with both fuzz rates
     """
 
-    W = int(dut.linewidth_px_p.value)
-    K = int(dut.kernel_width_p.value)
+    W = int(dut.LineWidthPx.value)
+    K = int(dut.KernelWidth.value)
 
     # Observe 4 rows of VALID outputs (same convention)
     l_out = (W - (K - 1)) * 4
@@ -697,7 +697,7 @@ async def inout_fuzz_test(dut):
     dut.weights_i.value = pack_weights([1] * (K * K), 2)
 
     await clock_start_sequence(dut.clk_i)
-    await reset_sequence(dut.clk_i, dut.reset_i, 10)
+    await reset_sequence(dut.clk_i, dut.rst_i, 10)
 
     # Wait one cycle for reset to start
     await FallingEdge(dut.clk_i)
@@ -736,8 +736,8 @@ async def inout_fuzz_test(dut):
 async def full_bw_test(dut):
     """Transmit data at 100% line rate; verify l_out valid outputs."""
 
-    W = int(dut.linewidth_px_p.value)
-    K = int(dut.kernel_width_p.value)
+    W = int(dut.LineWidthPx.value)
+    K = int(dut.KernelWidth.value)
 
     # Observe 4 rows of VALID outputs (same convention as before)
     l_out = (W - (K - 1)) * 4
@@ -770,7 +770,7 @@ async def full_bw_test(dut):
     dut.weights_i.value = pack_weights([1] * (K * K), 2)
 
     await clock_start_sequence(dut.clk_i)
-    await reset_sequence(dut.clk_i, dut.reset_i, 10)
+    await reset_sequence(dut.clk_i, dut.rst_i, 10)
     await FallingEdge(dut.clk_i)
 
     m.start()
@@ -801,8 +801,8 @@ async def full_bw_test(dut):
 async def full_bw_Gx_test(dut):
     """Transmit data at 100% line rate with Gx kernel; verify l_out valid outputs."""
 
-    W = int(dut.linewidth_px_p.value)
-    K = int(dut.kernel_width_p.value)
+    W = int(dut.LineWidthPx.value)
+    K = int(dut.KernelWidth.value)
     rate = 1
 
     # Observe 4 rows of VALID outputs
@@ -846,7 +846,7 @@ async def full_bw_Gx_test(dut):
     dut.weights_i.value = pack_weights(flat_w, 2)
 
     await clock_start_sequence(dut.clk_i)
-    await reset_sequence(dut.clk_i, dut.reset_i, 10)
+    await reset_sequence(dut.clk_i, dut.rst_i, 10)
     await FallingEdge(dut.clk_i)
 
     m.start()
@@ -878,8 +878,8 @@ async def full_bw_Gx_test(dut):
 async def full_bw_Gy_test(dut):
     """Transmit data at 100% line rate with Gy kernel; verify l_out valid outputs."""
 
-    W = int(dut.linewidth_px_p.value)
-    K = int(dut.kernel_width_p.value)
+    W = int(dut.LineWidthPx.value)
+    K = int(dut.KernelWidth.value)
     rate = 1
 
     # Observe 4 rows of VALID outputs
@@ -923,7 +923,7 @@ async def full_bw_Gy_test(dut):
     dut.weights_i.value = pack_weights(flat_w, 2)
 
     await clock_start_sequence(dut.clk_i)
-    await reset_sequence(dut.clk_i, dut.reset_i, 10)
+    await reset_sequence(dut.clk_i, dut.rst_i, 10)
     await FallingEdge(dut.clk_i)
 
     m.start()

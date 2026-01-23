@@ -19,7 +19,7 @@ module mag #(
 
   elastic
   #(.Width((Width)*2)
-   ,.DatapathGate(1)
+   ,.DatapathGate(1'b1)
    ,.DatapathReset(1)
    )
   elastic_inst
