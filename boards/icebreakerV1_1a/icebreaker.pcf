@@ -30,8 +30,8 @@ set_io -nowarn led_o[4]                23 # L4
 set_io -nowarn led_o[5]                21 # L5
 
 # PMOD 1A
-set_io -nowarn ESP_RX_i                 4
-set_io -nowarn ESP_TX_o                 2
+set_io -nowarn esp_rx_i                 4
+set_io -nowarn esp_tx_o                 2
 set_io -nowarn uart_rts_o              47
 set_io -nowarn ssd_o[3]                45
 set_io -nowarn ssd_o[4]                 3

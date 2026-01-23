@@ -1,5 +1,6 @@
 // This module implements an inverter
-module inv (
+module inv #(
+)  (
    input  [0:0] a_i
   ,output [0:0] b_o
 );

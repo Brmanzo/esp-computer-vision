@@ -72,8 +72,8 @@ module conv2d #(
   /* ------------------------------------ FIFO RAM Instantiations ------------------------------------ */
   // Both RAMs step forward with each new pixel input (in_fire) so that delay is exactly one row each.
   // RAM 1 produces a delay of one row. Reads off of data_i as the bottom row of the kernel receives new data.
-  logic [WidthIn-1:0] ram_ol [KernelWidth];
-  assign ram_ol[0] = data_i;
+  logic [WidthIn-1:0] mem [KernelWidth];
+  assign mem[0] = data_i;
 
   generate
     for (genvar i = 0; i < KernelWidth - 1; i++) begin : gen_buffer
@@ -83,11 +83,11 @@ module conv2d #(
       ) ram_1_delaybuffer_inst (
          .clk_i  (clk_i)
         ,.rst_i  (rst_i)
-        ,.data_i (ram_ol[i])
+        ,.data_i (mem[i])
         ,.valid_i(in_fire)
         ,.ready_o()
         ,.valid_o()
-        ,.data_o (ram_ol[i+1])
+        ,.data_o (mem[i+1])
         ,.ready_i(1'b1)
       );
     end
@@ -116,7 +116,7 @@ module conv2d #(
         // Load new data into the rightmost column of the window
         // Top line <- Twice seen data from second RAM
         for (int r = 0; r < KernelWidth; r++) begin
-          window[r][KernelWidth-1] <= ram_ol[KernelWidth-1 - r];
+          window[r][KernelWidth-1] <= mem[KernelWidth-1 - r];
         end
     end
   end
