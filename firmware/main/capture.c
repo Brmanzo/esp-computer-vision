@@ -82,7 +82,7 @@ static void uart_rx_task(void *arg)
             for (int i = 0; i < r; i++) {
                 uint8_t b = ctx->dst[ctx->got + i];
                 if (saw_0d) {
-                    if (b == 0x0A) {
+                    if (b == 0x5A) {
                         ctx->got += i + 1;   // include tail
                         ctx->done = true;
                         vTaskDelete(NULL);
@@ -90,7 +90,7 @@ static void uart_rx_task(void *arg)
                     }
                     saw_0d = false;
                 }
-                if (b == 0x0D) {
+                if (b == 0xA5) {
                     saw_0d = true;
                 }
             }

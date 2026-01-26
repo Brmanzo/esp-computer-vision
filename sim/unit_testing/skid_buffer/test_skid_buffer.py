@@ -15,22 +15,14 @@ import pytest
 
 import cocotb
 
-from cocotb.clock import Clock
-from cocotb.regression import TestFactory
 from cocotb.utils import get_sim_time
-from cocotb.triggers import Timer, ClockCycles, RisingEdge, FallingEdge, with_timeout
-from cocotb.types import LogicArray, Range
+from cocotb.triggers import Timer,  RisingEdge, FallingEdge, with_timeout
 from cocotb.result import SimTimeoutError
-
-from cocotb_test.simulator import run
-
-from cocotbext.axi import AxiLiteBus, AxiLiteMaster, AxiStreamSink, AxiStreamMonitor, AxiStreamBus
    
 import random
 random.seed(42)
 
 import queue
-from itertools import product
 
 timescale = "1ps/1ps"
 tests = ['reset_test'
@@ -46,8 +38,8 @@ tests = ['reset_test'
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize("Width, Depth, HeadRoom", [(8, 16, 4), (8, 32, 8)])  
-def test_each(simulator, test_name, Width, Depth, HeadRoom):
-    # This line must be first
+def test_each(simulator, test_name):
+    # retrieves simulators from simulator pytest param
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
@@ -58,7 +50,7 @@ def test_each(simulator, test_name, Width, Depth, HeadRoom):
 
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize("Width, Depth, HeadRoom", [(8, 16, 4), (8, 32, 8)])
-def test_all(simulator, Width, Depth, HeadRoom):
+def test_all(simulator):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
@@ -404,7 +396,6 @@ class ModelRunner():
                 f"occ_model={model._occupancy} occ_hw={occ_hw} "
                 f"expected={exp} got={got}"
             )
-
 
     async def _run_input(self, model):
         while True:

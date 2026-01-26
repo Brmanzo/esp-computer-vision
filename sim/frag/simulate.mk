@@ -5,8 +5,7 @@ REPO_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
 -include $(REPO_ROOT)/config.mk
 export PYTHONPATH := $(REPO_ROOT)/sim/util:$(PYTHONPATH)
 
-# If you have iverilog or verilator installed in a non-standard path,
-# you can override these to specify the path to the executable.
+# Default tool locations (can be overridden in environment or config.mk)
 IVERILOG  ?= iverilog
 VERILATOR ?= verilator
 VERIBLE   ?= verible-verilog-lint
@@ -29,11 +28,12 @@ LINT_SOURCES := $(if $(FILE_ABS),$(FILE_ABS),$(SIM_SOURCES))
 
 all: help
 
+ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 # Run both simulators
 test: results.json
 
 results.json: $(FILELIST) $(SIM_SOURCES)
-	$(PYTHON3) -m pytest -rA
+	$(PYTHON3) -m pytest -rA $(if $(ARGS),-k "$(ARGS)",)
 
 # lint runs the Verilator linter on your code.
 lint: lint-verilator lint-verible

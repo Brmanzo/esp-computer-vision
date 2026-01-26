@@ -1,11 +1,14 @@
-# test_mag.py
+# test_deframer.py
+from decimal import Decimal
 import git
 import os
 import sys
+import git
+import math
 import numpy as np
 import queue
+from functools import reduce
 from itertools import product
-from decimal import Decimal
 
 # I don't like this, but it's convenient.
 _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
@@ -22,6 +25,7 @@ import cocotb
 from cocotb.utils import get_sim_time
 from cocotb.triggers import Timer, RisingEdge, FallingEdge, with_timeout
 from cocotb.result import SimTimeoutError
+
    
 import random
 random.seed(42)
@@ -40,108 +44,157 @@ def float_to_fxp(value, frac):
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-def test_each(test_name, simulator):
+@pytest.mark.parametrize("UnpackedWidth, PackedNum, PacketLenBytes", [("2", "4", "10"), ("1", "8", "10")])
+def test_each(test_name, simulator, UnpackedWidth, PackedNum, PacketLenBytes):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
-    runner(simulator, timescale, tbpath, parameters, testname=test_name, pymodule="test_mag")
+    runner(simulator, timescale, tbpath, parameters, testname=test_name, pymodule="test_deframer")
 
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-def test_all(simulator):
+@pytest.mark.parametrize("UnpackedWidth, PackedNum, PacketLenBytes", [("2", "4", "10"), ("1", "8", "10")])
+def test_all(simulator, UnpackedWidth, PackedNum, PacketLenBytes):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
-    runner(simulator, timescale, tbpath, parameters, pymodule="test_mag")
+    runner(simulator, timescale, tbpath, parameters, pymodule="test_deframer")
 
 @pytest.mark.parametrize("simulator", ["verilator"])
 def test_lint(simulator):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
-    lint(simulator, timescale, tbpath, parameters, pymodule="test_mag")
+    lint(simulator, timescale, tbpath, parameters, pymodule="test_deframer")
 
 @pytest.mark.parametrize("simulator", ["verilator"])
 def test_style(simulator):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
-    lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"], pymodule="test_mag")
+    lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"], pymodule="test_deframer")
 
+class DeframerModel():
+    HEADER0 = 0
+    HEADER1 = 1
+    FORWARD = 2
 
-class MagModel():
     def __init__(self, dut):
         self._dut = dut
-        self._mag_o = dut.mag_o
-        self._gx_i = dut.gx_i
-        self._gy_i = dut.gy_i
+        self._unpacked_o = dut.unpacked_o
+        self._data_i = dut.data_i
+        self._UnpackedWidth = dut.UnpackedWidth.value
+        self._PackedNum = dut.PackedNum.value
+        self._PackedWidth = dut.PackedWidth.value
+        self._PacketLenBytes = dut.PacketLenBytes.value
+        self._HeaderByte0 = dut.HeaderByte0.value
+        self._HeaderByte1 = dut.HeaderByte1.value
 
+        self._mask = (1 << self._UnpackedWidth) - 1
+        self._step = 0
+        self._packed_buf = None
+
+        self._state = 0
+        self._remaining = dut.PacketLenBytes.value * dut.PackedNum.value
+        
         self._deqs = 0
         self._enqs = 0
-
-        self._tol = 0.05
 
         self._q = queue.SimpleQueue()
     
     def consume(self):
-        assert_resolvable(self._gx_i)
-        assert_resolvable(self._gy_i)
-        self._q.put((self._gx_i.value, self._gy_i.value))
-        self._enqs += 1
+        assert_resolvable(self._data_i)
+        b = int(self._data_i.value) & ((1 << (self._PackedWidth)) - 1)
+        # Detecting first byte
+        if self._state == self.HEADER0:
+            if b == self._HeaderByte0:
+                self._state = self.HEADER1
+                return False
+            else:
+                self._state = self.HEADER0
+                return False
+        # Detecting second byte after the first byte
+        elif self._state == self.HEADER1:
+            if b == self._HeaderByte1:
+                self._state = self.FORWARD
+                return False
+            elif b == self._HeaderByte0:
+                # Stay in HEADER1 if we see another HEADER0
+                self._state = self.HEADER1
+                return False
+            else:
+                # Reset if unexpected byte
+                self._state = self.HEADER0
+        # Once both bytes detected, enqueue the rest of the packet
+        elif self._state == self.FORWARD and self._remaining != 0:
+            self._q.put(b)
+            self._remaining -= 1
+            self._enqs += 1
+            return True
+        else:
+            # Reset if unexpected byte
+            self._state = self.HEADER0
+            self._remaining = self._PacketLenBytes * self._PackedNum.value
+            return False
+
+    def ensure_packed_buf(self):
+        '''Checks for latest packed buffer state in queue before popping'''
+        if self._packed_buf is None:
+            assert (self._q.qsize() > 0), "Error! No input data available to pack"
+            self._packed_buf = self._q.get()
+
+    def _expected_from_byte(self, b: int, step: int) -> int:
+        '''Masks the input byte to get the expected unpacked output for the given step'''
+        return (b >> (self._UnpackedWidth * step)) & self._mask
 
     def produce(self):
+
+        self.ensure_packed_buf()
+        assert_resolvable(self._unpacked_o)
+
+        got = int(self._unpacked_o.value) & self._mask
+        if self._packed_buf is None:
+            raise RuntimeError("Error! No packed buffer available to unpack")
+        expected = self._expected_from_byte(self._packed_buf, self._step) & self._mask
+
         self._deqs += 1
 
-        gx = self._gx_i.value.integer
-        gy = self._gy_i.value.integer
+        print(f'packed_byte: 0x{self._packed_buf:02X} step={self._step}')
+        print(f'Got unpacked: {got}, Expected unpacked: {expected}')
 
-        assert_resolvable(self._mag_o)
-        got = self._mag_o.value.integer
-        if(gx > (2 * gy)):
-            expected = gx
-        elif(gy > (2 * gx)):
-            expected = gy
-        else:
-            expected = int(gy + (gx/2))
-        # expected = round((math.sqrt(self._gx_i.value.integer**2 + self._gy_i.value.integer**2)) * 2) / 2
-        if np.isnan(expected):
-            return
-
-        print(f'gx_i: {self._gx_i.value.integer}, gy_i: {self._gy_i.value.integer}')
-        print(f'Got magnitude: {got}, Expected magnitude: {expected}')
-        assert abs((got > expected * (1 - self._tol)) or (got < expected * (1 + self._tol))), (
-            f"Error! Output value on iteration {self._deqs} does not match expected. "
-            f"Expected: {expected}. Got: {got}"
+        assert got == expected, (
+            f"Mismatch on output #{self._deqs}: expected {expected}, got {got} "
+            f"(packed=0x{self._packed_buf:02X}, step={self._step})"
         )
+        # Wrap around step
+        self._step = (self._step + 1) % int(self._PackedNum)
 
+        if self._step == 0:
+            self._packed_buf = None
 
 class ReadyValidInterface():
-    def __init__(self, clk, reset, ready, valid):
+    def __init__(self, clk, reset, valid, ready):
         self._clk_i = clk
         self._rst_i = reset
         self._ready = ready
         self._valid = valid
 
     def is_in_reset(self):
-        '''If system is resetting or uninitialized, return true. '''
-        if((not self._rst_i.value.is_resolvable) or self._rst_i.value == 1):
+        if (not self._rst_i.value.is_resolvable) or int(self._rst_i.value) == 1:
             return True
         return False
         
     def assert_resolvable(self):
-        '''Assert that valid and ready are initialized. '''
         if(not self.is_in_reset()):
             assert_resolvable(self._valid)
             assert_resolvable(self._ready)
 
     def is_handshake(self):
-        '''If valid and ready are both high, return true. '''
-        return ((self._valid.value == 1) and (self._ready.value == 1))
+        return (int(self._valid.value) == 1) and (int(self._ready.value) == 1)
 
     async def _handshake(self):
-        '''On next next rising clock edge, if not resetting and valid and ready initialized, yield on handshake. '''
         while True:
             await RisingEdge(self._clk_i)
             if (not self.is_in_reset()):
@@ -151,7 +204,7 @@ class ReadyValidInterface():
 
     async def handshake(self, ns):
         """Wait for a handshake, raising an exception if it hasn't
-        happened after ns nanoseconds of simulation time. """
+        happened after ns nanoseconds of simulation time"""
 
         # If ns is none, wait indefinitely
         if(ns):
@@ -159,20 +212,42 @@ class ReadyValidInterface():
         else:
             await self._handshake()
 
+class RandomHeaderGenerator():
+    '''After a predefined delay, outputs the deframer bytes, then random data'''
+    def __init__(self, dut, delay):
+        self._dut = dut
+        self._width_p = dut.PackedWidth.value
+        self._header_delay = delay # Cycles until header appears
+        
+    def generate(self):
+        if self._header_delay > 0:
+            x_i = random.randint(0, (1 << self._width_p) - 1)
+            self._header_delay -= 1
+            return (x_i)
+        elif self._header_delay == 0:
+            self._header_delay -= 1
+            return int(self._dut.HeaderByte0.value) & ((1 << self._width_p) - 1)
+        elif self._header_delay == -1:
+            self._header_delay -= 1
+            return int(self._dut.HeaderByte1.value) & ((1 << self._width_p) - 1)
+        else:
+            x_i = random.randint(0, (1 << self._width_p) - 1)
+            return (x_i)
+    
 class RandomDataGenerator():
     def __init__(self, dut):
         self._dut = dut
+        self._width_p = dut.PackedWidth.value
 
     def generate(self):
-        a_i = random.randint(0, (1 << self._dut.Width.value) - 1)
-        b_i = random.randint(0, (1 << self._dut.Width.value) - 1)
-        return (a_i, b_i)
+        x_i = random.randint(0, (1 << self._width_p) - 1)
+        return (x_i)
     
 class EdgeCaseGenerator():
 
     def __init__(self, dut):
         self._dut = dut
-        limits = [0, 1, (1 << self._dut.width_p.value) - 1]
+        limits = [0, 1, (1 << self._dut.PackedWidth.value.integer) - 1]
         self._pairs = list(product(limits, limits))
         self._loc = 0
 
@@ -222,7 +297,12 @@ class OutputModel():
         self._clk_i = dut.clk_i
         self._rst_i = dut.rst_i
         self._dut = dut
+        
+        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
+                                          dut.valid_i, dut.ready_o)
 
+        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
+                                           dut.valid_o, dut.ready_i)
         self._generator = g
         self._length = l
 
@@ -277,9 +357,10 @@ class OutputModel():
                 assert_resolvable(valid_o)
                 #assert valid_o.value.is_resolvable, f"Unresolvable value in valid_o (x or z in some or all bits) at Time {get_sim_time(units='ns')}ns."
 
-                success = True if (valid_o.value == 1) else False
-                if (success):
+                fire_out = (int(valid_o.value) == 1) and (int(ready_i.value) == 1)
+                if fire_out:
                     self._nout += 1
+                    success = 1
 
             await FallingEdge(clk_i)
         return self._nout
@@ -289,6 +370,9 @@ class InputModel():
         self._clk_i = dut.clk_i
         self._rst_i = dut.rst_i
         self._dut = dut
+        
+        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
+                                          dut.valid_i, dut.ready_o)
 
         self._rate = rate
         self._data = data
@@ -327,8 +411,7 @@ class InputModel():
         rst_i = self._dut.rst_i
         ready_o = self._dut.ready_o
         valid_i = self._dut.valid_i
-        gx_i = self._dut.gx_i
-        gy_i = self._dut.gy_i
+        data_i = self._dut.data_i
 
         await delay_cycles(self._dut, 1, False)
 
@@ -342,22 +425,20 @@ class InputModel():
         # Precondition: Falling Edge of Clock
         while self._nin < self._length:
             produce = self._rate.generate()
-            success = 0
             valid_i.value = produce
-            gx_i.value = data[0]
-            gy_i.value = data[1]
+            data_i.value = data
 
-            # Wait until ready
-            while(produce and not success):
-                await RisingEdge(clk_i)
-                assert_resolvable(ready_o)
-                #assert ready_o.value.is_resolvable, f"Unresolvable value in ready_o (x or z in some or all bits) at Time {get_sim_time(units='ns')}ns."
+            
+            await RisingEdge(clk_i)
+            assert_resolvable(ready_o)
 
-                success = True if (ready_o.value == 1) else False
-                if (success):
-                    self._nin += 1
+            fire_in = (int(valid_i.value) == 1) and (int(ready_o.value) == 1)
+            if(fire_in):
+                self._nin += 1
+                data = self._data.generate()
 
             await FallingEdge(clk_i)
+            
         return self._nin
 
 class ModelRunner():
@@ -365,6 +446,7 @@ class ModelRunner():
 
         self._clk_i = dut.clk_i
         self._rst_i = dut.rst_i
+        self._emit_cycles = dut.PackedNum.value
 
         self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
                                           dut.valid_i, dut.ready_o)
@@ -375,25 +457,25 @@ class ModelRunner():
 
         self._events = queue.SimpleQueue()
 
-        self._coro_run_input = None
-        self._coro_run_output = None
+        self._coro_run_in = None
+        self._coro_run_out = None
 
     def start(self):
-        """Start model coroutines. """
-        if self._coro_run_input is not None:
+        """Start model"""
+        if self._coro_run_in is not None:
             raise RuntimeError("Model already started")
         self._coro_run_input = cocotb.start_soon(self._run_input(self._model))
         self._coro_run_output = cocotb.start_soon(self._run_output(self._model))
 
     async def _run_input(self, model):
-        ''' Upon input handshake, trigger model consume. '''
         while True:
             await self._rv_in.handshake(None)
-            self._events.put(get_sim_time(units='ns'))
-            self._model.consume()
+            forwarded = self._model.consume()
+            if forwarded:
+                for _ in range(self._emit_cycles): # Four valid outputs per valid input
+                    self._events.put(get_sim_time(units='ns'))
 
     async def _run_output(self, model):
-        ''' Upon output handshake, trigger model produce. '''
         while True:
             await self._rv_out.handshake(None)
             assert (self._events.qsize() > 0), "Error! Module produced output without valid input"
@@ -424,8 +506,8 @@ async def init_test(dut):
     clk_i = dut.clk_i
     rst_i = dut.rst_i
 
-    dut.gx_i.value = 0
-    dut.gy_i.value = 0
+    dut.data_i.value = 0
+
     dut.ready_i.value = 0
     dut.valid_i.value = 0
 
@@ -435,21 +517,27 @@ async def init_test(dut):
 
     await Timer(Decimal(1.0), units="ns")
 
-    assert_resolvable(dut.mag_o)
+    assert_resolvable(dut.unpacked_o)
 
 @cocotb.test
 async def single_test(dut):
     """Test to transmit a single element in at most two cycles."""
 
+    delay = 10
+    header_cycles = 2
+    eg = RandomHeaderGenerator(dut, delay)
+    
     l = 1
-    eg = RandomDataGenerator(dut)
-
+    n_in = delay + header_cycles + l
+    n_out = l * int(dut.PackedNum.value)
     rate = 1
+
+    timeout = delay + header_cycles + 1 + n_out + 20
    
-    model = MagModel(dut)
+    model = DeframerModel(dut)
     m = ModelRunner(dut, model)
-    om = OutputModel(dut, RateGenerator(dut, 1), l)
-    im = InputModel(dut, eg, RateGenerator(dut, rate), l)
+    om = OutputModel(dut, RateGenerator(dut, 1), n_out)
+    im = InputModel(dut, eg, RateGenerator(dut, rate), n_in)
 
     clk_i = dut.clk_i
     rst_i = dut.rst_i
@@ -475,12 +563,12 @@ async def single_test(dut):
     await RisingEdge(dut.valid_i)
     await RisingEdge(dut.clk_i)
 
-    timeout = False
+    timed_out = False
     try:
-        await om.wait(2)
+        await om.wait(timeout + 10)
     except:
-        timeout = True
-    assert not timeout, "Error! Maximum latency expected for this circuit is one cycle."
+        timed_out = True
+    assert not timed_out, "Error! Maximum latency expected for this fifo is two cycles."
 
     dut.valid_i.value = 0
     dut.ready_i.value = 0
@@ -489,16 +577,19 @@ async def single_test(dut):
 @cocotb.test
 async def full_bw_test(dut):
     """Input random data elements at 100% line rate"""
-
-    eg = RandomDataGenerator(dut)
+    delay = 10
+    header_cycles = 2
+    eg = RandomHeaderGenerator(dut, delay)
     l = 10
+    n_in = delay + header_cycles + l
+    n_out = l * int(dut.PackedNum.value)
     rate = 1
 
-    timeout = l + 4
+    timeout = delay + header_cycles + 1 + n_out + 20
 
-    m = ModelRunner(dut, MagModel(dut))
-    om = OutputModel(dut, RateGenerator(dut, rate), l)
-    im = InputModel(dut, eg, RateGenerator(dut, rate), l)
+    m = ModelRunner(dut, DeframerModel(dut))
+    om = OutputModel(dut, RateGenerator(dut, rate), n_out)
+    im = InputModel(dut, eg, RateGenerator(dut, rate), n_in)
 
     clk_i = dut.clk_i
     rst_i = dut.rst_i
@@ -530,16 +621,19 @@ async def full_bw_test(dut):
 @cocotb.test
 async def fuzz_random_test(dut):
     """Add random data elements at 50% line rate"""
-
-    eg = RandomDataGenerator(dut)
+    delay = 10
+    header_cycles = 2
+    eg = RandomHeaderGenerator(dut, delay)
     l = 10
+    n_in = delay + header_cycles + l
+    n_out = l * int(dut.PackedNum.value)
     rate = 0.5
 
-    timeout = l * int(1/rate) * int(1/rate) 
+    timeout = delay + header_cycles + 1/rate + n_out/rate + 40
 
-    m = ModelRunner(dut, MagModel(dut))
-    om = OutputModel(dut, RateGenerator(dut, rate), l)
-    im = InputModel(dut, eg, RateGenerator(dut, rate), l)
+    m = ModelRunner(dut, DeframerModel(dut))
+    om = OutputModel(dut, RateGenerator(dut, rate), n_out)
+    im = InputModel(dut, eg, RateGenerator(dut, rate), n_in)
 
     clk_i = dut.clk_i
     rst_i = dut.rst_i

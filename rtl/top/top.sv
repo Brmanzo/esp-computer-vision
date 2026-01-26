@@ -1,5 +1,5 @@
 // top-level design file for the icebreaker FPGA board
-`define ESP
+`define ESP // Comment out this line to target USB-to-UART bridge instead of ESP32c3
 module top #(
 )  (
    input [0:0] clk_12mhz_i
@@ -96,12 +96,12 @@ wire [0:0] uart_rx;
 wire [0:0] uart_tx;
 
 // Either synthesize to GPIO for ESP32c3
-// or synthesize to USB-to-UART bridge for python demo
 `ifdef ESP
   assign uart_rx = esp_rx_i;
   assign uart_tx = esp_tx_o;
 
   assign tx_serial_o = 1'b1;
+// or synthesize to USB-to-UART bridge for python demo
 `else
   assign uart_rx = rx_serial_i;
   assign uart_tx = tx_serial_o;

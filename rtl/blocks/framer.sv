@@ -5,8 +5,8 @@ module framer #(
   ,parameter int unsigned  PackedNum      = 8
   ,parameter int unsigned  PackedWidth    = UnpackedWidth * PackedNum
   ,parameter int unsigned  PacketLenElems = 1024 // Number of packed elements per packet
-  ,parameter logic [7:0]   TailByte0      = 8'h0D
-  ,parameter logic [7:0]   TailByte1      = 8'h0A
+  ,parameter logic [7:0]   TailByte0      = 8'hA5
+  ,parameter logic [7:0]   TailByte1      = 8'h5A
   ,localparam int unsigned CountWidth     = $clog2(PacketLenElems)
 )  (
    input  [0:0] clk_i
