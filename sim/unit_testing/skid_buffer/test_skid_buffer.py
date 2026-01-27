@@ -38,7 +38,7 @@ tests = ['reset_test'
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize("Width, Depth, HeadRoom", [(8, 16, 4), (8, 32, 8)])  
-def test_each(simulator, test_name):
+def test_each(simulator, test_name, Width, Depth, HeadRoom):
     # retrieves simulators from simulator pytest param
     parameters = dict(locals())
     del parameters['test_name']
@@ -50,7 +50,7 @@ def test_each(simulator, test_name):
 
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize("Width, Depth, HeadRoom", [(8, 16, 4), (8, 32, 8)])
-def test_all(simulator):
+def test_all(simulator, Width, Depth, HeadRoom):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']

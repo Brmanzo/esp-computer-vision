@@ -9,14 +9,17 @@ RTL designed and tested on icebreaker V1.1a FPGA for hardware acceleration.
   - [Table of Contents](#table-of-contents)
   - [Overview](#overview)
   - [Features So Far](#features-so-far)
-  - [Installation](#installation)
+  - [Firmware Installation](#firmware-installation)
+  - [Hardware Installation](#hardware-installation)
+    - [Synthesizing for Icebreaker Board](#synthesizing-for-icebreaker-board)
+    - [Unit Testing](#unit-testing)
   - [Usage](#usage)
   - [License](#license)
 
 ## Overview
 
 My main goal for this project is to perform inference using the limited resources of the esp32c3 through compression and hardware acceleration.<br>
-Driver software is adapted from https://github.com/ArduCAM/RPI-Pico-Cam.
+Driver firmware is adapted from https://github.com/ArduCAM/RPI-Pico-Cam.
 Dependencies limited to Espressif__esp_jpeg and Espressif__esp32-camera.
 
 ## Features So Far
@@ -27,7 +30,7 @@ Dependencies limited to Espressif__esp_jpeg and Espressif__esp32-camera.
 - Motion detection by diffing successive frames
 - Edge detection via 3x3 convolution with Sobel filters
 
-## Software Installation
+## Firmware Installation
 Espressif toolchain version: ESP-IDF v6.1-dev-1280-gb33c9cd7ce
 ```bash
 # Clone the repository

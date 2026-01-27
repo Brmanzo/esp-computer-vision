@@ -110,8 +110,8 @@ wire [0:0] uart_tx;
 `endif
 
   uart_axis #(
-     .ImageWidth     (320)
-    ,.ImageHeight    (240)
+     .WidthIn        (320)
+    ,.HeightIn       (240)
     ,.KernelWidth    (3)
     ,.WeightWidth    (2)
     ,.BusWidth       (8)

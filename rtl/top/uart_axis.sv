@@ -1,22 +1,23 @@
 `timescale 1ns / 1ps
 /* verilator lint_off PINCONNECTEMPTY */
 module uart_axis #(
-   parameter int unsigned ImageWidth     = 320
-  ,parameter int unsigned ImageHeight    = 240
+   parameter int unsigned WidthIn        = 320
+  ,parameter int unsigned HeightIn       = 240
   ,parameter int unsigned KernelWidth    = 3
   ,parameter int unsigned WeightWidth    = 2
   ,parameter int unsigned BusWidth       = 8
   ,parameter int unsigned QuantizedWidth = 1
   ,parameter int unsigned PackedNum      = BusWidth / QuantizedWidth
 
+  ,localparam int unsigned BytesIn      = WidthIn * HeightIn / PackedNum
   ,localparam int unsigned KernelArea   = KernelWidth * KernelWidth
   ,localparam int unsigned MaxInput     = (1 << QuantizedWidth) - 1
   ,localparam int unsigned MaxWeight    = (1 << (WeightWidth - 1)) - 1
   ,localparam int unsigned WorstCaseSum = KernelArea * MaxInput * MaxWeight
   ,localparam int unsigned ConvOutWidth = $clog2(WorstCaseSum + 1) + 1 // Plus signed bit
 
-  ,localparam int unsigned WidthOut  = ImageWidth - (KernelWidth - 1)
-  ,localparam int unsigned HeightOut = ImageHeight - (KernelWidth - 1)
+  ,localparam int unsigned WidthOut  = WidthIn - (KernelWidth - 1)
+  ,localparam int unsigned HeightOut = HeightIn - (KernelWidth - 1)
 )  (
    input  [0:0] clk_i // 25 MHz Clock
   ,input  [0:0] rst_i
@@ -39,10 +40,10 @@ module uart_axis #(
   wire [0:0]                skid_valid;
   wire [BusWidth-1:0]       skid_data;
 
-  // Unpacker Wires
-  wire [0:0]                unpack_ready;
-  wire [0:0]                unpack_valid;
-  wire [QuantizedWidth-1:0] unpacked_data;
+  // Deframer Wires
+  wire [0:0]                deframer_ready;
+  wire [0:0]                deframer_valid;
+  wire [QuantizedWidth-1:0] deframer_data;
 
   // conv2d Wires
   wire [0:0]              gx_ready, gy_ready;
@@ -145,31 +146,33 @@ module uart_axis #(
     // Skid Buffer to Unpacker
     ,.data_o (skid_data)
     ,.valid_o(skid_valid)
-    ,.ready_i(unpack_ready)
+    ,.ready_i(deframer_ready)
     ,.rts_o  (uart_rts_o)
   );
 
-  // Unpacker to unpack 4 2-bit values from each 8-bit UART input
-  unpacker #(
+  deframer #(
      .UnpackedWidth(QuantizedWidth)
-    ,.PackedNum    (PackedNum)
-  ) unpacker_inst (
-     .clk_i     (clk_i)
-    ,.rst_i     (rst_i)
-    // Skid Buffer to Unpacker
-    ,.ready_o   (unpack_ready)
-    ,.valid_i   (skid_valid)
-    ,.packed_i  (skid_data)
-    // Unpacker to conv2d Filters
-    ,.ready_i   (gx_ready & gy_ready)
-    ,.valid_o   (unpack_valid)
-    ,.unpacked_o(unpacked_data)
+    ,.PackedNum(PackedNum)
+    ,.PacketLenElems(BytesIn)
+    ,.HeaderByte0(8'hA5)
+    ,.HeaderByte1(8'h5A)
+  ) deframer_inst (
+     .clk_i(clk_i)
+    ,.rst_i(rst_i)
+
+    ,.valid_i(skid_valid)
+    ,.ready_o(deframer_ready)
+    ,.data_i(skid_data)
+
+    ,.valid_o(deframer_valid)
+    ,.ready_i(gx_ready & gy_ready)
+    ,.unpacked_o(deframer_data)
   );
 
   // conv2d Filter for Gx gradient
   conv2d #(
-     .LineWidthPx(ImageWidth)
-    ,.LineCountPx(ImageHeight)
+     .LineWidthPx(WidthIn)
+    ,.LineCountPx(HeightIn)
     ,.WidthIn    (QuantizedWidth + 1) // Zero pad inputs
     ,.WidthOut   (ConvOutWidth)
     ,.KernelWidth(KernelWidth)
@@ -179,8 +182,8 @@ module uart_axis #(
     ,.rst_i    (rst_i)
     // Unpacker to Gx
     ,.ready_o  (gx_ready)
-    ,.valid_i  (unpack_valid)
-    ,.data_i   ({1'b0, unpacked_data}) // "Right shift" by 3 to divide by 8 and average the output
+    ,.valid_i  (deframer_valid)
+    ,.data_i   ({1'b0, deframer_data}) // "Right shift" by 3 to divide by 8 and average the output
     // Gx to Elastic Stage
     ,.ready_i  (mag_ready)
     ,.valid_o  (gx_valid)
@@ -190,8 +193,8 @@ module uart_axis #(
 
   // conv2d Filter for Gy gradient
   conv2d #(
-     .LineWidthPx(ImageWidth)
-    ,.LineCountPx(ImageHeight)
+     .LineWidthPx(WidthIn)
+    ,.LineCountPx(HeightIn)
     ,.WidthIn    (QuantizedWidth + 1)
     ,.WidthOut   (ConvOutWidth)
     ,.KernelWidth(KernelWidth)
@@ -201,8 +204,8 @@ module uart_axis #(
     ,.rst_i    (rst_i)
     // Unpacker to Gy
     ,.ready_o  (gy_ready)
-    ,.valid_i  (unpack_valid)
-    ,.data_i   ({1'b0, unpacked_data})
+    ,.valid_i  (deframer_valid)
+    ,.data_i   ({1'b0, deframer_data})
     // Gy to Elastic Stage
     ,.ready_i  (mag_ready)
     ,.valid_o  (gy_valid)
@@ -229,7 +232,7 @@ module uart_axis #(
 
   always_comb begin
     case (button_i)
-      3'b001:  begin mux_data = unpacked_data; mux_valid = unpack_valid; end
+      3'b001:  begin mux_data = deframer_data; mux_valid = deframer_valid; end
       3'b010:  begin mux_data = gx_data[2];    mux_valid = mag_valid;    end
       3'b100:  begin mux_data = gy_data[2];    mux_valid = mag_valid;    end
       default: begin mux_data = mag_data[2];   mux_valid = mag_valid;    end
@@ -239,9 +242,9 @@ module uart_axis #(
   framer #(
      .UnpackedWidth (QuantizedWidth)
     ,.PackedNum     (PackedNum)
-    ,.PacketLenElems(HeightOut * WidthOut)
-    ,.TailByte0     (8'h0D)
-    ,.TailByte1     (8'h0A)
+    ,.PacketLenElems(WidthOut * HeightOut)
+    ,.TailByte0     (8'hA5)
+    ,.TailByte1     (8'h5A)
   ) framer_inst (
      .clk_i     (clk_i)
     ,.rst_i     (rst_i)

@@ -5,9 +5,10 @@ module framer #(
   ,parameter int unsigned  PackedNum      = 8
   ,parameter int unsigned  PackedWidth    = UnpackedWidth * PackedNum
   ,parameter int unsigned  PacketLenElems = 1024 // Number of packed elements per packet
-  ,parameter logic [7:0]   TailByte0      = 8'hA5
-  ,parameter logic [7:0]   TailByte1      = 8'h5A
-  ,localparam int unsigned CountWidth     = $clog2(PacketLenElems)
+
+  ,parameter logic [PackedWidth-1:0] TailByte0 = PackedWidth'($unsigned(165)) // 0xA5
+  ,parameter logic [PackedWidth-1:0] TailByte1 = PackedWidth'($unsigned(90))  // 0x5A
+  ,localparam int unsigned CountWidth          = $clog2(PacketLenElems)
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -35,8 +36,8 @@ module framer #(
 
   /* ---------------------------------------- Counter Logic ---------------------------------------- */
   logic [CountWidth-1:0]               counter_q, counter_d;
-  wire  [CountWidth-1:0] max_count_w = CountWidth'(PacketLenElems - 1);
-  wire  [0:0] counter_max_w          = (counter_q == max_count_w);
+  wire  [CountWidth-1:0] max_count   = CountWidth'(PacketLenElems - 1);
+  wire  [0:0]            counter_max = (counter_q == max_count);
 
   // Saturating counter to track number of packed inputs
   always_ff @(posedge clk_i) begin
@@ -52,12 +53,12 @@ module framer #(
     // Increment counter when accepting input in forward state
     end else if (state_q == Forward && in_fire) begin
       // Saturate at max count
-      if (!counter_max_w) counter_d = counter_q + 1'b1;
+      if (!counter_max) counter_d = counter_q + 1'b1;
     end
   end
 
   /* ------------------------------------------- FSM Logic ------------------------------------------- */
-  wire  [0:0] last_input = in_fire && counter_max_w;
+  wire  [0:0] last_input = in_fire && counter_max;
   logic [0:0] flushing;
 
   logic [0:0] rx_complete;

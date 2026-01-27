@@ -111,21 +111,21 @@ static void uart_rx_task(void *arg)
     vTaskDelete(NULL);
 }
 
-void singleCapture(void)
-{
+void singleCapture(void) {
+
     static uint8_t capture_num = 0;
     static uint8_t adaptive_th = 0;
     uint8_t downsample_factor  = 1;
     
     const uint16_t W = QVGA_WIDTH/downsample_factor;
     const uint16_t H = QVGA_HEIGHT/downsample_factor;
-    const size_t tx_bytes = ((size_t)W * H + 7) / 8;
+    const size_t tx_bytes = (((size_t)W * H + 7) / 8) + HEADER_SIZE;
 
     // Downsample if needed
     const uint16_t W_rx = (QVGA_WIDTH/downsample_factor)  - (KERNEL_W - 1);
     const uint16_t H_rx = (QVGA_HEIGHT/downsample_factor) - (KERNEL_W - 1);
     // Received output activation is smaller
-    const size_t rx_bytes = ((size_t)W_rx * H_rx + 7) / 8; // For FPGA processed data
+    const size_t rx_bytes = ((size_t)W_rx * H_rx + 7) / 8 + FOOTER_SIZE; // For FPGA processed data
 
     arducam_camlock_take();
 
@@ -218,7 +218,7 @@ void singleCapture(void)
     /* ----------------------------- Package and Publish Frame ----------------------------- */
     const bool bypass = gpio_get_level(GPIO_BYPASS_FPGA);
 
-    const size_t payload_bytes = bypass ? tx_bytes : rx_bytes;
+    const size_t payload_bytes = bypass ? (tx_bytes-HEADER_SIZE) : rx_bytes;
     const uint16_t outW = bypass ? W    : W_rx;
     const uint16_t outH = bypass ? H    : H_rx;
 
@@ -238,7 +238,7 @@ void singleCapture(void)
     // Package 1bpp data within packet body
     if (bypass) {
         // Bypass FPGA processing and send original packed data
-        memcpy(packet + DATA_START, gray_q_tx, tx_bytes);
+        memcpy(packet + DATA_START, gray_q_tx + HEADER_SIZE, tx_bytes - HEADER_SIZE);
     } else {
         memcpy(packet + DATA_START, gray_q_rx, rx_bytes);
     }

@@ -215,8 +215,9 @@ esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint8_t* ad
     uint16_t target_h = QVGA_HEIGHT / scale;
     uint16_t target_w = QVGA_WIDTH / scale;
     // OUTPUT GEOMETRY
-    const size_t out_len = ((size_t)target_w * target_h + 7) / 8;
-    if (out_cap < out_len) return ESP_ERR_NO_MEM;
+    const size_t payload_len = ((size_t)target_w * target_h + 7) / 8;
+    const size_t total_len   = HEADER_SIZE + payload_len;
+    if (out_cap < total_len) return ESP_ERR_NO_MEM;
 
     // 1. LOCK BUS
     esp_err_t e = spi_device_acquire_bus(spi_device_handle, portMAX_DELAY);
@@ -234,7 +235,11 @@ esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint8_t* ad
     
     // Tracking State
     size_t global_byte_idx = 0;
-    size_t out_i = 0;
+
+    // Encode Header
+    out[0] = 0xA5;
+    out[1] = 0x5A;
+    size_t out_i = HEADER_SIZE;
     uint8_t acc = 0;
     int bitpos = 0;
 
@@ -257,7 +262,7 @@ esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint8_t* ad
                     if ((curr_row % scale == 0) && (curr_col % scale == 0)) {
                         acc |= (luma_to_bit(tmp[i], *adaptive_th) << bitpos);
                         if (++bitpos == 8) {
-                            if (out_i < out_len) out[out_i++] = acc;
+                            if (out_i < total_len) out[out_i++] = acc;
                             acc = 0;
                             bitpos = 0;
                         }
@@ -275,7 +280,7 @@ esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint8_t* ad
             }
             remaining -= n;
         }
-        if (bitpos != 0 && out_i < out_len) out[out_i++] = acc;
+        if (bitpos != 0 && out_i < total_len) out[out_i++] = acc;
     } 
     // MODE B: CALIBRATION (No changes needed, logic remains same)
     else {
@@ -298,7 +303,7 @@ esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint8_t* ad
             *adaptive_th = (avg > 230) ? 255 : (avg < 10 ? 10 : avg);
             printf("Calib Avg: %u\n", (unsigned)*adaptive_th);
         }
-        memset(out, 0, out_len); 
+        memset(out, 0, total_len); 
     }
 
     spi_device_release_bus(spi_device_handle);

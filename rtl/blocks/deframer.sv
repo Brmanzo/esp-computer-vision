@@ -4,9 +4,9 @@ module deframer #(
    parameter  int unsigned UnpackedWidth      = 1
   ,parameter  int unsigned PackedNum          = 8
   ,localparam int unsigned PackedWidth        = UnpackedWidth * PackedNum
-  ,parameter  int unsigned PacketLenBytes     = 1024 // Number of packed elements per packet
-  ,localparam int unsigned CountWidth         = $clog2(PacketLenBytes)
-  ,localparam logic [CountWidth-1:0] MaxCount = CountWidth'(PacketLenBytes)
+  ,parameter  int unsigned PacketLenElems     = 1024 // Number of packed elements per packet
+  ,localparam int unsigned CountWidth         = $clog2(PacketLenElems)
+  ,localparam logic [CountWidth-1:0] MaxCount = CountWidth'(PacketLenElems)
   
   ,parameter logic [PackedWidth-1:0] HeaderByte0 = PackedWidth'($unsigned(165)) // 0xA5
   ,parameter logic [PackedWidth-1:0] HeaderByte1 = PackedWidth'($unsigned(90))  // 0x5A

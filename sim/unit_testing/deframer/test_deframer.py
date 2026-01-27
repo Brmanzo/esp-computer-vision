@@ -44,8 +44,8 @@ def float_to_fxp(value, frac):
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("UnpackedWidth, PackedNum, PacketLenBytes", [("2", "4", "10"), ("1", "8", "10")])
-def test_each(test_name, simulator, UnpackedWidth, PackedNum, PacketLenBytes):
+@pytest.mark.parametrize("UnpackedWidth, PackedNum, PacketLenElems", [("2", "4", "10"), ("1", "8", "10")])
+def test_each(test_name, simulator, UnpackedWidth, PackedNum, PacketLenElems):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
@@ -55,8 +55,8 @@ def test_each(test_name, simulator, UnpackedWidth, PackedNum, PacketLenBytes):
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("UnpackedWidth, PackedNum, PacketLenBytes", [("2", "4", "10"), ("1", "8", "10")])
-def test_all(simulator, UnpackedWidth, PackedNum, PacketLenBytes):
+@pytest.mark.parametrize("UnpackedWidth, PackedNum, PacketLenElems", [("2", "4", "10"), ("1", "8", "10")])
+def test_all(simulator, UnpackedWidth, PackedNum, PacketLenElems):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
@@ -88,7 +88,7 @@ class DeframerModel():
         self._UnpackedWidth  = int(dut.UnpackedWidth.value)
         self._PackedNum      = int(dut.PackedNum.value)
         self._PackedWidth    = int(dut.PackedWidth.value)
-        self._PacketLenBytes = int(dut.PacketLenBytes.value)
+        self._PacketLenElems = int(dut.PacketLenElems.value)
         self._HeaderByte0    = int(dut.HeaderByte0.value)
         self._HeaderByte1    = int(dut.HeaderByte1.value)
 
@@ -97,7 +97,7 @@ class DeframerModel():
         self._packed_buf = None
 
         self._state = 0
-        self._remaining = self._PacketLenBytes * self._PackedNum
+        self._remaining = self._PacketLenElems * self._PackedNum
         
         self._deqs = 0
         self._enqs = 0
@@ -119,7 +119,7 @@ class DeframerModel():
         elif self._state == self.HEADER1:
             if b == self._HeaderByte1:
                 self._state = self.FORWARD
-                self._remaining = self._PacketLenBytes * self._PackedNum
+                self._remaining = self._PacketLenElems * self._PackedNum
                 return False
             elif b == self._HeaderByte0:
                 # Stay in HEADER1 if we see another HEADER0

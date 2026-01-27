@@ -6,6 +6,9 @@
 #include "driver/gpio.h"
 #include "esp_err.h"
 
+#define HEADER_SIZE  2
+#define FOOTER_SIZE  2
+
 /*spi pin source*/
 #define PIN_SCK    GPIO_NUM_4
 #define PIN_MISO   GPIO_NUM_5

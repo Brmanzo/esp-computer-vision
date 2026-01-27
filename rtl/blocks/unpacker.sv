@@ -76,9 +76,7 @@ module unpacker #(
 
   wire [ElasticWidth-1:0] elastic_in  = {last, unpacked};
   wire [ElasticWidth-1:0] elastic_out;
-  wire [0:0]              last_out;
   assign unpacked_o = elastic_out[UnpackedWidth-1:0];
-  assign last_out   = elastic_out[ElasticWidth-1];
   assign done_o = done;
   // Elastic Buffer to decouple unpacking from downstream logic
   elastic #(

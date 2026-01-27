@@ -19,5 +19,6 @@
     ,"rtl/vendor/verilog-uart/uart.v"
     ,"rtl/blocks/skid_buffer.sv"
     ,"rtl/blocks/framer.sv"
+    ,"rtl/blocks/deframer.sv"
     ]
 }

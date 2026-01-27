@@ -26,5 +26,5 @@ __pycache__/
 # ESP-IDF
 build/
 managed_components/
-software/dependencies.lock
-software/sdkconfig
+firmware/dependencies.lock
+firmware/sdkconfig
