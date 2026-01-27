@@ -38,7 +38,7 @@ random.seed(42)
 
 timescale = "1ps/1ps"
 
-tests = ['reset_test', 'init_test', 'single_test', 'full_bw_test', 'fuzz_random_test']
+tests = ['reset_test', 'init_test', 'single_test', 'full_bw_test', 'fuzz_in_test', 'fuzz_out_test', 'fuzz_random_test']
 
 def fxp_to_float(signal, frac):
     """Convert an unsigned fixed-point cocotb signal to a float."""
@@ -552,6 +552,88 @@ async def full_bw_test(dut):
     except SimTimeoutError:
         assert 0, f"Test timed out. Could not transmit {l} elements in {timeout} ns, with output rate {rate}"
 
+
+@cocotb.test
+async def fuzz_in_test(dut):
+    """Add random data elements at 50% line rate"""
+
+    eg = RandomDataGenerator(dut)
+    l = 10
+    rate = 0.5
+
+    timeout = l * int(1/rate) + 20
+
+    m = ModelRunner(dut, UnpackerModel(dut))
+    om = OutputModel(dut, RateGenerator(dut, 1), l)
+    im = InputModel(dut, eg, RateGenerator(dut, rate), l)
+
+    clk_i = dut.clk_i
+    rst_i = dut.rst_i
+
+    ready_i = dut.ready_i
+    valid_i = dut.valid_i
+
+    ready_i.value = 0
+    valid_i.value = 0
+
+    await clock_start_sequence(clk_i)
+    await reset_sequence(clk_i, rst_i, 10)
+
+    await FallingEdge(dut.clk_i)
+
+    m.start()
+    om.start()
+    im.start()
+
+    await RisingEdge(dut.ready_i)
+    await RisingEdge(dut.clk_i)
+
+    try:
+        await om.wait(timeout)
+    except SimTimeoutError:
+        assert 0, f"Test timed out. Could not transmit {l} elements in {timeout} ns, with output rate {rate}"
+
+
+
+@cocotb.test
+async def fuzz_out_test(dut):
+    """Add random data elements at 50% line rate"""
+
+    eg = RandomDataGenerator(dut)
+    l = 10
+    rate = 0.5
+
+    timeout = l * int(1/rate) + 20
+
+    m = ModelRunner(dut, UnpackerModel(dut))
+    om = OutputModel(dut, RateGenerator(dut, rate), l)
+    im = InputModel(dut, eg, RateGenerator(dut, 1), l)
+
+    clk_i = dut.clk_i
+    rst_i = dut.rst_i
+
+    ready_i = dut.ready_i
+    valid_i = dut.valid_i
+
+    ready_i.value = 0
+    valid_i.value = 0
+
+    await clock_start_sequence(clk_i)
+    await reset_sequence(clk_i, rst_i, 10)
+
+    await FallingEdge(dut.clk_i)
+
+    m.start()
+    om.start()
+    im.start()
+
+    await RisingEdge(dut.ready_i)
+    await RisingEdge(dut.clk_i)
+
+    try:
+        await om.wait(timeout)
+    except SimTimeoutError:
+        assert 0, f"Test timed out. Could not transmit {l} elements in {timeout} ns, with output rate {rate}"
 
 @cocotb.test
 async def fuzz_random_test(dut):

@@ -4,6 +4,7 @@ module unpacker #(
   ,parameter  int unsigned  PackedNum              = 4
   ,parameter  int unsigned  PackedWidth            = UnpackedWidth * PackedNum
   ,localparam int unsigned  CountWidth             = $clog2(PackedNum)
+  ,localparam int unsigned  ElasticWidth           = UnpackedWidth + 1
   ,localparam int unsigned  OffsetWidth            = $clog2(PackedWidth)
 )  (
    input  [0:0] clk_i
@@ -16,6 +17,7 @@ module unpacker #(
   ,output [UnpackedWidth-1:0] unpacked_o
   ,output [0:0]               valid_o
   ,input  [0:0]               ready_i
+  ,output [0:0]               done_o
 );
 
   /* -------------------------- Counter Logic -------------------------- */
@@ -72,19 +74,25 @@ module unpacker #(
     ,.count_o  (counter)
   );
 
+  wire [ElasticWidth-1:0] elastic_in  = {last, unpacked};
+  wire [ElasticWidth-1:0] elastic_out;
+  wire [0:0]              last_out;
+  assign unpacked_o = elastic_out[UnpackedWidth-1:0];
+  assign last_out   = elastic_out[ElasticWidth-1];
+  assign done_o = done;
   // Elastic Buffer to decouple unpacking from downstream logic
   elastic #(
-     .Width(UnpackedWidth)
+     .Width(ElasticWidth)
     ,.DatapathGate (1)
     ,.DatapathReset(1)
   ) elastic_inst (
      .clk_i  (clk_i)
     ,.rst_i  (rst_i)
-    ,.data_i (unpacked)
+    ,.data_i (elastic_in)
     ,.valid_i(unpacking)
     ,.ready_o(elastic_ready)
     ,.valid_o(valid_o)
-    ,.data_o (unpacked_o)
+    ,.data_o (elastic_out)
     ,.ready_i(ready_i)
   );
 

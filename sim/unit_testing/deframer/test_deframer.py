@@ -32,7 +32,7 @@ random.seed(42)
 
 timescale = "1ps/1ps"
 
-tests = ['reset_test', 'init_test', 'single_test', 'full_bw_test', 'fuzz_random_test']
+tests = ['reset_test', 'init_test', 'single_test', 'full_bw_test', 'fuzz_in_test', 'fuzz_out_test', 'fuzz_both_test', 'full_bw_repeat_test', 'fuzz_random_repeat_test']
 
 def fxp_to_float(signal, frac):
     """Convert an unsigned fixed-point cocotb signal to a float."""
@@ -85,19 +85,19 @@ class DeframerModel():
         self._dut = dut
         self._unpacked_o = dut.unpacked_o
         self._data_i = dut.data_i
-        self._UnpackedWidth = dut.UnpackedWidth.value
-        self._PackedNum = dut.PackedNum.value
-        self._PackedWidth = dut.PackedWidth.value
-        self._PacketLenBytes = dut.PacketLenBytes.value
-        self._HeaderByte0 = dut.HeaderByte0.value
-        self._HeaderByte1 = dut.HeaderByte1.value
+        self._UnpackedWidth  = int(dut.UnpackedWidth.value)
+        self._PackedNum      = int(dut.PackedNum.value)
+        self._PackedWidth    = int(dut.PackedWidth.value)
+        self._PacketLenBytes = int(dut.PacketLenBytes.value)
+        self._HeaderByte0    = int(dut.HeaderByte0.value)
+        self._HeaderByte1    = int(dut.HeaderByte1.value)
 
         self._mask = (1 << self._UnpackedWidth) - 1
         self._step = 0
         self._packed_buf = None
 
         self._state = 0
-        self._remaining = dut.PacketLenBytes.value * dut.PackedNum.value
+        self._remaining = self._PacketLenBytes * self._PackedNum
         
         self._deqs = 0
         self._enqs = 0
@@ -119,6 +119,7 @@ class DeframerModel():
         elif self._state == self.HEADER1:
             if b == self._HeaderByte1:
                 self._state = self.FORWARD
+                self._remaining = self._PacketLenBytes * self._PackedNum
                 return False
             elif b == self._HeaderByte0:
                 # Stay in HEADER1 if we see another HEADER0
@@ -128,16 +129,15 @@ class DeframerModel():
                 # Reset if unexpected byte
                 self._state = self.HEADER0
         # Once both bytes detected, enqueue the rest of the packet
-        elif self._state == self.FORWARD and self._remaining != 0:
-            self._q.put(b)
-            self._remaining -= 1
-            self._enqs += 1
-            return True
-        else:
-            # Reset if unexpected byte
-            self._state = self.HEADER0
-            self._remaining = self._PacketLenBytes * self._PackedNum.value
-            return False
+        elif self._state == self.FORWARD:
+            if self._remaining >= self._PackedNum:
+                self._q.put(b)
+                self._enqs += 1
+                return True
+            else:
+                # Packet complete: ignore until next header
+                self._state = self.HEADER0
+                return False
 
     def ensure_packed_buf(self):
         '''Checks for latest packed buffer state in queue before popping'''
@@ -168,11 +168,17 @@ class DeframerModel():
             f"Mismatch on output #{self._deqs}: expected {expected}, got {got} "
             f"(packed=0x{self._packed_buf:02X}, step={self._step})"
         )
+        if self._remaining > 0:
+            self._remaining -= 1
         # Wrap around step
         self._step = (self._step + 1) % int(self._PackedNum)
-
         if self._step == 0:
             self._packed_buf = None
+        
+        if self._remaining == 0:
+            self._state = self.HEADER0
+            self._packed_buf = None
+            self._step = 0
 
 class ReadyValidInterface():
     def __init__(self, clk, reset, valid, ready):
@@ -214,25 +220,48 @@ class ReadyValidInterface():
 
 class RandomHeaderGenerator():
     '''After a predefined delay, outputs the deframer bytes, then random data'''
-    def __init__(self, dut, delay):
+    def __init__(self, dut, initial_delay, repetitions, period):
         self._dut = dut
         self._width_p = dut.PackedWidth.value
-        self._header_delay = delay # Cycles until header appears
+        self._initial_delay = initial_delay
+        self._header_delay = initial_delay # Cycles until header appears
+        self._repetitions = repetitions
+        self._period = period
+        self._period_remaining = period
         
     def generate(self):
+        mask = (1 << self._width_p) - 1
+
+        # Countdown before header (random output)
         if self._header_delay > 0:
-            x_i = random.randint(0, (1 << self._width_p) - 1)
             self._header_delay -= 1
-            return (x_i)
-        elif self._header_delay == 0:
-            self._header_delay -= 1
-            return int(self._dut.HeaderByte0.value) & ((1 << self._width_p) - 1)
-        elif self._header_delay == -1:
-            self._header_delay -= 1
-            return int(self._dut.HeaderByte1.value) & ((1 << self._width_p) - 1)
-        else:
-            x_i = random.randint(0, (1 << self._width_p) - 1)
-            return (x_i)
+            return random.randint(0, mask)
+
+        # Header byte 0
+        if self._header_delay == 0:
+            self._header_delay = -1
+            return int(self._dut.HeaderByte0.value) & mask
+
+        # Header byte 1
+        if self._header_delay == -1:
+            self._header_delay = -2
+            self._period_remaining = self._period
+            return int(self._dut.HeaderByte1.value) & mask
+
+        # Payload period (random output)
+        x_i = random.randint(0, mask)
+
+        if self._period_remaining > 0:
+            self._period_remaining -= 1
+
+        if self._period_remaining == 0:
+            self._repetitions -= 1
+            if self._repetitions > 0:
+                # wait initial_delay random bytes before next header sequence
+                self._header_delay = self._initial_delay
+                self._period_remaining = self._period  # pre-init; will be reset at -1->-2 anyway
+
+        return x_i
     
 class RandomDataGenerator():
     def __init__(self, dut):
@@ -446,7 +475,7 @@ class ModelRunner():
 
         self._clk_i = dut.clk_i
         self._rst_i = dut.rst_i
-        self._emit_cycles = dut.PackedNum.value
+        self._emit_cycles = int(dut.PackedNum.value)
 
         self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
                                           dut.valid_i, dut.ready_o)
@@ -461,11 +490,10 @@ class ModelRunner():
         self._coro_run_out = None
 
     def start(self):
-        """Start model"""
         if self._coro_run_in is not None:
             raise RuntimeError("Model already started")
-        self._coro_run_input = cocotb.start_soon(self._run_input(self._model))
-        self._coro_run_output = cocotb.start_soon(self._run_output(self._model))
+        self._coro_run_in  = cocotb.start_soon(self._run_input(self._model))
+        self._coro_run_out = cocotb.start_soon(self._run_output(self._model))
 
     async def _run_input(self, model):
         while True:
@@ -478,6 +506,12 @@ class ModelRunner():
     async def _run_output(self, model):
         while True:
             await self._rv_out.handshake(None)
+
+            # Resolve same-cycle race vs _run_input()
+            if self._events.qsize() == 0:
+                # yield to let _run_input() run for this same timestep
+                await Timer(Decimal(0), units="ns")
+
             assert (self._events.qsize() > 0), "Error! Module produced output without valid input"
             _ = self._events.get()
             self._model.produce()
@@ -525,14 +559,14 @@ async def single_test(dut):
 
     delay = 10
     header_cycles = 2
-    eg = RandomHeaderGenerator(dut, delay)
-    
     l = 1
+    eg = RandomHeaderGenerator(dut, delay, repetitions=1, period=l)
+    
     n_in = delay + header_cycles + l
     n_out = l * int(dut.PackedNum.value)
     rate = 1
 
-    timeout = delay + header_cycles + 1 + n_out + 20
+    timeout = 20000
    
     model = DeframerModel(dut)
     m = ModelRunner(dut, model)
@@ -579,13 +613,143 @@ async def full_bw_test(dut):
     """Input random data elements at 100% line rate"""
     delay = 10
     header_cycles = 2
-    eg = RandomHeaderGenerator(dut, delay)
     l = 10
+    eg = RandomHeaderGenerator(dut, delay, repetitions=1, period=l)
     n_in = delay + header_cycles + l
     n_out = l * int(dut.PackedNum.value)
     rate = 1
 
-    timeout = delay + header_cycles + 1 + n_out + 20
+    timeout = 20000
+
+    m = ModelRunner(dut, DeframerModel(dut))
+    om = OutputModel(dut, RateGenerator(dut, rate), n_out)
+    im = InputModel(dut, eg, RateGenerator(dut, rate), n_in)
+
+    clk_i = dut.clk_i
+    rst_i = dut.rst_i
+
+    ready_i = dut.ready_i
+    valid_i = dut.valid_i
+
+    ready_i.value = 0
+    valid_i.value = 0
+
+    await clock_start_sequence(clk_i)
+    await reset_sequence(clk_i, rst_i, 10)
+
+    await FallingEdge(dut.clk_i)
+
+    m.start()
+    om.start()
+    im.start()
+
+    await RisingEdge(dut.ready_i)
+    await RisingEdge(dut.clk_i)
+
+    try:
+        await om.wait(timeout)
+    except SimTimeoutError:
+        assert 0, f"Test timed out. Could not transmit {l} elements in {timeout} ns, with output rate {rate}"
+
+@cocotb.test
+async def fuzz_in_test(dut):
+    """Add random data elements at 50% line rate"""
+    delay = 10
+    header_cycles = 2
+    l = 10
+    eg = RandomHeaderGenerator(dut, delay, repetitions=1, period=l)
+    n_in = delay + header_cycles + l
+    n_out = l * int(dut.PackedNum.value)
+    rate = 0.5
+
+    timeout = 20000
+
+    m = ModelRunner(dut, DeframerModel(dut))
+    om = OutputModel(dut, RateGenerator(dut, 1), n_out)
+    im = InputModel(dut, eg, RateGenerator(dut, rate), n_in)
+
+    clk_i = dut.clk_i
+    rst_i = dut.rst_i
+
+    ready_i = dut.ready_i
+    valid_i = dut.valid_i
+
+    ready_i.value = 0
+    valid_i.value = 0
+
+    await clock_start_sequence(clk_i)
+    await reset_sequence(clk_i, rst_i, 10)
+
+    await FallingEdge(dut.clk_i)
+
+    m.start()
+    om.start()
+    im.start()
+
+    await RisingEdge(dut.ready_i)
+    await RisingEdge(dut.clk_i)
+
+    try:
+        await om.wait(timeout)
+    except SimTimeoutError:
+        assert 0, f"Test timed out. Could not transmit {l} elements in {timeout} ns, with output rate {rate}"
+
+
+@cocotb.test
+async def fuzz_out_test(dut):
+    """Add random data elements at 50% line rate"""
+    delay = 10
+    header_cycles = 2
+    l = 10
+    eg = RandomHeaderGenerator(dut, delay, repetitions=1, period=l)
+    n_in = delay + header_cycles + l
+    n_out = l * int(dut.PackedNum.value)
+    rate = 0.5
+
+    timeout = 20000
+
+    m = ModelRunner(dut, DeframerModel(dut))
+    om = OutputModel(dut, RateGenerator(dut, rate), n_out)
+    im = InputModel(dut, eg, RateGenerator(dut, 1), n_in)
+
+    clk_i = dut.clk_i
+    rst_i = dut.rst_i
+
+    ready_i = dut.ready_i
+    valid_i = dut.valid_i
+
+    ready_i.value = 0
+    valid_i.value = 0
+
+    await clock_start_sequence(clk_i)
+    await reset_sequence(clk_i, rst_i, 10)
+
+    await FallingEdge(dut.clk_i)
+
+    m.start()
+    om.start()
+    im.start()
+
+    await RisingEdge(dut.ready_i)
+    await RisingEdge(dut.clk_i)
+
+    try:
+        await om.wait(timeout)
+    except SimTimeoutError:
+        assert 0, f"Test timed out. Could not transmit {l} elements in {timeout} ns, with output rate {rate}"
+
+@cocotb.test
+async def fuzz_both_test(dut):
+    """Add random data elements at 50% line rate"""
+    delay = 10
+    header_cycles = 2
+    l = 10
+    eg = RandomHeaderGenerator(dut, delay, repetitions=1, period=l)
+    n_in = delay + header_cycles + l
+    n_out = l * int(dut.PackedNum.value)
+    rate = 0.5
+
+    timeout = 20000
 
     m = ModelRunner(dut, DeframerModel(dut))
     om = OutputModel(dut, RateGenerator(dut, rate), n_out)
@@ -619,17 +783,68 @@ async def full_bw_test(dut):
 
 
 @cocotb.test
-async def fuzz_random_test(dut):
+async def full_bw_repeat_test(dut):
+    """Input random data elements at 100% line rate"""
+    delay = 10
+    header_cycles = 2
+    repetitions = 3
+    packet_len = 10
+
+    eg = RandomHeaderGenerator(dut, delay, repetitions, period=packet_len)
+    l = packet_len*repetitions
+    n_in  = repetitions * (delay + header_cycles + packet_len)
+    n_out = l * int(dut.PackedNum.value)
+    
+    rate = 1
+
+    timeout = 20000
+
+    m = ModelRunner(dut, DeframerModel(dut))
+    om = OutputModel(dut, RateGenerator(dut, rate), n_out)
+    im = InputModel(dut, eg, RateGenerator(dut, rate), n_in)
+
+    clk_i = dut.clk_i
+    rst_i = dut.rst_i
+
+    ready_i = dut.ready_i
+    valid_i = dut.valid_i
+
+    ready_i.value = 0
+    valid_i.value = 0
+
+    await clock_start_sequence(clk_i)
+    await reset_sequence(clk_i, rst_i, 10)
+
+    await FallingEdge(dut.clk_i)
+
+    m.start()
+    om.start()
+    im.start()
+
+    await RisingEdge(dut.ready_i)
+    await RisingEdge(dut.clk_i)
+
+    try:
+        await om.wait(timeout)
+    except SimTimeoutError:
+        assert 0, f"Test timed out. Could not transmit {l} elements in {timeout} ns, with output rate {rate}"
+
+
+@cocotb.test
+async def fuzz_random_repeat_test(dut):
     """Add random data elements at 50% line rate"""
     delay = 10
     header_cycles = 2
-    eg = RandomHeaderGenerator(dut, delay)
-    l = 10
-    n_in = delay + header_cycles + l
+    repetitions = 3
+    packet_len = 10
+
+    eg = RandomHeaderGenerator(dut, delay, repetitions, period=packet_len)
+    l = packet_len*repetitions
+    n_in  = repetitions * (delay + header_cycles + packet_len)
     n_out = l * int(dut.PackedNum.value)
     rate = 0.5
 
-    timeout = delay + header_cycles + 1/rate + n_out/rate + 40
+    timeout = 20000
 
     m = ModelRunner(dut, DeframerModel(dut))
     om = OutputModel(dut, RateGenerator(dut, rate), n_out)
