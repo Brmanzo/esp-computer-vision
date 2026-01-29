@@ -3,12 +3,11 @@
 module conv2d #(
    parameter  int unsigned LineWidthPx = 160
   ,parameter  int unsigned LineCountPx = 120
-  ,parameter  int unsigned WidthIn     = 2
+  ,parameter  int unsigned WidthIn     = 1
   ,parameter  int unsigned WidthOut    = 32
   ,parameter  int unsigned KernelWidth = 3
   ,parameter  int unsigned WeightWidth = 2
   ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
-  ,localparam int unsigned ExtendWidth = WidthOut - WidthIn
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -74,7 +73,7 @@ module conv2d #(
   // Both RAMs step forward with each new pixel input (in_fire) so that delay is exactly one row each.
   // RAM 1 produces a delay of one row. Reads off of data_i as the bottom row of the kernel receives new data.
   logic [WidthIn-1:0] row_tap [KernelWidth];
-  assign row_tap[0] = data_i;
+  assign row_tap[0] = data_i; // Exclude sign bit for buffering
 
   generate
     for (genvar i = 0; i < KernelWidth - 1; i++) begin : gen_buffer
@@ -122,18 +121,20 @@ module conv2d #(
     end
   end
   /* ------------------------------------ Output Logic ------------------------------------ */
-  logic signed [WidthOut-1:0] acc_l;
+  logic signed [WidthOut-1:0]    acc_l;
+  logic signed [WeightWidth-1:0] w_curr;
   always_comb begin
     acc_l = '0;
     for (int r = 0; r < KernelWidth; r++) begin
         for (int c = 0; c < KernelWidth; c++) begin
+          w_curr = weights_i[r*KernelWidth + c];
           // When binary inputs, only add the weight if the input pixel is a 1
-          if (WidthIn == 1) begin
+          if (WidthIn-1 == 1) begin // WidthIn includes sign bit, WidthIn = 2 for binary images
               if (window[r][c] != '0) begin
-                acc_l = acc_l + $signed({{ExtendWidth{1'b0}}, weights_i[r*KernelWidth + c]});
+                acc_l = acc_l + WidthOut'(w_curr);
               end
           end else begin
-              acc_l = acc_l + ($signed(weights_i[r*KernelWidth + c]) * $signed(window[r][c]));
+            acc_l = acc_l + (WidthOut'(w_curr) * $signed({1'b0, window[r][c]}));
           end
         end
     end

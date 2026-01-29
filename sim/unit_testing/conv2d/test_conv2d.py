@@ -70,7 +70,7 @@ weights = [1]*9
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth", [("16", "2", output_width(2), "3"), ("32", "1", output_width(1), "5")])
+@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth", [("16", "1", output_width(1), "3"), ("32", "2", output_width(2), "5")])
 def test_each(test_name, simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth):
     # This line must be first
     parameters = dict(locals())
@@ -81,7 +81,7 @@ def test_each(test_name, simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth)
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth", [("16", "2", output_width(2), "3"), ("32", "1", output_width(1), "5")])
+@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth", [("16", "1", output_width(1), "3"), ("32", "2", output_width(2), "5")])
 def test_all(simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth):
     # This line must be first
     parameters = dict(locals())
@@ -234,7 +234,16 @@ class ReadyValidInterface():
         if(ns):
             await with_timeout(self._handshake(), ns, 'ns')
         else:
-            await self._handshake()           
+            await self._handshake()
+
+class RandomDataGenerator():
+    def __init__(self, dut):
+        self._dut = dut
+        self._width_p = int(dut.WidthIn.value)
+
+    def generate(self):
+        x_i = random.randint(0, (1 << self._width_p) - 1)
+        return (x_i)           
 
 class CountingDataGenerator():
     def __init__(self, dut):
@@ -396,23 +405,23 @@ class InputModel():
         din = self._data.generate()
         while self._nin < self._length:
             produce = self._rate.generate()
-            success = 0
             valid_i.value = produce
-            # Unsigned inputs should be zero extended as to not be misinterpreted by signed acc
-            if int(self._dut.WidthIn.value) < 8:
-                # only non-negative values that fit in signed w-bit (0 .. 2^(w-1)-1)
-                data_i.value = din % (1 << (int(self._dut.WidthIn.value) - 1))
-            else:
-                data_i.value = din % (1 << int(self._dut.WidthIn.value))
 
-            # Wait until ready
-            while(produce and not success):
+            w = int(self._dut.WidthIn.value)
+
+            if w == 1:
+                # 1-bit data: allow 0/1
+                data_i.value = din & 0x1
+            else:
+                # Keep MSB clear -> only non-negative signed values (0 .. 2^(w-1)-1)
+                data_i.value = din & ((1 << (w - 1)) - 1)
+
+            success = False
+            while produce and not success:
                 await RisingEdge(clk_i)
                 assert_resolvable(ready_o)
-                #assert ready_o.value.is_resolvable, f"Unresolvable value in ready_o (x or z in some or all bits) at Time {get_sim_time(units='ns')}ns."
-
-                success = True if (ready_o.value == 1) else False
-                if (success):
+                success = bool(valid_i.value) and bool(ready_o.value)
+                if success:
                     din = self._data.generate()
                     self._nin += 1
 
@@ -497,7 +506,7 @@ async def single_test(dut):
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, RateGenerator(dut, 1), N_out)               # consume 1 output
-    im = InputModel(dut, CountingDataGenerator(dut), RateGenerator(dut, rate), N_first)  # produce N_first inputs
+    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), N_first)  # produce N_first inputs
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
@@ -558,7 +567,7 @@ async def out_fuzz_test(dut):
 
     # Consumer fuzzed; producer always drives valid
     om = OutputModel(dut, CountingGenerator(dut, rate), l_out)
-    im = InputModel(dut, CountingDataGenerator(dut), RateGenerator(dut, 1), N_in)
+    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, 1), N_in)
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
@@ -623,7 +632,7 @@ async def in_fuzz_test(dut):
 
     # Consumer always ready; producer fuzzed
     om = OutputModel(dut, RateGenerator(dut, 1), l_out)
-    im = InputModel(dut, CountingDataGenerator(dut), CountingGenerator(dut, rate), N_in)
+    im = InputModel(dut, RandomDataGenerator(dut), CountingGenerator(dut, rate), N_in)
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
@@ -690,7 +699,7 @@ async def inout_fuzz_test(dut):
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, RateGenerator(dut, rate), l_out)
-    im = InputModel(dut, CountingDataGenerator(dut), RateGenerator(dut, rate), N_in)
+    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), N_in)
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
@@ -763,7 +772,7 @@ async def full_bw_test(dut):
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, RateGenerator(dut, 1), l_out)
-    im = InputModel(dut, CountingDataGenerator(dut), RateGenerator(dut, rate), N_in)
+    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), N_in)
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
@@ -839,7 +848,7 @@ async def full_bw_Gx_test(dut):
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, RateGenerator(dut, 1), l_out)
-    im = InputModel(dut, CountingDataGenerator(dut), RateGenerator(dut, rate), N_in)
+    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), N_in)
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
@@ -916,7 +925,7 @@ async def full_bw_Gy_test(dut):
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, RateGenerator(dut, 1), l_out)
-    im = InputModel(dut, CountingDataGenerator(dut), RateGenerator(dut, rate), N_in)
+    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), N_in)
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0

@@ -173,7 +173,7 @@ module uart_axis #(
   conv2d #(
      .LineWidthPx(WidthIn)
     ,.LineCountPx(HeightIn)
-    ,.WidthIn    (QuantizedWidth + 1) // Zero pad inputs
+    ,.WidthIn    (QuantizedWidth) // Zero pad inputs
     ,.WidthOut   (ConvOutWidth)
     ,.KernelWidth(KernelWidth)
     ,.WeightWidth(WeightWidth)
@@ -183,7 +183,7 @@ module uart_axis #(
     // Unpacker to Gx
     ,.ready_o  (gx_ready)
     ,.valid_i  (deframer_valid)
-    ,.data_i   ({1'b0, deframer_data}) // "Right shift" by 3 to divide by 8 and average the output
+    ,.data_i   (deframer_data) // "Right shift" by 3 to divide by 8 and average the output
     // Gx to Elastic Stage
     ,.ready_i  (mag_ready)
     ,.valid_o  (gx_valid)
@@ -195,7 +195,7 @@ module uart_axis #(
   conv2d #(
      .LineWidthPx(WidthIn)
     ,.LineCountPx(HeightIn)
-    ,.WidthIn    (QuantizedWidth + 1)
+    ,.WidthIn    (QuantizedWidth)
     ,.WidthOut   (ConvOutWidth)
     ,.KernelWidth(KernelWidth)
     ,.WeightWidth(WeightWidth)
@@ -205,7 +205,7 @@ module uart_axis #(
     // Unpacker to Gy
     ,.ready_o  (gy_ready)
     ,.valid_i  (deframer_valid)
-    ,.data_i   ({1'b0, deframer_data})
+    ,.data_i   (deframer_data)
     // Gy to Elastic Stage
     ,.ready_i  (mag_ready)
     ,.valid_o  (gy_valid)
