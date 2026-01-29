@@ -21,12 +21,20 @@ prog: ice40.bin
 
 # Placement & Route. Depends on synth.mk
 ice40.asc: ice40.json $(PCF_PATH)
-	$(NEXTPNR) -ql ice40.nplog --up5k --package sg48 --freq 12 --asc $@ --pcf $(PCF_PATH) --json $< --top top
+	$(NEXTPNR) -ql ice40.nplog --up5k --package sg48 --freq 12 \
+	  --asc $@ --pcf $(PCF_PATH) --json $< --top top \
+	  --report ice40_report.json
+	  
 
 # Bitstream generation.
 bitstream: ice40.bin
 ice40.bin: ice40.asc
 	$(ICEPACK) $< $@
+
+util: ice40.asc
+	@awk '/Device utilisation:/{flag=1} flag{print} /ICESTORM_SPRAM/{exit}' ice40.nplog
+
+.PHONY: util
 
 # Timing analysis
 ice40.rpt: ice40.asc
@@ -37,6 +45,7 @@ fpga-clean:
 	rm -rf ice40.rpt
 	rm -rf ice40.asc
 	rm -rf ice40.nplog
+	rm -rf ice40_report.json
 
 fpga-help:
 	@echo "  bitstream: Build the FPGA program (bitstream)"

@@ -6,7 +6,7 @@
 #include "includes/uart.h"
 #include "driver/gpio.h"
 
-#define UART_CTS_PIN GPIO_NUM_1
+#define UART_RTS_PIN GPIO_NUM_1
 
 /* Initialize UART for streaming images to interfaces. */
 void uart_init(void) {
@@ -22,7 +22,7 @@ void uart_init(void) {
     // We won't use a buffer for sending data.
     uart_driver_install(UART_NUM_1, 4096, 0, 0, NULL, 0);
     uart_param_config(UART_NUM_1, &uart_config);
-    uart_set_pin(UART_NUM_1, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_CTS_PIN);
+    uart_set_pin(UART_NUM_1, TXD_PIN, RXD_PIN, UART_PIN_NO_CHANGE, UART_RTS_PIN);
 }
 
 /* Write all data from buffer to UART in order. */
