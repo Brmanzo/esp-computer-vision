@@ -20,5 +20,6 @@
     ,"rtl/blocks/skid_buffer.sv"
     ,"rtl/blocks/framer.sv"
     ,"rtl/blocks/deframer.sv"
+    ,"rtl/lib/multi_delay_buffer.sv"
     ]
 }

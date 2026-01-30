@@ -32,7 +32,7 @@ from cocotb_test.simulator import run
 from cocotbext.axi import AxiLiteBus, AxiLiteMaster, AxiStreamSink, AxiStreamMonitor, AxiStreamBus
    
 import random
-random.seed(42)
+random.seed(50)
 
 timescale = "1ps/1ps"
 
@@ -234,16 +234,7 @@ class ReadyValidInterface():
         if(ns):
             await with_timeout(self._handshake(), ns, 'ns')
         else:
-            await self._handshake()
-
-class RandomDataGenerator():
-    def __init__(self, dut):
-        self._dut = dut
-        self._width_p = int(dut.WidthIn.value)
-
-    def generate(self):
-        x_i = random.randint(0, (1 << self._width_p) - 1)
-        return (x_i)           
+            await self._handshake()    
 
 class CountingDataGenerator():
     def __init__(self, dut):
@@ -254,6 +245,15 @@ class CountingDataGenerator():
         value = self._cur
         self._cur += 1
         return value
+    
+class RandomDataGenerator():
+    def __init__(self, dut):
+        self._dut = dut
+        self._width_p = int(dut.WidthIn.value)
+
+    def generate(self):
+        x_i = random.randint(0, (1 << self._width_p) - 1)
+        return (x_i)
 
 class CountingGenerator():
     def __init__(self, dut, r):

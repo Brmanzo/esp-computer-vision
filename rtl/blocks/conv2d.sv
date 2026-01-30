@@ -8,6 +8,7 @@ module conv2d #(
   ,parameter  int unsigned KernelWidth = 3
   ,parameter  int unsigned WeightWidth = 2
   ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
+  ,localparam int unsigned BufferWidth = WidthIn * KernelWidth
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -72,26 +73,27 @@ module conv2d #(
   /* ------------------------------------ FIFO RAM Instantiations ------------------------------------ */
   // Both RAMs step forward with each new pixel input (in_fire) so that delay is exactly one row each.
   // RAM 1 produces a delay of one row. Reads off of data_i as the bottom row of the kernel receives new data.
-  logic [WidthIn-1:0] row_tap [KernelWidth];
-  assign row_tap[0] = data_i; // Exclude sign bit for buffering
 
-  generate
-    for (genvar i = 0; i < KernelWidth - 1; i++) begin : gen_buffer
-      delaybuffer #(
-         .Width(WidthIn)
-        ,.Delay (LineWidthPx - 1)
-      ) ram_1_delaybuffer_inst (
-         .clk_i  (clk_i)
-        ,.rst_i  (rst_i)
-        ,.data_i (row_tap[i])
-        ,.valid_i(in_fire)
-        ,.ready_o()
-        ,.valid_o()
-        ,.data_o (row_tap[i+1])
-        ,.ready_i(1'b1)
-      );
-    end
-  endgenerate
+  logic [BufferWidth-1:0] row_delays;
+  assign row_delays[WidthIn-1:0] = data_i;
+
+  multi_delay_buffer #(
+     .Width    (WidthIn)
+    ,.Delay    (LineWidthPx - 1)
+    ,.BufferCnt(KernelWidth - 1)
+  ) multi_delay_buffer_inst (
+    .clk_i   (clk_i)
+    ,.rst_i  (rst_i)
+
+    ,.data_i (data_i)
+    ,.valid_i(in_fire)
+    ,.ready_o()
+
+    ,.data_o (row_delays[BufferWidth-1:WidthIn])
+    ,.valid_o()
+    ,.ready_i(1'b1)
+  );
+
   /* ------------------------------------ Window Register Logic ------------------------------------ */
   // Row major Order(window[row][col])
   logic [WidthIn-1:0] window [KernelWidth][KernelWidth];
@@ -115,8 +117,9 @@ module conv2d #(
         /* -------------------------------- Input Connections -------------------------------- */
         // Load new data into the rightmost column of the window
         // Top line <- Twice seen data from second RAM
+        // Bit slicing associated delay buffer element off of row_delays
         for (int r = 0; r < KernelWidth; r++) begin
-          window[r][KernelWidth-1] <= row_tap[KernelWidth-1 - r];
+          window[r][KernelWidth-1] <= row_delays[(KernelWidth - r)*WidthIn - 1 -: WidthIn];
         end
     end
   end
