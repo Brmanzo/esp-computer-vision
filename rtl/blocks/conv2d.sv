@@ -8,7 +8,6 @@ module conv2d #(
   ,parameter  int unsigned KernelWidth = 3
   ,parameter  int unsigned WeightWidth = 2
   ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
-  ,localparam int unsigned BufferWidth = WidthIn * KernelWidth
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -73,9 +72,9 @@ module conv2d #(
   /* ------------------------------------ FIFO RAM Instantiations ------------------------------------ */
   // Both RAMs step forward with each new pixel input (in_fire) so that delay is exactly one row each.
   // RAM 1 produces a delay of one row. Reads off of data_i as the bottom row of the kernel receives new data.
-
-  logic [BufferWidth-1:0] row_delays;
-  assign row_delays[WidthIn-1:0] = data_i;
+  // Unpacked array of vectors to hold each row buffer
+  logic [KernelWidth-1:0][WidthIn-1:0] row_buffers;
+  assign row_buffers[0] = data_i; // Row buffer 0 is current data input
 
   multi_delay_buffer #(
      .Width    (WidthIn)
@@ -89,7 +88,7 @@ module conv2d #(
     ,.valid_i(in_fire)
     ,.ready_o()
 
-    ,.data_o (row_delays[BufferWidth-1:WidthIn])
+    ,.data_o (row_buffers[KernelWidth-1:1]) // Row buffers >= 1 read from delay buffer
     ,.valid_o()
     ,.ready_i(1'b1)
   );
@@ -106,38 +105,37 @@ module conv2d #(
           end
         end
     end else if (in_fire) begin
-        /* ------------------------------- Internal Connections ------------------------------- */
-        // Line feeds from right to left within window
-        // Bottom line
-        for (int r = 0; r < KernelWidth; r++) begin
-          for (int c = 0; c < KernelWidth - 1; c++) begin
-              window[r][c] <= window[r][c+1];
-          end
+      /* ------------------------------- Internal Connections ------------------------------- */
+      // Line feeds from right to left within window
+      // Bottom line
+      for (int r = 0; r < KernelWidth; r++) begin
+        for (int c = 0; c < KernelWidth - 1; c++) begin
+            window[r][c] <= window[r][c+1];
         end
-        /* -------------------------------- Input Connections -------------------------------- */
-        // Load new data into the rightmost column of the window
-        // Top line <- Twice seen data from second RAM
-        // Bit slicing associated delay buffer element off of row_delays
-        for (int r = 0; r < KernelWidth; r++) begin
-          window[r][KernelWidth-1] <= row_delays[(KernelWidth - r)*WidthIn - 1 -: WidthIn];
-        end
+      end
+      /* -------------------------------- Input Connections -------------------------------- */
+      // Load new data into the rightmost column of the window
+      // Top line <- Twice seen data from second RAM
+      for (int r = 0; r < KernelWidth; r++) begin
+        window[r][KernelWidth-1] <= row_buffers[KernelWidth-1 - r];
+      end
     end
   end
   /* ------------------------------------ Output Logic ------------------------------------ */
   logic signed [WidthOut-1:0]    acc_l;
-  logic signed [WeightWidth-1:0] w_curr;
+  logic signed [WeightWidth-1:0] weight_l;
   always_comb begin
     acc_l = '0;
     for (int r = 0; r < KernelWidth; r++) begin
         for (int c = 0; c < KernelWidth; c++) begin
-          w_curr = weights_i[r*KernelWidth + c];
+          weight_l = weights_i[r*KernelWidth + c];
           // When binary inputs, only add the weight if the input pixel is a 1
           if (WidthIn-1 == 1) begin // WidthIn includes sign bit, WidthIn = 2 for binary images
               if (window[r][c] != '0) begin
-                acc_l = acc_l + WidthOut'(w_curr);
+                acc_l = acc_l + WidthOut'(weight_l);
               end
           end else begin
-            acc_l = acc_l + (WidthOut'(w_curr) * $signed({1'b0, window[r][c]}));
+            acc_l = acc_l + (WidthOut'(weight_l) * $signed({1'b0, window[r][c]}));
           end
         end
     end
