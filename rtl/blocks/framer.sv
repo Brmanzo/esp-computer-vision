@@ -6,9 +6,12 @@ module framer #(
   ,parameter int unsigned  PackedWidth    = UnpackedWidth * PackedNum
   ,parameter int unsigned  PacketLenElems = 1024 // Number of packed elements per packet
 
-  ,parameter logic [PackedWidth-1:0] TailByte0 = PackedWidth'($unsigned(165)) // 0xA5
-  ,parameter logic [PackedWidth-1:0] TailByte1 = PackedWidth'($unsigned(90))  // 0x5A
-  ,localparam int unsigned CountWidth          = $clog2(PacketLenElems)
+  ,parameter  logic [PackedWidth-1:0] TailByte0 = PackedWidth'($unsigned(165)) // 0xA5
+  ,parameter  logic [PackedWidth-1:0] TailByte1 = PackedWidth'($unsigned(90))  // 0x5A
+  ,parameter  int unsigned OutputImageWidth     = 320 // Will likely exceed single byte represention
+  ,parameter  int unsigned OutputImageHeight    = 240
+  ,localparam int unsigned DimensionWidth       = PackedWidth * 2 // Width to hold image dimensions
+  ,localparam int unsigned CountWidth           = $clog2(PacketLenElems)
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -22,7 +25,7 @@ module framer #(
   ,output [PackedWidth-1:0] data_o
 );
   // FSM States
-  typedef enum logic [1:0] {Forward, Footer0, Footer1} fsm_e;
+  typedef enum logic [2:0] {Forward, Footer0, Footer1, ImageWH, ImageWL, ImageHH, ImageHL} fsm_e;
   fsm_e state_q, state_d;
 
   // Packer Wires
@@ -48,13 +51,21 @@ module framer #(
   always_comb begin
     counter_d = counter_q; // Default hold
     // Reset counter when finishing footer
-    if (state_q == Footer1 && out_fire) begin
+    if (state_q == ImageHL && out_fire) begin
       counter_d = '0;
     // Increment counter when accepting input in forward state
     end else if (state_q == Forward && in_fire) begin
       // Saturate at max count
       if (!counter_max) counter_d = counter_q + 1'b1;
     end
+  end
+  /* --------------------------------------- Image Size Logic --------------------------------------- */
+  logic [DimensionWidth-1:0] image_height;
+  logic [DimensionWidth-1:0] image_width;
+
+  always_comb begin
+    image_height = DimensionWidth'(OutputImageHeight);
+    image_width  = DimensionWidth'(OutputImageWidth);
   end
 
   /* ------------------------------------------- FSM Logic ------------------------------------------- */
@@ -73,7 +84,7 @@ module framer #(
   // RX Complete logic to track when a full packet has been received
   always_ff @(posedge clk_i) begin
     if (rst_i)                               rx_complete <= 1'b0;
-    else if (state_q == Footer1 && out_fire) rx_complete <= 1'b0;
+    else if (state_q == ImageHL && out_fire) rx_complete <= 1'b0;
     else if (last_input)                     rx_complete <= 1'b1;
   end
 
@@ -96,16 +107,14 @@ module framer #(
   always_comb begin
     state_d = state_q;
     case (state_q)
-      Forward: begin
-        if (tx_complete) state_d = Footer0;
-      end
-      Footer0: begin
-        if (out_fire)    state_d = Footer1;
-      end
-      Footer1: begin
-        if (out_fire)    state_d = Forward;
-      end
-      default:           state_d = Forward;
+      Forward: if (tx_complete) state_d = Footer0;
+      Footer0: if (out_fire)    state_d = Footer1;
+      Footer1: if (out_fire)    state_d = ImageWH;
+      ImageWH: if (out_fire)    state_d = ImageWL;
+      ImageWL: if (out_fire)    state_d = ImageHH;
+      ImageHH: if (out_fire)    state_d = ImageHL;
+      ImageHL: if (out_fire)    state_d = Forward;
+      default:                  state_d = Forward;
     endcase
   end
 
@@ -124,10 +133,14 @@ module framer #(
     data_d  = data_q;  // Default hold
     valid_d = valid_q; // Default hold
     case (state_q)
-      Forward: begin data_d = packed_data; valid_d = pack_valid; end
-      Footer0: begin data_d = TailByte0;   valid_d = 1'b1;       end
-      Footer1: begin data_d = TailByte1;   valid_d = 1'b1;       end
-      default: begin data_d = data_q;      valid_d = valid_q;    end
+      Forward: begin data_d = packed_data;                                valid_d = pack_valid; end
+      Footer0: begin data_d = TailByte0;                                  valid_d = 1'b1;       end
+      Footer1: begin data_d = TailByte1;                                  valid_d = 1'b1;       end
+      ImageWH: begin data_d = image_width [DimensionWidth-1:PackedWidth]; valid_d = 1'b1;       end
+      ImageWL: begin data_d = image_width [PackedWidth-1:0];              valid_d = 1'b1;       end
+      ImageHH: begin data_d = image_height[DimensionWidth-1:PackedWidth]; valid_d = 1'b1;       end
+      ImageHL: begin data_d = image_height[PackedWidth-1:0];              valid_d = 1'b1;       end
+      default: begin data_d = data_q;                                     valid_d = valid_q;    end
     endcase
   end
 

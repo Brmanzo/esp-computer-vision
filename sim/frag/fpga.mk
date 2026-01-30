@@ -23,7 +23,7 @@ prog: ice40.bin
 ice40.asc: ice40.json $(PCF_PATH)
 	$(NEXTPNR) -ql ice40.nplog --up5k --package sg48 --freq 12 \
 	  --asc $@ --pcf $(PCF_PATH) --json $< --top top \
-	  --report ice40_report.json
+	  --report ice40_report.json --no-promote-globals
 	  
 
 # Bitstream generation.
@@ -33,6 +33,9 @@ ice40.bin: ice40.asc
 
 util: ice40.asc
 	@awk '/Device utilisation:/{flag=1} flag{print} /ICESTORM_SPRAM/{exit}' ice40.nplog
+
+gbuf: ice40.nplog
+	@grep -niE "global|gbuf|sb_gb|promot|glb" ice40.nplog
 
 .PHONY: util
 

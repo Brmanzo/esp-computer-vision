@@ -130,7 +130,7 @@ module conv2d #(
         for (int c = 0; c < KernelWidth; c++) begin
           weight_l = weights_i[r*KernelWidth + c];
           // When binary inputs, only add the weight if the input pixel is a 1
-          if (WidthIn-1 == 1) begin // WidthIn includes sign bit, WidthIn = 2 for binary images
+          if (WidthIn == 1) begin
               if (window[r][c] != '0) begin
                 acc_l = acc_l + WidthOut'(weight_l);
               end

@@ -49,8 +49,8 @@ def float_to_fxp(value, frac):
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("UnpackedWidth, PackedNum, PacketLenElems", [("2", "4", "124"), ("1", "8", "124")])
-def test_each(test_name, simulator, UnpackedWidth, PackedNum, PacketLenElems):
+@pytest.mark.parametrize("UnpackedWidth, PackedNum, PacketLenElems, OutputImageWidth, OutputImageHeight", [("2", "4", "124", "320", "240"), ("1", "8", "124", "320", "240")])
+def test_each(test_name, simulator, UnpackedWidth, PackedNum, PacketLenElems, OutputImageWidth, OutputImageHeight):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
@@ -60,8 +60,8 @@ def test_each(test_name, simulator, UnpackedWidth, PackedNum, PacketLenElems):
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("UnpackedWidth, PackedNum, PacketLenElems", [("2", "4", "124"), ("1", "8", "124")])
-def test_all(simulator, UnpackedWidth, PackedNum, PacketLenElems):
+@pytest.mark.parametrize("UnpackedWidth, PackedNum, PacketLenElems, OutputImageWidth, OutputImageHeight", [("2", "4", "124", "320", "240"), ("1", "8", "124", "320", "240")])
+def test_all(simulator, UnpackedWidth, PackedNum, PacketLenElems, OutputImageWidth, OutputImageHeight):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
@@ -95,6 +95,14 @@ class FramerModel():
         self._PacketLenElems = int(dut.PacketLenElems.value)
         self._tail0 = int(dut.TailByte0.value)
         self._tail1 = int(dut.TailByte1.value)
+        self._image_width = int(dut.OutputImageWidth.value)
+        self._image_height = int(dut.OutputImageHeight.value)
+
+        # Select the Upper and Lower bytes off of image integers according to bus width (packed_width_p)
+        self._image_width_H = (self._image_width >> self._packed_width_p) & ((1 << self._packed_width_p) - 1)
+        self._image_width_L = self._image_width & ((1 << self._packed_width_p) - 1)
+        self._image_height_H = (self._image_height >> self._packed_width_p) & ((1 << self._packed_width_p) - 1)
+        self._image_height_L = self._image_height & ((1 << self._packed_width_p) - 1)
 
         # Packet counter
         self._count = 0
@@ -130,12 +138,16 @@ class FramerModel():
         if last_elem:
             self._q.put(self._tail0 & ((1 << self._packed_width_p) - 1))
             self._q.put(self._tail1 & ((1 << self._packed_width_p) - 1))
+            self._q.put(self._image_width_H & ((1 << self._packed_width_p) - 1))
+            self._q.put(self._image_width_L & ((1 << self._packed_width_p) - 1))
+            self._q.put(self._image_height_H & ((1 << self._packed_width_p) - 1))
+            self._q.put(self._image_height_L & ((1 << self._packed_width_p) - 1))
             self._count = 0
         else:
             self._count += 1
 
         if completed_pack and last_elem:
-            return 3
+            return 7
         elif completed_pack:
             return 1
         else:
