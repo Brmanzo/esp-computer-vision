@@ -230,19 +230,20 @@ module uart_axis #(
     ,.mag_o  (mag_data)
   );
 
+  logic [(BusWidth*2)-1:0] image_width, image_height;
   always_comb begin
     case (button_i)
-      3'b001:  begin mux_data = deframer_data; mux_valid = deframer_valid; end
-      3'b010:  begin mux_data = gx_data[2];    mux_valid = mag_valid;    end
-      3'b100:  begin mux_data = gy_data[2];    mux_valid = mag_valid;    end
-      default: begin mux_data = mag_data[2];   mux_valid = mag_valid;    end
+      3'b001:  begin mux_data = deframer_data; mux_valid = deframer_valid; image_width = WidthIn;  image_height = HeightIn;  end
+      3'b010:  begin mux_data = gx_data[2];    mux_valid = mag_valid;      image_width = WidthOut; image_height = HeightOut; end
+      3'b100:  begin mux_data = gy_data[2];    mux_valid = mag_valid;      image_width = WidthOut; image_height = HeightOut; end
+      default: begin mux_data = mag_data[2];   mux_valid = mag_valid;      image_width = WidthOut; image_height = HeightOut; end
     endcase
   end
   // Packs 8 pixels onto a single byte, adds footer at end of frame and sends to UART
   framer #(
      .UnpackedWidth (QuantizedWidth)
     ,.PackedNum     (PackedNum)
-    ,.PacketLenElems(WidthOut * HeightOut)
+    ,.PacketLenElems(WidthIn * HeightIn)
     ,.TailByte0     (8'hA5)
     ,.TailByte1     (8'h5A)
   ) framer_inst (
@@ -252,6 +253,8 @@ module uart_axis #(
     ,.unpacked_i(mux_data)
     ,.valid_i   (mux_valid)
     ,.ready_o   (framer_ready)
+    ,.image_width_i (image_width)
+    ,.image_height_i(image_height)
     // Framer to Packer
     ,.data_o    (framer_data)
     ,.valid_o   (framer_valid)

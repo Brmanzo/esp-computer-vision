@@ -8,17 +8,18 @@ module framer #(
 
   ,parameter  logic [PackedWidth-1:0] TailByte0 = PackedWidth'($unsigned(165)) // 0xA5
   ,parameter  logic [PackedWidth-1:0] TailByte1 = PackedWidth'($unsigned(90))  // 0x5A
-  ,parameter  int unsigned OutputImageWidth     = 320 // Will likely exceed single byte represention
-  ,parameter  int unsigned OutputImageHeight    = 240
-  ,localparam int unsigned DimensionWidth       = PackedWidth * 2 // Width to hold image dimensions
-  ,localparam int unsigned CountWidth           = $clog2(PacketLenElems)
+
+  ,localparam int unsigned DimensionWidth = PackedWidth * 2 // Width to hold image dimensions
+  ,localparam int unsigned CountWidth     = $clog2(PacketLenElems)
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
 
-  ,input  [0:0]               valid_i
-  ,output [0:0]               ready_o
-  ,input  [UnpackedWidth-1:0] unpacked_i
+  ,input  [0:0]                valid_i
+  ,output [0:0]                ready_o
+  ,input  [UnpackedWidth-1:0]  unpacked_i
+  ,input  [DimensionWidth-1:0] image_height_i
+  ,input  [DimensionWidth-1:0] image_width_i
 
   ,output [0:0]             valid_o
   ,input  [0:0]             ready_i
@@ -58,14 +59,6 @@ module framer #(
       // Saturate at max count
       if (!counter_max) counter_d = counter_q + 1'b1;
     end
-  end
-  /* --------------------------------------- Image Size Logic --------------------------------------- */
-  logic [DimensionWidth-1:0] image_height;
-  logic [DimensionWidth-1:0] image_width;
-
-  always_comb begin
-    image_height = DimensionWidth'(OutputImageHeight);
-    image_width  = DimensionWidth'(OutputImageWidth);
   end
 
   /* ------------------------------------------- FSM Logic ------------------------------------------- */
@@ -133,14 +126,14 @@ module framer #(
     data_d  = data_q;  // Default hold
     valid_d = valid_q; // Default hold
     case (state_q)
-      Forward: begin data_d = packed_data;                                valid_d = pack_valid; end
-      Footer0: begin data_d = TailByte0;                                  valid_d = 1'b1;       end
-      Footer1: begin data_d = TailByte1;                                  valid_d = 1'b1;       end
-      ImageWH: begin data_d = image_width [DimensionWidth-1:PackedWidth]; valid_d = 1'b1;       end
-      ImageWL: begin data_d = image_width [PackedWidth-1:0];              valid_d = 1'b1;       end
-      ImageHH: begin data_d = image_height[DimensionWidth-1:PackedWidth]; valid_d = 1'b1;       end
-      ImageHL: begin data_d = image_height[PackedWidth-1:0];              valid_d = 1'b1;       end
-      default: begin data_d = data_q;                                     valid_d = valid_q;    end
+      Forward: begin data_d = packed_data;                                  valid_d = pack_valid; end
+      Footer0: begin data_d = TailByte0;                                    valid_d = 1'b1;       end
+      Footer1: begin data_d = TailByte1;                                    valid_d = 1'b1;       end
+      ImageWH: begin data_d = image_width_i [DimensionWidth-1:PackedWidth]; valid_d = 1'b1;       end
+      ImageWL: begin data_d = image_width_i [PackedWidth-1:0];              valid_d = 1'b1;       end
+      ImageHH: begin data_d = image_height_i[DimensionWidth-1:PackedWidth]; valid_d = 1'b1;       end
+      ImageHL: begin data_d = image_height_i[PackedWidth-1:0];              valid_d = 1'b1;       end
+      default: begin data_d = data_q;                                       valid_d = valid_q;    end
     endcase
   end
 

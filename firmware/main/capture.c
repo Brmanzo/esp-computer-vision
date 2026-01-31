@@ -51,11 +51,17 @@ void encapsulate(uint8_t *packet, uint16_t packet_len, char *mode, uint16_t w, u
 /* -------------------------------------- UART RX Task -------------------------------------- */
 
 typedef struct {
-    uint8_t *dst;     // destination buffer
-    size_t   cap;     // total buffer capacity
-    size_t   got;     // bytes received so far
+    uint8_t *dst;
+    size_t   cap;
+    size_t   got;          // payload bytes (payload-only)
     bool     done;
     bool     error;
+    uint16_t image_width;  // received width
+    uint16_t image_height; // received height
+
+    // NEW: expected minimum payload dims to reject false tails
+    uint16_t expect_width;
+    uint16_t expect_height;
 } rx_ctx_t;
 
 static void uart_rx_task(void *arg)
@@ -63,50 +69,114 @@ static void uart_rx_task(void *arg)
     rx_ctx_t *ctx = (rx_ctx_t *)arg;
 
     const TickType_t deadline =
-        xTaskGetTickCount() + pdMS_TO_TICKS(300);
+        xTaskGetTickCount() + pdMS_TO_TICKS(2000);
 
-    bool saw_0d = false;
+    // State
+    bool saw_a5 = false;
+    int  meta_needed = 0;
+    uint8_t meta[4] = {0};
+    int meta_idx = 0;
+
+    // Left-aligned payload
+    size_t payload_len = 0;
+
+    // Staging read buffer
+    uint8_t rx_buf[128];
 
     while (true) {
-        int r = uart_read_bytes(
-            UART_NUM_1,
-            ctx->dst + ctx->got,
-            ctx->cap - ctx->got,     // capacity, not expected
-            pdMS_TO_TICKS(20)
-        );
-        if (r < 0) {
-            ctx->error = true;
-            break;
-        }
+        int r = uart_read_bytes(UART_NUM_1, rx_buf, (int)sizeof(rx_buf), pdMS_TO_TICKS(20));
+        if (r < 0) { ctx->error = true; break; }
+
         if (r > 0) {
             for (int i = 0; i < r; i++) {
-                uint8_t b = ctx->dst[ctx->got + i];
-                if (saw_0d) {
-                    if (b == 0x5A) {
-                        ctx->got += i + 1;   // include tail
-                        ctx->done = true;
-                        vTaskDelete(NULL);
-                        return;
+                uint8_t b = rx_buf[i];
+
+                // Collecting metadata bytes after tail
+                if (meta_needed > 0) {
+                    meta[meta_idx++] = b;
+                    meta_needed--;
+
+                    if (meta_needed == 0) {
+                        uint16_t w = ((uint16_t)meta[0] << 8) | (uint16_t)meta[1];
+                        uint16_t h = ((uint16_t)meta[2] << 8) | (uint16_t)meta[3];
+
+                        // Validate dimensions (tune bounds for your pipeline)
+                        bool ok = true;
+                        if (w == 0 || h == 0) ok = false;
+                        if (w > QVGA_WIDTH || h > QVGA_HEIGHT) ok = false;
+
+                        // Also validate payload size fits our buffer
+                        size_t need = (((size_t)w * (size_t)h) + 7) / 8;
+                        if (need > ctx->cap) ok = false;
+
+                        // Optional: if you expect a particular output size, enforce it
+                        // (keep loose to avoid false rejects during debugging)
+                        if (ctx->expect_width && ctx->expect_height) {
+                            // Example: allow small deviations, or require exact match:
+                            // ok &= (w == ctx->expect_width && h == ctx->expect_height);
+                        }
+
+                        if (ok) {
+                            ctx->image_width  = w;
+                            ctx->image_height = h;
+                            ctx->got = payload_len; // payload-only
+                            ctx->done = true;
+                            vTaskDelete(NULL);
+                            return;
+                        } else {
+                            // False tail: push the bytes back into payload stream.
+                            // We previously consumed A5 5A + 4 meta bytes but they weren't real.
+                            // Emit them as payload (if room), then continue scanning.
+                            const uint8_t false_seq[6] = {0xA5, 0x5A, meta[0], meta[1], meta[2], meta[3]};
+                            for (int k = 0; k < 6; k++) {
+                                if (payload_len < ctx->cap) ctx->dst[payload_len++] = false_seq[k];
+                                else { ctx->error = true; ctx->done = true; vTaskDelete(NULL); return; }
+                            }
+                            // resume normal scanning
+                            saw_a5 = false;
+                            meta_idx = 0;
+                        }
                     }
-                    saw_0d = false;
+                    continue;
                 }
+
+                // If we were holding an A5
+                if (saw_a5) {
+                    if (b == 0x5A) {
+                        // Tentatively treat as tail. Start collecting metadata.
+                        meta_needed = 4;
+                        meta_idx = 0;
+                        saw_a5 = false;
+                        continue;
+                    } else {
+                        // Not actually tail: emit the held A5 as payload
+                        if (payload_len < ctx->cap) ctx->dst[payload_len++] = 0xA5;
+                        else { ctx->error = true; break; }
+                        saw_a5 = false;
+                        // fall through to handle b normally
+                    }
+                }
+
                 if (b == 0xA5) {
-                    saw_0d = true;
+                    saw_a5 = true;
+                    continue;
                 }
+
+                // Normal payload byte
+                if (payload_len < ctx->cap) ctx->dst[payload_len++] = b;
+                else { ctx->error = true; break; }
             }
-            ctx->got += (size_t)r;
         }
+
+        if (ctx->error) break;
 
         if (xTaskGetTickCount() > deadline) {
             ctx->error = true;
             break;
         }
-
-        if (ctx->got >= ctx->cap) {
-            ctx->error = true; // overflow protection
-            break;
-        }
     }
+
+    ctx->got = payload_len;
     ctx->done = true;
     vTaskDelete(NULL);
 }
@@ -125,7 +195,7 @@ void singleCapture(void) {
     const uint16_t W_rx = (QVGA_WIDTH/downsample_factor)  - (KERNEL_W - 1);
     const uint16_t H_rx = (QVGA_HEIGHT/downsample_factor) - (KERNEL_W - 1);
     // Received output activation is smaller
-    const size_t rx_bytes = ((size_t)W_rx * H_rx + 7) / 8 + FOOTER_SIZE; // For FPGA processed data
+    const size_t rx_bytes = tx_bytes; // Maximum received buffer size should be same as tx_bytes
 
     arducam_camlock_take();
 
@@ -181,12 +251,17 @@ void singleCapture(void) {
         free(gray_q_tx);
         return;
     }
-    // Create FPGA rx task and transmit over uart
+
     rx_ctx_t rx = {
         .dst = gray_q_rx,
         .cap = rx_bytes,
-        .got = 0, .done = false,
-        .error = false
+        .got = 0,
+        .done = false,
+        .error = false,
+        .image_width = 0,
+        .image_height = 0,
+        .expect_width = W_rx,
+        .expect_height = H_rx,
     };
     uart_flush_input(UART_NUM_1);
     xTaskCreatePinnedToCore(uart_rx_task, "uart_rx", 4096, &rx, 10, NULL, 0);
@@ -218,9 +293,20 @@ void singleCapture(void) {
     /* ----------------------------- Package and Publish Frame ----------------------------- */
     const bool bypass = gpio_get_level(GPIO_BYPASS_FPGA);
 
-    const size_t payload_bytes = bypass ? (tx_bytes-HEADER_SIZE) : rx_bytes;
-    const uint16_t outW = bypass ? W    : W_rx;
-    const uint16_t outH = bypass ? H    : H_rx;
+    const uint16_t outW = bypass ? W : rx.image_width;
+    const uint16_t outH = bypass ? H : rx.image_height;
+
+    size_t payload_bytes;
+    if (bypass) {
+        payload_bytes = tx_bytes - HEADER_SIZE;
+    } else {
+        payload_bytes = (((size_t)outW * outH) + 7) / 8;
+
+        if (payload_bytes > rx.got) payload_bytes = rx.got; // best if rx.got is payload-only
+        if (payload_bytes > rx.cap) payload_bytes = rx.cap;
+    }
+
+    printf("Received height: %d, width: %d\n", rx.image_height, rx.image_width);
 
     size_t packet_len = DATA_START + payload_bytes + 2;
     uint8_t *packet = heap_caps_malloc(packet_len, MALLOC_CAP_8BIT);
@@ -238,9 +324,9 @@ void singleCapture(void) {
     // Package 1bpp data within packet body
     if (bypass) {
         // Bypass FPGA processing and send original packed data
-        memcpy(packet + DATA_START, gray_q_tx + HEADER_SIZE, tx_bytes - HEADER_SIZE);
+        memcpy(packet + DATA_START, gray_q_tx + HEADER_SIZE, payload_bytes);
     } else {
-        memcpy(packet + DATA_START, gray_q_rx, rx_bytes);
+        memcpy(packet + DATA_START, gray_q_rx, payload_bytes);
     }
     // Encode footer with packet end markers
     packet[DATA_START + payload_bytes + 0] = 0xFF;
