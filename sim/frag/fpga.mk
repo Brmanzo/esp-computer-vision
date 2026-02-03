@@ -31,10 +31,16 @@ bitstream: ice40.bin
 ice40.bin: ice40.asc
 	$(ICEPACK) $< $@
 
+buildflash: ice40.bin
+	$(ICEPROG) ice40.bin
+
 util: ice40.asc
 	@awk '/Device utilisation:/{flag=1} flag{print} /ICESTORM_SPRAM/{exit}' ice40.nplog
 
-.PHONY: util
+gbuf: ice40.nplog
+	@grep -niE "global|gbuf|sb_gb|promot|glb" ice40.nplog
+
+.PHONY: util gbuf
 
 # Timing analysis
 ice40.rpt: ice40.asc

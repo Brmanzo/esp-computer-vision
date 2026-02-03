@@ -21,15 +21,10 @@ import pytest
 
 import cocotb
 
-from cocotb.clock import Clock
-from cocotb.regression import TestFactory
-from cocotb.utils import get_sim_time
-from cocotb.triggers import Timer, ClockCycles, RisingEdge, FallingEdge, with_timeout
-from cocotb.types import LogicArray, Range
+from cocotb.triggers import RisingEdge, FallingEdge, with_timeout
+from cocotb.result import SimTimeoutError
 
 from cocotb_test.simulator import run
-
-from cocotbext.axi import AxiLiteBus, AxiLiteMaster, AxiStreamSink, AxiStreamMonitor, AxiStreamBus
    
 import random
 random.seed(50)
@@ -310,6 +305,8 @@ class OutputModel():
         self._coro = None
 
     async def wait(self, t):
+        if self._coro is None:
+            raise RuntimeError("Output Model never started")
         await with_timeout(self._coro, t, 'ns')
 
     def nproduced(self):
@@ -379,7 +376,8 @@ class InputModel():
         self._coro = None
 
     async def wait(self, t):
-        await with_timeout(self._coro, t, 'ns')
+        if self._coro is not None:
+            await with_timeout(self._coro, t, 'ns')
 
     def nconsumed(self):
         return self._nin
@@ -527,7 +525,7 @@ async def single_test(dut):
     timed_out = False
     try:
         await om.wait(tmo_ns)
-    except cocotb.result.SimTimeoutError:
+    except SimTimeoutError:
         timed_out = True
 
     assert not timed_out, (
@@ -586,7 +584,7 @@ async def out_fuzz_test(dut):
     first_out_wait_ns = int(3 * (N_first / rate)) + 50
     try:
         await with_timeout(RisingEdge(dut.valid_o), first_out_wait_ns, 'ns')
-    except cocotb.result.SimTimeoutError:
+    except SimTimeoutError:
         assert 0, (
             f"Timed out waiting for valid_o to go high. "
             f"W={W}, K={K}, N_first={N_first}, ready_rate={rate}, waited={first_out_wait_ns} ns."
@@ -596,7 +594,7 @@ async def out_fuzz_test(dut):
     timeout_ns = int(4 * (N_in / rate) + 4 * (l_out / rate)) + 200
     try:
         await om.wait(timeout_ns)
-    except cocotb.result.SimTimeoutError:
+    except SimTimeoutError:
         assert 0, (
             f"Test timed out. Could not transmit {l_out} valid outputs in {timeout_ns} ns "
             f"with consumer ready rate {rate}. Only transmitted: {om.nproduced()}"
@@ -650,7 +648,7 @@ async def in_fuzz_test(dut):
     first_out_wait_ns = int(3 * (N_first / rate)) + 50
     try:
         await with_timeout(RisingEdge(dut.valid_o), first_out_wait_ns, 'ns')
-    except cocotb.result.SimTimeoutError:
+    except SimTimeoutError:
         assert 0, (
             f"Timed out waiting for valid_o to go high. "
             f"W={W}, K={K}, N_first={N_first}, prod_rate={rate}, waited={first_out_wait_ns} ns."
@@ -660,7 +658,7 @@ async def in_fuzz_test(dut):
     timeout_ns = int(4 * (N_in / rate)) + 200
     try:
         await om.wait(timeout_ns)
-    except cocotb.result.SimTimeoutError:
+    except SimTimeoutError:
         assert 0, (
             f"Test timed out. Could not transmit {l_out} valid outputs in {timeout_ns} ns "
             f"with producer rate {rate}. Only transmitted: {om.nproduced()}"
@@ -721,7 +719,7 @@ async def inout_fuzz_test(dut):
     first_out_wait_ns = int(3 * (N_first / rate)) + 50
     try:
         await with_timeout(RisingEdge(dut.valid_o), first_out_wait_ns, 'ns')
-    except cocotb.result.SimTimeoutError:
+    except SimTimeoutError:
         assert 0, (
             f"Timed out waiting for valid_o to go high. "
             f"W={W}, K={K}, N_first={N_first}, rate={rate}, waited={first_out_wait_ns} ns."
@@ -734,7 +732,7 @@ async def inout_fuzz_test(dut):
 
     try:
         await om.wait(timeout_ns)
-    except cocotb.result.SimTimeoutError:
+    except SimTimeoutError:
         assert 0, (
             f"Test timed out. Could not transmit {l_out} valid outputs in {timeout_ns} ns "
             f"with producer/consumer rate {rate}. Only transmitted: {om.nproduced()}"
@@ -790,7 +788,7 @@ async def full_bw_test(dut):
     first_out_wait_ns = 2 * N_first + 50
     try:
         await with_timeout(RisingEdge(dut.valid_o), first_out_wait_ns, 'ns')
-    except cocotb.result.SimTimeoutError:
+    except SimTimeoutError:
         assert 0, (
             f"Timed out waiting for valid_o to go high. "
             f"W={W}, K={K}, N_first={N_first}, waited={first_out_wait_ns} ns."
@@ -799,7 +797,7 @@ async def full_bw_test(dut):
     # Now wait for l_out outputs
     try:
         await om.wait(timeout_ns)
-    except cocotb.result.SimTimeoutError:
+    except SimTimeoutError:
         assert 0, (
             f"Timed out. Expected {l_out} valid outputs. "
             f"Only got {om.nproduced()} in {timeout_ns} ns."
@@ -866,7 +864,7 @@ async def full_bw_Gx_test(dut):
     first_out_wait_ns = int(2 * N_first) + 50
     try:
         await with_timeout(RisingEdge(dut.valid_o), first_out_wait_ns, 'ns')
-    except cocotb.result.SimTimeoutError:
+    except SimTimeoutError:
         assert 0, (
             f"Timed out waiting for valid_o to go high. "
             f"W={W}, K={K}, N_first={N_first}, waited={first_out_wait_ns} ns."
@@ -876,7 +874,7 @@ async def full_bw_Gx_test(dut):
     timeout_ns = int(2 * N_in) + 100
     try:
         await om.wait(timeout_ns)
-    except cocotb.result.SimTimeoutError:
+    except SimTimeoutError:
         assert 0, (
             f"Timed out. Could not transmit {l_out} valid outputs in {timeout_ns} ns. "
             f"Only transmitted: {om.nproduced()}"
@@ -943,7 +941,7 @@ async def full_bw_Gy_test(dut):
     first_out_wait_ns = int(2 * N_first) + 50
     try:
         await with_timeout(RisingEdge(dut.valid_o), first_out_wait_ns, 'ns')
-    except cocotb.result.SimTimeoutError:
+    except SimTimeoutError:
         assert 0, (
             f"Timed out waiting for valid_o to go high. "
             f"W={W}, K={K}, N_first={N_first}, waited={first_out_wait_ns} ns."
@@ -953,7 +951,7 @@ async def full_bw_Gy_test(dut):
     timeout_ns = int(2 * N_in) + 100
     try:
         await om.wait(timeout_ns)
-    except cocotb.result.SimTimeoutError:
+    except SimTimeoutError:
         assert 0, (
             f"Timed out. Could not transmit {l_out} valid outputs in {timeout_ns} ns. "
             f"Only transmitted: {om.nproduced()}"

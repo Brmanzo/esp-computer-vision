@@ -5,18 +5,19 @@ RTL designed and tested on icebreaker V1.1a FPGA for hardware acceleration.
 
 ## Table of Contents
 
+
 - [ESP Computer Vision](#esp-computer-vision)
   - [Table of Contents](#table-of-contents)
   - [Overview](#overview)
   - [Features So Far](#features-so-far)
   - [Milestones](#milestones)
+  - [Bill of Materials](#bill-of-materials)
   - [Firmware Installation](#firmware-installation)
-  - [Building the ESP Project](#building-the-esp-project)
+    - [Building the ESP Project](#building-the-esp-project)
   - [Hardware Installation](#hardware-installation)
     - [Synthesizing for Icebreaker Board](#synthesizing-for-icebreaker-board)
     - [Unit Testing](#unit-testing)
-    - [Credits](#credits)
-  - [Usage](#usage)
+  - [Credits](#credits)
   - [License](#license)
 
 ## Overview
@@ -51,8 +52,19 @@ My goal for this project is to implement a dynamic system that captures live dat
 - **2025-08-12** — Web server integration
 - **2025-07-27** — JPEG image decoding from ArduCam
 
+## Bill of Materials
+- 1 [ESP32c3 RUST Dev Board](https://www.digikey.com/en/products/detail/espressif-systems/ESP32-C3-DEVKIT-RUST-1/17883272)
+- 1 [Arducam Mini 2MP Plus - OV2640 SPI Camera Module](https://www.arducam.com/arducam-2mp-spi-camera-b0067-arduino.html)
+- 1 [Icebreaker FPGA V1.1a](https://1bitsquared.com/products/icebreaker?srsltid=AfmBOooW6iLzoyD-4AgGGWnSkeym8laQqy-KYlYx5T9ydV_uMVwLNnr3)
+- 1 [Tactile Switch](https://www.adafruit.com/product/367?srsltid=AfmBOopXJDkwZZ3xhYzoRondXTCAUdlD5mo5Dscsqsx_aSRLQ7fGItza)
+- 1 [10KΩ Resistor](https://www.mouser.com/ProductDetail/KOA-Speer/MF1-4DCT52R1002D?qs=N%252ByFMz%252BPAuUNYagYAcIWwQ%3D%3D&srsltid=AfmBOopf6QByeJrdJKKnI24gIPw9OYOuHk75J2uJObQ4Vzyd8SYryvey)
+- [Wire Jumpers](https://www.mouser.com/ProductDetail/Bud-Industries/BC-32626?qs=35lE6QEawPl6Nhk5Cl2jpw%3D%3D&mgh=1&utm_id=22173219802&utm_source=google&utm_medium=cpc&utm_marketing_tactic=amermsp&gad_source=1&gad_campaignid=22282221042&gclid=CjwKCAiA1obMBhAbEiwAsUBbIheD_8AtmTq2KaObIIA5rpbOFelhm25I9fOf8Q4eUZeYwtdDEaLhrxoCDswQAvD_BwE)
+
 ## Firmware Installation
-Espressif toolchain version: ESP-IDF v6.1-dev-1280-gb33c9cd7ce
+| Component | Version |
+|----------|---------|
+|Espressif toolchain | v6.1 (dev-1280-gb33c9cd7ce)|
+
 ```bash
 # Clone the repository
 git clone git@github.com:Brmanzo/esp-computer-vision.git
@@ -71,7 +83,7 @@ SCL    - GPIO_NUM_8
 Button - GPIO_NUM_3
 ```
 
-## Building the ESP Project
+### Building the ESP Project
 ```bash
 # Source the ESP-IDF Toolchain
 source ~/esp/export.sh
@@ -85,10 +97,17 @@ idf.py build flash monitor
 ```
 
 ## Hardware Installation
-Yosys version: Yosys 0.57 (git sha1 3aca86049, clang++ 18.1.3 -fPIC -O3)
-Netlistsvg version: 1.0.2
-Rsvg-convert version: 2.58.0
-CocoTB version: 1.9.1
+| Component | Version |
+|----------|---------|
+| Yosys | 0.57 (git 3aca86049) |
+| nextpnr-ice40 | 0.6-3build5 |
+| Verilator | 5.020 |
+| Icarus Verilog | 12.0 |
+| Verible | v0.0-4051-g9fdb |
+| cocotb | 1.9.1 |
+| Python | 3.12.3 |
+| Netlistsvg | 1.0.2 |
+| librsvg (rsvg-convert) | 2.58.0 |
 
 ```bash
 # Within a Python virtual environment run
@@ -119,13 +138,13 @@ iceprog ice40.bin
 make test
 ```
 
-### Credits
-Arducam's [RPI Pico Cam Project](https://github.com/ArduCAM/RPI-Pico-Cam)<br>
-Alex Forencich's [Verilog-Uart Interface](https://github.com/alexforencichverilog-uart)<br>
-Dustin Richmond's  [CSE 225 ASIC Design Course](https://courses.engineering.ucsc.edu/courses/cse225)<br>
-## Usage
+## Credits
+|Author| Source|
+|----------|---------|
+|Arducam | [RPI Pico Cam Project](https://github.com/ArduCAM/RPI-Pico-Cam) |
+|Alex Forencich | [Verilog-Uart Interface](https://github.com/alexforencichverilog-uart)|
+|Dustin Richmond |  [CSE 225 ASIC Design Course](https://courses.engineering.ucsc.edu/courses/cse225)|
 
-No UI yet, but will be added in the future.
 ## License
 
 This project is licensed under the MIT License. See [esp-computer-vision/LICENSE.md](LICENSE) for details.
