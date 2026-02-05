@@ -1,7 +1,7 @@
 {
-    "top": "conv2d",
+    "top": "conv_layer",
     "files":
-    ["rtl/blocks/conv2d.sv"
+    ["rtl/blocks/conv_layer.sv"
     ,"rtl/lib/counter.sv"
     ,"rtl/lib/counter_roll.sv"
     ,"rtl/lib/elastic.sv"

@@ -1,12 +1,13 @@
 /* verilator lint_off PINCONNECTEMPTY */
 `timescale 1ns / 1ps
-module conv2d #(
+module conv_layer #(
    parameter  int unsigned LineWidthPx = 160
   ,parameter  int unsigned LineCountPx = 120
   ,parameter  int unsigned WidthIn     = 1
   ,parameter  int unsigned WidthOut    = 32
   ,parameter  int unsigned KernelWidth = 3
   ,parameter  int unsigned WeightWidth = 2
+  ,parameter  int unsigned Channels    = 1
   ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
 )  (
    input  [0:0] clk_i
@@ -19,8 +20,8 @@ module conv2d #(
   ,output [0:0] valid_o
   ,input  [0:0] ready_i
 
-  ,output logic signed [WidthOut-1:0] data_o
-  ,input  logic signed [KernelArea-1:0][WeightWidth-1:0] weights_i
+  ,output logic signed [Channels-1:0][WidthOut-1:0] data_o
+  ,input  logic signed [Channels-1:0][KernelArea-1:0][WeightWidth-1:0] weights_i
 );
 
   /* ---------------------------------------- Kernel Validation ---------------------------------------- */
@@ -95,13 +96,13 @@ module conv2d #(
 
   /* ------------------------------------ Window Register Logic ------------------------------------ */
   // Row major Order(window[row][col])
-  logic [WidthIn-1:0] window [KernelWidth][KernelWidth];
+  logic [KernelArea-1:0][WidthIn-1:0] window; // Packed 1D array to hold the kernel window pixels for MAC input
 
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
-        for (int i = 0; i < KernelWidth; i++) begin
-          for (int j = 0; j < KernelWidth; j++) begin
-              window[i][j] <= '0;
+        for (int r = 0; r < KernelWidth; r++) begin
+          for (int c = 0; c < KernelWidth; c++) begin
+              window[r*KernelWidth + c] <= '0;
           end
         end
     end else if (in_fire) begin
@@ -110,27 +111,31 @@ module conv2d #(
       // Bottom line
       for (int r = 0; r < KernelWidth; r++) begin
         for (int c = 0; c < KernelWidth - 1; c++) begin
-            window[r][c] <= window[r][c+1];
+            window[r*KernelWidth + c] <= window[r*KernelWidth + c+1];
         end
       end
       /* -------------------------------- Input Connections -------------------------------- */
       // Load new data into the rightmost column of the window
       // Top line <- Twice seen data from second RAM
       for (int r = 0; r < KernelWidth; r++) begin
-        window[r][KernelWidth-1] <= row_buffers[KernelWidth-1 - r];
+        window[r*KernelWidth + KernelWidth-1] <= row_buffers[KernelWidth-1 - r];
       end
     end
   end
   /* ------------------------------------ Output Logic ------------------------------------ */
-  mac #(
-     .KernelWidth (KernelWidth)
-    ,.WidthIn     (WidthIn)
-    ,.WidthOut    (WidthOut)
-    ,.WeightWidth (WeightWidth)
-  ) mac_inst (
-     .window   (window)
-    ,.weights_i(weights_i)
-    ,.data_o   (data_o)
-  );
+  generate
+    for (genvar ch = 0; ch < Channels; ch++) begin : gen_channels
+      mac #(
+         .KernelWidth(KernelWidth)
+        ,.WidthIn    (WidthIn)
+        ,.WidthOut   (WidthOut)
+        ,.WeightWidth(WeightWidth)
+      ) mac_inst (
+         .window   (window)
+        ,.weights_i(weights_i[ch])
+        ,.data_o   (data_o[ch])
+      );
+    end
+  endgenerate
 
 endmodule

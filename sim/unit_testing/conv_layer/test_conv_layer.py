@@ -99,7 +99,7 @@ def test_style(simulator, LineWidthPx, WidthIn, WidthOut):
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"])
 
-class Conv2DModel():
+class ConvLayerModel():
     def __init__(self, dut, weights: List[List[int]], input_height: int):
         self._kernel_width = int(dut.KernelWidth.value)
         self._f = np.ones((self._kernel_width,self._kernel_width), dtype=int)
@@ -500,7 +500,7 @@ async def single_test(dut):
     rate = 1
 
     kernel = [[1] * K for _ in range(K)]
-    model = Conv2DModel(dut, kernel, input_height=K)
+    model = ConvLayerModel(dut, kernel, input_height=K)
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, RateGenerator(dut, 1), N_out)               # consume 1 output
@@ -560,7 +560,7 @@ async def out_fuzz_test(dut):
     kernel = [[1] * K for _ in range(K)]
     input_height = (N_in + W - 1) // W
 
-    model = Conv2DModel(dut, kernel, input_height=input_height)
+    model = ConvLayerModel(dut, kernel, input_height=input_height)
     m = ModelRunner(dut, model)
 
     # Consumer fuzzed; producer always drives valid
@@ -625,7 +625,7 @@ async def in_fuzz_test(dut):
     kernel = [[1] * K for _ in range(K)]
     input_height = (N_in + W - 1) // W
 
-    model = Conv2DModel(dut, kernel, input_height=input_height)
+    model = ConvLayerModel(dut, kernel, input_height=input_height)
     m = ModelRunner(dut, model)
 
     # Consumer always ready; producer fuzzed
@@ -693,7 +693,7 @@ async def inout_fuzz_test(dut):
     # Height must cover the number of rows implied by N_in inputs
     input_height = (N_in + W - 1) // W
 
-    model = Conv2DModel(dut, kernel, input_height=input_height)
+    model = ConvLayerModel(dut, kernel, input_height=input_height)
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, RateGenerator(dut, rate), l_out)
@@ -766,7 +766,7 @@ async def full_bw_test(dut):
     # If you're only streaming enough for N_in inputs, height is at least ceil(N_in/W).
     input_height = (N_in + W - 1) // W
 
-    model = Conv2DModel(dut, kernel, input_height=input_height)
+    model = ConvLayerModel(dut, kernel, input_height=input_height)
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, RateGenerator(dut, 1), l_out)
@@ -842,7 +842,7 @@ async def full_bw_Gx_test(dut):
     else:
         assert 0, f"Unsupported kernel width {K}"
 
-    model = Conv2DModel(dut, kernel, input_height=input_height)
+    model = ConvLayerModel(dut, kernel, input_height=input_height)
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, RateGenerator(dut, 1), l_out)
@@ -919,7 +919,7 @@ async def full_bw_Gy_test(dut):
     else:
         assert 0, f"Unsupported kernel width {K}"
 
-    model = Conv2DModel(dut, kernel, input_height=input_height)
+    model = ConvLayerModel(dut, kernel, input_height=input_height)
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, RateGenerator(dut, 1), l_out)

@@ -45,10 +45,10 @@ module uart_axis #(
   wire [0:0]                deframer_valid;
   wire [QuantizedWidth-1:0] deframer_data;
 
-  // conv2d Wires
-  wire [0:0]              gx_ready, gy_ready;
-  wire [0:0]              gx_valid, gy_valid;
-  wire [ConvOutWidth-1:0] gx_data, gy_data;
+  // conv_layer Wires
+  wire [0:0]                   conv_layer_ready;
+  wire [0:0]                   conv_layer_valid;
+  wire [1:0][ConvOutWidth-1:0] conv_layer_data;
 
   // Magnitude Wires
   wire [0:0]              mag_ready;
@@ -80,15 +80,6 @@ module uart_axis #(
     endcase
   endfunction
 
-  logic signed [KernelArea-1:0][WeightWidth-1:0] gx_weights;
-
-  genvar j;
-  generate
-    for (j = 0; j < KernelArea; j++) begin : gen_gx
-      assign gx_weights[j] = gx(j);  // gx returns weight_t (signed [2:0])
-    end
-  endgenerate
-
   function automatic weight_t gy(input int unsigned i);
     unique case (i)
       0: gy =  2'sd1;  1: gy =  2'sd1;  2: gy =  2'sd1; 
@@ -98,12 +89,12 @@ module uart_axis #(
     endcase
   endfunction
 
-  logic signed [KernelArea-1:0][WeightWidth-1:0] gy_weights;
-
+  logic signed [1:0][KernelArea-1:0][WeightWidth-1:0] weights;
   genvar k;
   generate
     for (k = 0; k < KernelArea; k++) begin : gen_gy
-      assign gy_weights[k] = gy(k);  // gy_w returns weight_t (signed [2:0])
+      assign weights[0][k] = gx(k);  // gx_w returns weight_t (signed [2:0])
+      assign weights[1][k] = gy(k);  // gy_w returns weight_t (signed [2:0])
     end
   endgenerate
 
@@ -165,52 +156,31 @@ module uart_axis #(
     ,.data_i(skid_data)
 
     ,.valid_o(deframer_valid)
-    ,.ready_i(gx_ready & gy_ready)
+    ,.ready_i(conv_layer_ready)
     ,.unpacked_o(deframer_data)
   );
 
-  // conv2d Filter for Gx gradient
-  conv2d #(
-     .LineWidthPx(WidthIn)
-    ,.LineCountPx(HeightIn)
-    ,.WidthIn    (QuantizedWidth) // Zero pad inputs
-    ,.WidthOut   (ConvOutWidth)
-    ,.KernelWidth(KernelWidth)
-    ,.WeightWidth(WeightWidth)
-  ) conv2d_gx_inst (
-     .clk_i    (clk_i)
-    ,.rst_i    (rst_i)
-    // Unpacker to Gx
-    ,.ready_o  (gx_ready)
-    ,.valid_i  (deframer_valid)
-    ,.data_i   (deframer_data) // "Right shift" by 3 to divide by 8 and average the output
-    // Gx to Elastic Stage
-    ,.ready_i  (mag_ready)
-    ,.valid_o  (gx_valid)
-    ,.data_o   (gx_data)
-    ,.weights_i(gx_weights)
-  );
-
-  // conv2d Filter for Gy gradient
-  conv2d #(
+  // conv_layer Filter for Gy gradient
+  conv_layer #(
      .LineWidthPx(WidthIn)
     ,.LineCountPx(HeightIn)
     ,.WidthIn    (QuantizedWidth)
     ,.WidthOut   (ConvOutWidth)
     ,.KernelWidth(KernelWidth)
     ,.WeightWidth(WeightWidth)
-  ) conv2d_gy_inst (
+    ,.Channels   (2)
+  ) conv_layer_inst (
      .clk_i    (clk_i)
     ,.rst_i    (rst_i)
     // Unpacker to Gy
-    ,.ready_o  (gy_ready)
+    ,.ready_o  (conv_layer_ready)
     ,.valid_i  (deframer_valid)
     ,.data_i   (deframer_data)
     // Gy to Elastic Stage
     ,.ready_i  (mag_ready)
-    ,.valid_o  (gy_valid)
-    ,.data_o   (gy_data)
-    ,.weights_i(gy_weights)
+    ,.valid_o  (conv_layer_valid)
+    ,.data_o   (conv_layer_data)
+    ,.weights_i(weights)
   );
 
   // Magnitude calculated from Gx and Gy
@@ -221,9 +191,9 @@ module uart_axis #(
     ,.rst_i  (rst_i)
     // Elastic Stage to Magnitude
     ,.ready_o(mag_ready)
-    ,.valid_i(gx_valid & gy_valid)
-    ,.gx_i   (gx_data)
-    ,.gy_i   (gy_data)
+    ,.valid_i(conv_layer_valid)
+    ,.gx_i   (conv_layer_data[0])
+    ,.gy_i   (conv_layer_data[1])
     // Magnitude to Packer
     ,.ready_i(framer_ready)
     ,.valid_o(mag_valid)
@@ -232,10 +202,10 @@ module uart_axis #(
 
   always_comb begin
     case (button_i)
-      3'b001:  begin mux_data = deframer_data; mux_valid = deframer_valid; end
-      3'b010:  begin mux_data = gx_data[2];    mux_valid = mag_valid;    end
-      3'b100:  begin mux_data = gy_data[2];    mux_valid = mag_valid;    end
-      default: begin mux_data = mag_data[2];   mux_valid = mag_valid;    end
+      3'b001:  begin mux_data = deframer_data;         mux_valid = deframer_valid; end
+      3'b010:  begin mux_data = conv_layer_data[0][2]; mux_valid = mag_valid;      end
+      3'b100:  begin mux_data = conv_layer_data[1][2]; mux_valid = mag_valid;      end
+      default: begin mux_data = mag_data[2];           mux_valid = mag_valid;      end
     endcase
   end
   // Packs 8 pixels onto a single byte, adds footer at end of frame and sends to UART

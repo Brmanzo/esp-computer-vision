@@ -23,7 +23,7 @@ prog: ice40.bin
 ice40.asc: ice40.json $(PCF_PATH)
 	$(NEXTPNR) -ql ice40.nplog --up5k --package sg48 --freq 12 \
 	  --asc $@ --pcf $(PCF_PATH) --json $< --top top \
-	  --report ice40_report.json
+	  --report ice40_report.json --no-promote-globals
 	  
 
 # Bitstream generation.

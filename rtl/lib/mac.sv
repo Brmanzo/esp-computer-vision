@@ -6,7 +6,7 @@ module mac #(
   ,parameter  int unsigned WeightWidth = 2
   ,localparam int unsigned KernelArea = KernelWidth * KernelWidth
 )  (
-   input [WidthIn-1:0] window [KernelWidth][KernelWidth]
+   input logic [KernelArea-1:0][WidthIn-1:0] window // 1D Packed Array
   ,input  logic signed [KernelArea-1:0][WeightWidth-1:0] weights_i
 
   ,output logic signed [WidthOut-1:0] data_o
@@ -20,11 +20,11 @@ module mac #(
         weight_l = weights_i[r*KernelWidth + c];
         // When binary inputs, only add the weight if the input pixel is a 1
         if (WidthIn-1 == 1) begin // WidthIn includes sign bit, WidthIn = 2 for binary images
-          if (window[r][c] != '0) begin
+          if (window[r*KernelWidth + c] != '0) begin
             acc_l = acc_l + WidthOut'(weight_l);
           end
         end else begin
-          acc_l = acc_l + (WidthOut'(weight_l) * $signed({1'b0, window[r][c]}));
+          acc_l = acc_l + (WidthOut'(weight_l) * $signed({1'b0, window[r*KernelWidth + c]}));
         end
       end
     end
