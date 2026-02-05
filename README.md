@@ -42,6 +42,7 @@ My goal for this project is to implement a dynamic system that captures live dat
 - Dynamic HTML viewing of image over ESP32 Wi-Fi
 
 ## Milestones
+- **2026-02-05** — Convolution Layer with N Channels
 - **2026-01-27** — FPGA packet data framing
 - **2026-01-13** — Streaming raw grayscale image
 - **2026-01-03** — Unpacking hardware to support quantized bitstream

@@ -9,15 +9,21 @@ module uart_axis #(
   ,parameter int unsigned QuantizedWidth = 1
   ,parameter int unsigned PackedNum      = BusWidth / QuantizedWidth
 
-  ,localparam int unsigned BytesIn      = WidthIn * HeightIn / PackedNum
-  ,localparam int unsigned KernelArea   = KernelWidth * KernelWidth
-  ,localparam int unsigned MaxInput     = (1 << QuantizedWidth) - 1
-  ,localparam int unsigned MaxWeight    = (1 << (WeightWidth - 1)) - 1
-  ,localparam int unsigned WorstCaseSum = KernelArea * MaxInput * MaxWeight
-  ,localparam int unsigned ConvOutWidth = $clog2(WorstCaseSum + 1) + 1 // Plus signed bit
+  ,localparam int unsigned BytesIn       = WidthIn * HeightIn / PackedNum
+  ,localparam int unsigned KernelArea    = KernelWidth * KernelWidth
+  ,localparam int unsigned MaxInput      = (1 << QuantizedWidth) - 1
+  ,localparam int unsigned MaxWeight     = (1 << (WeightWidth - 1)) - 1
+  ,localparam int unsigned WorstCaseSum  = KernelArea * MaxInput * MaxWeight
+  ,localparam int unsigned ConvOutWidth  = $clog2(WorstCaseSum + 1) + 1 // Plus signed bit
+  ,localparam int unsigned MagOutWidth   = ConvOutWidth + 1 // Plus bit for magnitude potentially being larger than either Gx or Gy
 
   ,localparam int unsigned WidthOut  = WidthIn - (KernelWidth - 1)
   ,localparam int unsigned HeightOut = HeightIn - (KernelWidth - 1)
+
+  ,localparam int unsigned ConvThreshold = 2
+  ,localparam int unsigned MagThreshold  = ConvThreshold << 1
+  ,localparam logic [ConvOutWidth-1:0] ConvThresh = ConvOutWidth'(ConvThreshold)
+  ,localparam logic [MagOutWidth-1:0]  MagThresh  = MagOutWidth'(MagThreshold)
 )  (
    input  [0:0] clk_i // 25 MHz Clock
   ,input  [0:0] rst_i
@@ -54,7 +60,7 @@ module uart_axis #(
   wire [0:0]              mag_ready;
   wire [0:0]              mag_valid;
   /* verilator lint_off UNUSEDSIGNAL */
-  wire [ConvOutWidth:0]   mag_data;
+  wire [MagOutWidth-1:0]  mag_data;
   /* verilator lint_on UNUSEDSIGNAL */
 
   // Mux Logic
@@ -200,12 +206,17 @@ module uart_axis #(
     ,.mag_o  (mag_data)
   );
 
+  // Instead of selecting arbitrary bit off of signed conv output, take absolute value above a given
+  logic gx_edge  = ($signed(conv_layer_data[0]) >= $signed(ConvThresh));
+  logic gy_edge  = ($signed(conv_layer_data[1]) >= $signed(ConvThresh));
+  logic mag_edge = (mag_data >= MagThresh);
+
   always_comb begin
     case (button_i)
-      3'b001:  begin mux_data = deframer_data;         mux_valid = deframer_valid; end
-      3'b010:  begin mux_data = conv_layer_data[0][2]; mux_valid = mag_valid;      end
-      3'b100:  begin mux_data = conv_layer_data[1][2]; mux_valid = mag_valid;      end
-      default: begin mux_data = mag_data[2];           mux_valid = mag_valid;      end
+      3'b001:  begin mux_data = deframer_data; mux_valid = deframer_valid; end
+      3'b010:  begin mux_data = gx_edge;       mux_valid = mag_valid;      end
+      3'b100:  begin mux_data = gy_edge;       mux_valid = mag_valid;      end
+      default: begin mux_data = mag_edge;      mux_valid = mag_valid;      end
     endcase
   end
   // Packs 8 pixels onto a single byte, adds footer at end of frame and sends to UART
