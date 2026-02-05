@@ -46,9 +46,9 @@ module uart_axis #(
   wire [QuantizedWidth-1:0] deframer_data;
 
   // conv_layer Wires
-  wire [0:0]                   conv_layer_ready;
-  wire [0:0]                   conv_layer_valid;
-  wire [1:0][ConvOutWidth-1:0] conv_layer_data;
+  wire [0:0]                          conv_layer_ready;
+  wire [0:0]                          conv_layer_valid;
+  wire signed [1:0][ConvOutWidth-1:0] conv_layer_data;
 
   // Magnitude Wires
   wire [0:0]              mag_ready;

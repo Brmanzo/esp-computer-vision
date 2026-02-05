@@ -38,8 +38,7 @@ tests = ['reset_test'
          ,'in_fuzz_test'
          ,'out_fuzz_test'
          ,'full_bw_test'
-         ,'full_bw_Gx_test'
-         ,'full_bw_Gy_test']
+         ,'full_bw_Gxy_test']
 
 def output_width(input_width: int, w_sum: int = 8) -> str:
     '''Calculates proper output width for given input width amount of accumulations.'''
@@ -47,26 +46,35 @@ def output_width(input_width: int, w_sum: int = 8) -> str:
     abs_w = math.ceil(math.log2(gray_max * w_sum + 1))
     return str(abs_w + 1)   # +1 for sign bit
 
-def pack_weights(weights: List[int], width: int) -> int:
-    # ws: list of 9 integers, each should fit in signed 3-bit (-4..3)
-    # Pack weight 0 into bits [2:0], weight 1 into [5:3], etc.
+def pack_weights_channels(weights_by_ch, width, kernel_area):
     mask = (1 << width) - 1
-    out = 0
-
     lo, hi = -(1 << (width - 1)), (1 << (width - 1)) - 1
-
-    for i, w in enumerate(weights):
-        # convert signed to 3-bit two's complement
-        assert lo <= w <= hi, f"weight[{i}]={w} out of range for signed {width}-bit ({lo}..{hi})"
-        out |= (w & mask) << (width*i)
+    out = 0
+    for ch, ws in enumerate(weights_by_ch):
+        assert len(ws) == kernel_area
+        for k, w in enumerate(ws):
+            assert lo <= w <= hi
+            shift = width * (k + kernel_area * ch)   # k first, then channel
+            out |= (w & mask) << shift
     return out
+
+def sign_extend(val: int, bits: int) -> int:
+    sign = 1 << (bits - 1)
+    return (val ^ sign) - sign
+
+def flatten_kernel(k2d):
+    # row-major flatten: k[r][c] -> k[r*K+c]
+    return [v for row in k2d for v in row]
 
 weights = [1]*9
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth", [("16", "1", output_width(1), "3"), ("32", "2", output_width(2), "5")])
-def test_each(test_name, simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth):
+@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth, Channels", 
+                         [("16", "1", output_width(1), "3", "1"),
+                          ("32", "2", output_width(2), "5", "1"),
+                          ("16", "1", output_width(1), "3", "2")])
+def test_each(test_name, simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth, Channels):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
@@ -76,8 +84,11 @@ def test_each(test_name, simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth)
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth", [("16", "1", output_width(1), "3"), ("32", "2", output_width(2), "5")])
-def test_all(simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth):
+@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth, Channels", 
+                         [("16", "1", output_width(1), "3", "1"),
+                          ("32", "2", output_width(2), "5", "1"),
+                          ("16", "1", output_width(1), "3", "2")])
+def test_all(simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth, Channels):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
@@ -100,7 +111,7 @@ def test_style(simulator, LineWidthPx, WidthIn, WidthOut):
     lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"])
 
 class ConvLayerModel():
-    def __init__(self, dut, weights: List[List[int]], input_height: int):
+    def __init__(self, dut, weights: List[List[List[int]]], input_height: int):
         self._kernel_width = int(dut.KernelWidth.value)
         self._f = np.ones((self._kernel_width,self._kernel_width), dtype=int)
         self._dut = dut
@@ -111,6 +122,8 @@ class ConvLayerModel():
 
         self._input_width = int(dut.LineWidthPx.value)
         self._input_height = input_height
+        self._WidthOut = int(dut.WidthOut.value)
+        self._channels = int(dut.Channels.value)
 
         # We're going to initialize _buf with NaN so that we can
         # detect when the output should be not an X in simulation
@@ -118,7 +131,8 @@ class ConvLayerModel():
         self._deqs = 0
         self._enqs = 0
 
-        self.k = weights
+        self.k = np.array(weights, dtype=int)
+        assert self.k.shape == (self._channels, self._kernel_width, self._kernel_width)
 
         self._in_idx = 0
         self._valid_cycles = np.ones((self._input_height, self._input_width), dtype=bool)
@@ -150,9 +164,11 @@ class ConvLayerModel():
 
     def apply_kernel(self, buf):
         window = buf[:,-self._kernel_width:]
+        window = window.astype(int, copy=False)
+        result = np.zeros(self._channels, dtype=int)
         # Now take the dot product between the window, and the kernel
-        prod = np.multiply(self.k, window)
-        result = prod.sum()
+        for ch in range(self._channels):
+            result[ch] = int((self.k[ch] * window).sum())
         return result
 
     def consume(self):
@@ -179,20 +195,28 @@ class ConvLayerModel():
             return None
 
         # compute expected NOW, while _buf matches this accepted input position
-        expected = int(self.apply_kernel(self._buf))
+        expected = self.apply_kernel(self._buf)
         return expected
 
-    def produce(self, expected: int):
-        """Called on each OUTPUT handshake, with the expected value for that output."""
-        self._deqs += 1
-
+    def produce(self, expected):
         assert_resolvable(self._data_o)
-        got = int(self._data_o.value.signed_integer)
 
-        assert got == expected, (
-            f"Error! Output value on iteration {self._deqs} does not match expected. "
-            f"Expected: {expected}. Got: {got}"
-        )
+        # Per-channel width in bits (ConvOutWidth)
+        w = int(self._dut.WidthOut.value) if hasattr(self._dut, "WidthOut") else int(self._dut.ConvOutWidth.value)
+        # ^ if WidthOut param isn't on dut, use the same width you used for the RTL data_o element
+        # In your uart_axis, it’s ConvOutWidth.
+
+        packed = int(self._data_o.value.integer)  # whole [Channels][WidthOut] blob as an int
+
+        for ch in range(self._channels):
+            raw = (packed >> (ch * w)) & ((1 << w) - 1)   # assumes ch=0 is LSB slice
+            got = sign_extend(raw, w)
+            exp = int(expected[ch])
+
+            assert got == exp, (
+                f"Mismatch at output #{self._deqs} ch{ch}: expected {exp}, got {got} "
+                f"(raw=0x{raw:x})"
+            )
 
 class ReadyValidInterface():
     def __init__(self, clk, reset, ready, valid):
@@ -338,7 +362,7 @@ class OutputModel():
                 assert_resolvable(valid_o)
                 #assert valid_o.value.is_resolvable, f"Unresolvable value in valid_o (x or z in some or all bits) at Time {get_sim_time(units='ns')}ns."
 
-                success = True if (valid_o.value == 1) else False
+                success = True if ready_i.value == 1 and valid_o.value == 1 else False
                 if (success):
                     self._nout += 1
 
@@ -490,6 +514,7 @@ async def single_test(dut):
 
     W = int(dut.LineWidthPx.value)
     K = int(dut.KernelWidth.value)
+    C = int(dut.Channels.value)
 
     # Number of accepted inputs until first valid output position (x=K-1, y=K-1)
     N_first = (K - 1) * W + (K - 1) + 1
@@ -499,7 +524,7 @@ async def single_test(dut):
 
     rate = 1
 
-    kernel = [[1] * K for _ in range(K)]
+    kernel = [[[1]*K for _ in range(K)] for _ in range(C)]
     model = ConvLayerModel(dut, kernel, input_height=K)
     m = ModelRunner(dut, model)
 
@@ -508,7 +533,9 @@ async def single_test(dut):
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
-    dut.weights_i.value = pack_weights([1] * (K * K), 2)
+    WeightWidth = int(dut.WeightWidth.value)
+    weights_by_ch = [[1]*(K*K) for _ in range(C)]
+    dut.weights_i.value = pack_weights_channels(weights_by_ch, WeightWidth, K*K)
 
     await clock_start_sequence(dut.clk_i)
     await reset_sequence(dut.clk_i, dut.rst_i, 10)
@@ -547,6 +574,7 @@ async def out_fuzz_test(dut):
 
     W = int(dut.LineWidthPx.value)
     K = int(dut.KernelWidth.value)
+    C = int(dut.Channels.value)
 
     # Observe 4 rows of VALID outputs
     l_out = (W - (K - 1)) * 4
@@ -557,7 +585,7 @@ async def out_fuzz_test(dut):
     # Consumer ready probability
     rate = 0.5
 
-    kernel = [[1] * K for _ in range(K)]
+    kernel = [[[1] * K for _ in range(K)] for _ in range(C)]
     input_height = (N_in + W - 1) // W
 
     model = ConvLayerModel(dut, kernel, input_height=input_height)
@@ -569,7 +597,9 @@ async def out_fuzz_test(dut):
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
-    dut.weights_i.value = pack_weights([1] * (K * K), 2)
+    weights_by_ch = [[1]*(K*K) for _ in range(C)]
+    WeightWidth = int(dut.WeightWidth.value)
+    dut.weights_i.value = pack_weights_channels(weights_by_ch, WeightWidth, K*K)
 
     await clock_start_sequence(dut.clk_i)
     await reset_sequence(dut.clk_i, dut.rst_i, 10)
@@ -612,6 +642,7 @@ async def in_fuzz_test(dut):
 
     W = int(dut.LineWidthPx.value)
     K = int(dut.KernelWidth.value)
+    C = int(dut.Channels.value)
 
     # Observe 4 rows of VALID outputs
     l_out = (W - (K - 1)) * 4
@@ -622,7 +653,7 @@ async def in_fuzz_test(dut):
     # Producer valid probability
     rate = 0.5
 
-    kernel = [[1] * K for _ in range(K)]
+    kernel = [[[1] * K for _ in range(K)] for _ in range(C)]
     input_height = (N_in + W - 1) // W
 
     model = ConvLayerModel(dut, kernel, input_height=input_height)
@@ -634,7 +665,9 @@ async def in_fuzz_test(dut):
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
-    dut.weights_i.value = pack_weights([1] * (K * K), 2)
+    weights_by_ch = [[1]*(K*K) for _ in range(C)]
+    WeightWidth = int(dut.WeightWidth.value)
+    dut.weights_i.value = pack_weights_channels(weights_by_ch, WeightWidth, K*K)
 
     await clock_start_sequence(dut.clk_i)
     await reset_sequence(dut.clk_i, dut.rst_i, 10)
@@ -677,6 +710,7 @@ async def inout_fuzz_test(dut):
 
     W = int(dut.LineWidthPx.value)
     K = int(dut.KernelWidth.value)
+    C = int(dut.Channels.value)
 
     # Observe 4 rows of VALID outputs (same convention)
     l_out = (W - (K - 1)) * 4
@@ -688,7 +722,7 @@ async def inout_fuzz_test(dut):
     # Both sides fuzzed
     rate = 0.5  # producer valid_i probability AND consumer ready_i probability
 
-    kernel = [[1] * K for _ in range(K)]
+    kernel = [[[1] * K for _ in range(K)] for _ in range(C)]
 
     # Height must cover the number of rows implied by N_in inputs
     input_height = (N_in + W - 1) // W
@@ -701,7 +735,9 @@ async def inout_fuzz_test(dut):
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
-    dut.weights_i.value = pack_weights([1] * (K * K), 2)
+    weights_by_ch = [[1]*(K*K) for _ in range(C)]
+    WeightWidth = int(dut.WeightWidth.value)
+    dut.weights_i.value = pack_weights_channels(weights_by_ch, WeightWidth, K*K)
 
     await clock_start_sequence(dut.clk_i)
     await reset_sequence(dut.clk_i, dut.rst_i, 10)
@@ -745,6 +781,7 @@ async def full_bw_test(dut):
 
     W = int(dut.LineWidthPx.value)
     K = int(dut.KernelWidth.value)
+    C = int(dut.Channels.value)
 
     # Observe 4 rows of VALID outputs (same convention as before)
     l_out = (W - (K - 1)) * 4
@@ -760,7 +797,7 @@ async def full_bw_test(dut):
     # If your clock is 1ns, N_in cycles ~ N_in ns. Add cushion.
     timeout_ns = 2 * N_in + 50
 
-    kernel = [[1] * K for _ in range(K)]
+    kernel = [[[1] * K for _ in range(K)] for _ in range(C)]
 
     # IMPORTANT: pass input_height (how many rows you will stream in this test)
     # If you're only streaming enough for N_in inputs, height is at least ceil(N_in/W).
@@ -774,7 +811,9 @@ async def full_bw_test(dut):
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
-    dut.weights_i.value = pack_weights([1] * (K * K), 2)
+    weights_by_ch = [[1]*(K*K) for _ in range(C)]
+    WeightWidth = int(dut.WeightWidth.value)
+    dut.weights_i.value = pack_weights_channels(weights_by_ch, WeightWidth, K*K)
 
     await clock_start_sequence(dut.clk_i)
     await reset_sequence(dut.clk_i, dut.rst_i, 10)
@@ -805,11 +844,12 @@ async def full_bw_test(dut):
 
 
 @cocotb.test
-async def full_bw_Gx_test(dut):
+async def full_bw_Gxy_test(dut):
     """Transmit data at 100% line rate with Gx kernel; verify l_out valid outputs."""
 
     W = int(dut.LineWidthPx.value)
     K = int(dut.KernelWidth.value)
+    C = int(dut.Channels.value)
     rate = 1
 
     # Observe 4 rows of VALID outputs
@@ -822,27 +862,32 @@ async def full_bw_Gx_test(dut):
 
     # Kernel weights
     if K == 3:
-        kernel = [[-1, 0, 1],
-                  [-1, 0, 1],
-                  [-1, 0, 1]]
-        flat_w = [-1, 0, 1,
-                  -1, 0, 1,
-                  -1, 0, 1]
+        gx_k = [[-1, 0, 1],
+                [-1, 0, 1],
+                [-1, 0, 1]]
+        gy_k = [[-1, -1, -1],
+                [ 0,  0,  0],
+                [ 1,  1,  1]]
     elif K == 5:
-        kernel = [[-1, -1, 0, 1, 1],
-                  [-1, -1, 0, 1, 1],
-                  [-1, -1, 0, 1, 1],
-                  [-1, -1, 0, 1, 1],
-                  [-1, -1, 0, 1, 1]]
-        flat_w = [-1, -1, 0, 1, 1,
-                  -1, -1, 0, 1, 1,
-                  -1, -1, 0, 1, 1,
-                  -1, -1, 0, 1, 1,
-                  -1, -1, 0, 1, 1]
+        gx_k = [[-1, -1, 0, 1, 1],
+                [-1, -1, 0, 1, 1],
+                [-1, -1, 0, 1, 1],
+                [-1, -1, 0, 1, 1],
+                [-1, -1, 0, 1, 1]]
+        gy_k = [[-1, -1, -1, -1, -1],
+                [-1, -1, -1, -1, -1],
+                [ 0,  0,  0,  0,  0],
+                [ 1,  1,  1,  1,  1],
+                [ 1,  1,  1,  1,  1]]
     else:
         assert 0, f"Unsupported kernel width {K}"
 
-    model = ConvLayerModel(dut, kernel, input_height=input_height)
+    assert C in (1, 2), f"Expected Channels 1 or 2, got {C}"
+    kernel_by_ch = [gx_k] if C == 1 else [gx_k, gy_k]
+
+    weights_by_ch_flat = [flatten_kernel(k) for k in kernel_by_ch]
+
+    model = ConvLayerModel(dut, kernel_by_ch, input_height=input_height)
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, RateGenerator(dut, 1), l_out)
@@ -850,84 +895,8 @@ async def full_bw_Gx_test(dut):
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
-    dut.weights_i.value = pack_weights(flat_w, 2)
-
-    await clock_start_sequence(dut.clk_i)
-    await reset_sequence(dut.clk_i, dut.rst_i, 10)
-    await FallingEdge(dut.clk_i)
-
-    m.start()
-    om.start()
-    im.start()
-
-    # Wait for first output to appear (scaled to N_first)
-    first_out_wait_ns = int(2 * N_first) + 50
-    try:
-        await with_timeout(RisingEdge(dut.valid_o), first_out_wait_ns, 'ns')
-    except SimTimeoutError:
-        assert 0, (
-            f"Timed out waiting for valid_o to go high. "
-            f"W={W}, K={K}, N_first={N_first}, waited={first_out_wait_ns} ns."
-        )
-
-    # Full-bandwidth run timeout (scaled to N_in)
-    timeout_ns = int(2 * N_in) + 100
-    try:
-        await om.wait(timeout_ns)
-    except SimTimeoutError:
-        assert 0, (
-            f"Timed out. Could not transmit {l_out} valid outputs in {timeout_ns} ns. "
-            f"Only transmitted: {om.nproduced()}"
-        )
-
-
-@cocotb.test
-async def full_bw_Gy_test(dut):
-    """Transmit data at 100% line rate with Gy kernel; verify l_out valid outputs."""
-
-    W = int(dut.LineWidthPx.value)
-    K = int(dut.KernelWidth.value)
-    rate = 1
-
-    # Observe 4 rows of VALID outputs
-    l_out = (W - (K - 1)) * 4
-
-    # First valid output at (x=K-1, y=K-1)
-    N_first = (K - 1) * W + (K - 1) + 1
-    N_in = (N_first - 1) + l_out
-    input_height = (N_in + W - 1) // W
-
-    # Kernel weights
-    if K == 3:
-        kernel = [[-1, -1, -1],
-                  [ 0,  0,  0],
-                  [ 1,  1,  1]]
-        flat_w = [-1, -1, -1,
-                  0,  0,  0,
-                  1,  1,  1]
-    elif K == 5:
-        kernel = [[-1, -1, -1, -1, -1],
-                  [-1, -1, -1, -1, -1],
-                  [ 0,  0,  0,  0,  0],
-                  [ 1,  1,  1,  1,  1],
-                  [ 1,  1,  1,  1,  1]]
-        flat_w = [-1, -1, -1, -1, -1,
-                  -1, -1, -1, -1, -1,
-                  0,  0,  0,  0,  0,
-                  1,  1,  1,  1,  1,
-                  1,  1,  1,  1,  1]
-    else:
-        assert 0, f"Unsupported kernel width {K}"
-
-    model = ConvLayerModel(dut, kernel, input_height=input_height)
-    m = ModelRunner(dut, model)
-
-    om = OutputModel(dut, RateGenerator(dut, 1), l_out)
-    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), N_in)
-
-    dut.ready_i.value = 0
-    dut.valid_i.value = 0
-    dut.weights_i.value = pack_weights(flat_w, 2)
+    WeightWidth = int(dut.WeightWidth.value)
+    dut.weights_i.value = pack_weights_channels(weights_by_ch_flat, WeightWidth, K*K)
 
     await clock_start_sequence(dut.clk_i)
     await reset_sequence(dut.clk_i, dut.rst_i, 10)
