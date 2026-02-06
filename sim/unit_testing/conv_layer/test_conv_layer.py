@@ -204,7 +204,6 @@ class ConvLayerModel():
         # Per-channel width in bits (ConvOutWidth)
         w = int(self._dut.WidthOut.value) if hasattr(self._dut, "WidthOut") else int(self._dut.ConvOutWidth.value)
         # ^ if WidthOut param isn't on dut, use the same width you used for the RTL data_o element
-        # In your uart_axis, it’s ConvOutWidth.
 
         packed = int(self._data_o.value.integer)  # whole [Channels][WidthOut] blob as an int
 

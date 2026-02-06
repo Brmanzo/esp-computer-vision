@@ -77,7 +77,6 @@ module unpacker #(
     ,.count_o  (counter)
   );
 
-  wire [ElasticWidth-1:0] elastic_in  = {last, unpacked};
   wire [ElasticWidth-1:0] elastic_out;
   assign unpacked_o = elastic_out[UnpackedWidth-1:0];
   assign done_o = done;
@@ -89,7 +88,7 @@ module unpacker #(
   ) elastic_inst (
      .clk_i  (clk_i)
     ,.rst_i  (rst_i)
-    ,.data_i (elastic_in)
+    ,.data_i ({last, unpacked})
     ,.valid_i(unpacking)
     ,.ready_o(elastic_ready)
     ,.valid_o(valid_o)

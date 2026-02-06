@@ -5,8 +5,7 @@ PCF_PATH = $(REPO_ROOT)/boards/icebreakerV1_1a/icebreaker.pcf
 -include $(REPO_ROOT)/sim/frag/synth.mk
 -include $(REPO_ROOT)/sim/frag/fpga.mk
 
-UNIT_TEST_DIRS := $(filter-out \
-  $(wildcard $(REPO_ROOT)/sim/unit_testing/*))
+UNIT_TEST_DIRS := $(wildcard $(REPO_ROOT)/sim/unit_testing/*/Makefile)
 
 .PHONY: clean-all
 

@@ -1,9 +1,9 @@
-// uart_axis.sv
+// uart_cnn.sv
 // Bradley Manzo, 2026
 
 `timescale 1ns / 1ps
 /* verilator lint_off PINCONNECTEMPTY */
-module uart_axis #(
+module uart_cnn #(
    parameter int unsigned WidthIn        = 320
   ,parameter int unsigned HeightIn       = 240
   ,parameter int unsigned KernelWidth    = 3

@@ -111,14 +111,14 @@ wire [0:0] uart_tx;
   assign esp_tx_o = 1'b1;
 `endif
 
-  uart_axis #(
+  uart_cnn #(
      .WidthIn        (320)
     ,.HeightIn       (240)
     ,.KernelWidth    (3)
     ,.WeightWidth    (2)
     ,.BusWidth       (8)
     ,.QuantizedWidth (1)
-  ) uart_axis_inst (
+  ) uart_cnn_inst (
      .clk_i      (clk_25mhz_o)
     ,.rst_i      (rst)
 
