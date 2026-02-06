@@ -8,7 +8,7 @@ extern "C" {
 #endif
 
 /* Capture a single frame, loopsback from FPGA, and publish to Wifi. */
-void singleCapture(void);
+bool singleCapture(void);
 
 #ifdef __cplusplus
 }

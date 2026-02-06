@@ -166,7 +166,7 @@ void arducam_reset_fifo(void) {
     spi_write_reg(ARDUCHIP_FIFO, FIFO_RDPTR_RST_MASK | FIFO_WRPTR_RST_MASK);
     spi_write_reg(ARDUCHIP_TRIG, CAP_DONE_MASK); 
     if (spi_read_fifo_len() > 0) {
-        ESP_LOGW("cam", "FIFO stubborn! Force clearing again.");
+        // ESP_LOGW("cam", "FIFO stubborn! Force clearing again.");
         spi_write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK);
         spi_write_reg(ARDUCHIP_FIFO, 0x00);
         spi_write_reg(ARDUCHIP_FIFO, FIFO_RDPTR_RST_MASK | FIFO_WRPTR_RST_MASK);
@@ -175,7 +175,7 @@ void arducam_reset_fifo(void) {
 
     // Ensure that FIFO is empty before capture
     if (spi_read_fifo_len() > 0) {
-        ESP_LOGW("cam", "FIFO not empty after reset! Force clearing again.");
+        // ESP_LOGW("cam", "FIFO not empty after reset! Force clearing again.");
         spi_write_reg(ARDUCHIP_FIFO, FIFO_CLEAR_MASK);
         spi_write_reg(ARDUCHIP_FIFO, 0x00);
     }

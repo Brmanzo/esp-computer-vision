@@ -111,7 +111,7 @@ static void uart_rx_task(void *arg)
     vTaskDelete(NULL);
 }
 
-void singleCapture(void) {
+bool singleCapture(void) {
 
     static uint8_t capture_num = 0;
     static uint8_t adaptive_th = 0;
@@ -143,7 +143,7 @@ void singleCapture(void) {
             ESP_LOGE("cam", "Timeout waiting for CAP_DONE");
             spi_write_reg(ARDUCHIP_FIFO, 0x00); // Stop
             arducam_camlock_give();
-            return;
+            return false;
         }
     }
     arducam_stop_capture();
@@ -153,7 +153,7 @@ void singleCapture(void) {
     if (!gray_q_tx) {
         ESP_LOGE("cam","OOM gray_q_tx %u", (unsigned)tx_bytes);
         arducam_camlock_give();
-        return;
+        return false;
     }
     // Reads Raw YUV422 from fifo and packs to 1bpp grayscale
     esp_err_t re = arducam_read_and_pack_stream(gray_q_tx, tx_bytes, &adaptive_th, capture_num, downsample_factor);
@@ -163,7 +163,7 @@ void singleCapture(void) {
     if (re != ESP_OK) {
         ESP_LOGE("cam","read/pack failed: %s", esp_err_to_name(re));
         free(gray_q_tx);
-        return;
+        return false;
     }
 
     /* ---------------- Transmit Packed 1bpp Data to FPGA for Image Processing ---------------- */
@@ -171,15 +171,16 @@ void singleCapture(void) {
     // Skip fpga and publish if sampling for adaptive threshold only
     if (capture_num >= RECALIBRATE_INTERVAL) {
         free(gray_q_tx);
+        ESP_LOGI("cam", "Recalibration capture #%u: adaptive_th=%u", (unsigned)capture_num, (unsigned)adaptive_th);
         capture_num = 0;
-        return;
+        return true;
     }
 
     uint8_t *gray_q_rx = (uint8_t*)heap_caps_malloc(rx_bytes, MALLOC_CAP_8BIT);
     if (!gray_q_rx) {
         ESP_LOGE("main", "OOM gray_q_rx");
         free(gray_q_tx);
-        return;
+        return false;
     }
     // Create FPGA rx task and transmit over uart
     rx_ctx_t rx = {
@@ -210,10 +211,10 @@ void singleCapture(void) {
     while (!rx.done) vTaskDelay(pdMS_TO_TICKS(10));
 
     if (rx.error) {
-        ESP_LOGW("uart", "rx failed: got %u/%u bytes", (unsigned)rx.got, (unsigned)rx.cap);
+        ESP_LOGE("uart", "rx failed: got %u/%u bytes", (unsigned)rx.got, (unsigned)rx.cap);
         free(gray_q_tx);
         free(gray_q_rx);
-        return;
+        return false;
     }
     /* ----------------------------- Package and Publish Frame ----------------------------- */
     const bool bypass = gpio_get_level(GPIO_BYPASS_FPGA);
@@ -228,7 +229,7 @@ void singleCapture(void) {
         ESP_LOGE("main", "packet malloc failed");
         free(gray_q_tx);
         free(gray_q_rx);
-        return;
+        return false;
     }
 
     // Encode Image dimensions in header
@@ -255,4 +256,5 @@ void singleCapture(void) {
 
     free(packet);
     vTaskDelay(pdMS_TO_TICKS(1));
+    return true;
 }
