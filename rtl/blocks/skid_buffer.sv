@@ -1,3 +1,6 @@
+// skid_buffer.sv
+// Bradley Manzo, 2026
+
 `timescale 1ns / 1ps
 /* verilator lint_off PINCONNECTEMPTY */
 module skid_buffer #(

@@ -1,3 +1,6 @@
+// counter.sv
+// Bradley Manzo, 2026
+
 `timescale 1ns / 1ps
 module counter #(
    parameter int unsigned         Width = 4

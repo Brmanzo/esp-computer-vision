@@ -1,3 +1,6 @@
+// uart_axis.sv
+// Bradley Manzo, 2026
+
 `timescale 1ns / 1ps
 /* verilator lint_off PINCONNECTEMPTY */
 module uart_axis #(
@@ -8,6 +11,7 @@ module uart_axis #(
   ,parameter int unsigned BusWidth       = 8
   ,parameter int unsigned QuantizedWidth = 1
   ,parameter int unsigned PackedNum      = BusWidth / QuantizedWidth
+  ,parameter int unsigned Channels       = 2
 
   ,localparam int unsigned BytesIn       = WidthIn * HeightIn / PackedNum
   ,localparam int unsigned KernelArea    = KernelWidth * KernelWidth
@@ -52,9 +56,9 @@ module uart_axis #(
   wire [QuantizedWidth-1:0] deframer_data;
 
   // conv_layer Wires
-  wire [0:0]                          conv_layer_ready;
-  wire [0:0]                          conv_layer_valid;
-  wire signed [1:0][ConvOutWidth-1:0] conv_layer_data;
+  wire [0:0]                               conv_layer_ready;
+  wire [0:0]                               conv_layer_valid;
+  wire signed [Channels-1:0][ConvOutWidth-1:0] conv_layer_data;
 
   // Magnitude Wires
   wire [0:0]              mag_ready;
@@ -95,7 +99,7 @@ module uart_axis #(
     endcase
   endfunction
 
-  logic signed [1:0][KernelArea-1:0][WeightWidth-1:0] weights;
+  logic signed [Channels-1:0][KernelArea-1:0][WeightWidth-1:0] weights;
   genvar k;
   generate
     for (k = 0; k < KernelArea; k++) begin : gen_gy
@@ -174,7 +178,7 @@ module uart_axis #(
     ,.WidthOut   (ConvOutWidth)
     ,.KernelWidth(KernelWidth)
     ,.WeightWidth(WeightWidth)
-    ,.Channels   (2)
+    ,.Channels   (Channels)
   ) conv_layer_inst (
      .clk_i    (clk_i)
     ,.rst_i    (rst_i)

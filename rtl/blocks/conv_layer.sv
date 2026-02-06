@@ -1,3 +1,6 @@
+// conv_layer.sv
+// Bradley Manzo, 2026
+  
 /* verilator lint_off PINCONNECTEMPTY */
 `timescale 1ns / 1ps
 module conv_layer #(

@@ -1,3 +1,6 @@
+// mac.sv
+// Bradley Manzo, 2026
+
 `timescale 1ns / 1ps
 module mac #(
    parameter  int unsigned KernelWidth = 3

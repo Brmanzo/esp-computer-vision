@@ -1,5 +1,5 @@
 // ram_1r1w_sync.sv
-// Bradley Manzo
+// Bradley Manzo, 2026
 
 `timescale 1ns / 1ps
 module ram_1r1w_sync #(

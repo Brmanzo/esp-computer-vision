@@ -1,3 +1,6 @@
+// counter_roll.sv
+// Bradley Manzo, 2026
+
 `timescale 1ns / 1ps
 module counter_roll #(
  parameter int unsigned         Width = 8

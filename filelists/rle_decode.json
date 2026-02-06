@@ -1,8 +1,0 @@
-{
-    "top": "rle_decode",
-    "files":
-    ["rtl/blocks/rle_decode.sv"
-    ,"rtl/lib/elastic.sv"
-    ,"rtl/lib/counter_roll.sv"
-    ]
-}

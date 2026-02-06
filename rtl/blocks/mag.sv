@@ -1,3 +1,6 @@
+// mag.sv
+// Bradley Manzo, 2026
+
 `timescale 1ns / 1ps
 module mag #(
    parameter int unsigned Width = 14

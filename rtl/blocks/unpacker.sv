@@ -1,3 +1,6 @@
+// unpacker.sv
+// Bradley Manzo, 2026
+
 `timescale 1ns / 1ps
 module unpacker #(
    parameter  int unsigned  UnpackedWidth          = 2

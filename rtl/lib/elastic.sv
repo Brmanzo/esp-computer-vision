@@ -1,3 +1,6 @@
+// elastic.sv
+// Bradley Manzo, 2026
+
 `timescale 1ns / 1ps
 module elastic #(
      parameter int unsigned Width = 8

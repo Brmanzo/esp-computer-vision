@@ -1,3 +1,6 @@
+// delaybuffer.sv
+// Bradley Manzo, 2026
+
 `timescale 1ns / 1ps
 module delaybuffer #(
    parameter  int unsigned Width     = 8
