@@ -93,11 +93,13 @@ class FramerModel():
 
         # Framer specific
         self._PacketLenElems = int(dut.PacketLenElems.value)
+        self._WakeupCmd = int(dut.WakeupCmd.value)
         self._tail0 = int(dut.TailByte0.value)
         self._tail1 = int(dut.TailByte1.value)
 
         # Packet counter
-        self._count = 0
+        self._count  = 0
+        self._wakeup_sent = False
 
         # Packing State
         self._step  = 0
@@ -107,6 +109,20 @@ class FramerModel():
         self._enqs  = 0
 
         self._q = queue.SimpleQueue()
+
+    def reset(self):
+        # Clear model state to match DUT reset behavior
+        self._count = 0
+        self._wakeup_sent = False
+        self._step = 0
+        self._acc = 0
+
+        # reset expected queue
+        self._q = queue.SimpleQueue()
+
+        # Wakeup is emitted once after reset release
+        self._q.put(self._WakeupCmd)
+        self._wakeup_sent = True
     
     def consume(self):
         assert_resolvable(self._unpacked_i)
@@ -133,11 +149,13 @@ class FramerModel():
             self._count = 0
         else:
             self._count += 1
-
+        # Packed byte completed + two tail bytes
         if completed_pack and last_elem:
             return 3
+        # Packed byte completed
         elif completed_pack:
             return 1
+        # Byte not completed yet, no output produced
         else:
             return 0
 
@@ -202,45 +220,6 @@ class RandomDataGenerator():
     def generate(self):
         x_i = random.randint(0, (1 << self._width_p) - 1)
         return (x_i)
-       
-class EdgeCaseGenerator():
-
-    def __init__(self, dut):
-        self._dut = dut
-        limits = [0, 1, (1 << self._dut.width_p.value) - 1]
-        self._pairs = list(product(limits, limits))
-        self._loc = 0
-
-    def ninputs(self):
-        return len(self._pairs)
-
-    def generate(self):
-        val = self._pairs[self._loc]
-        self._loc += 1
-        return val
-
-class CountingDataGenerator():
-    def __init__(self, dut):
-        self._dut = dut
-        self._cur = 0
-
-    def generate(self):
-        value = self._cur
-        self._cur += 1
-        return value
-
-class CountingGenerator():
-    def __init__(self, dut, r):
-        self._rate = int(1/r)
-        self._init = 0
-
-    def generate(self):
-        if(self._rate == 0):
-            return False
-        else:
-            retval = (self._init == 1)
-            self._init = (self._init + 1) % self._rate
-            return retval
 
 class RateGenerator():
     def __init__(self, dut, r):
@@ -430,14 +409,20 @@ class ModelRunner():
 
     async def _run(self):
         dut = self._dut
+        was_in_reset = True
 
         while True:
             await RisingEdge(self._clk_i)
 
-            # Skip reset cycles
-            if (not self._reset_i.value.is_resolvable) or int(self._reset_i.value) == 1:
-                self._expected_out_bytes = 0
+            in_reset = (not self._reset_i.value.is_resolvable) or int(self._reset_i.value) == 1
+            if in_reset:
+                was_in_reset = True
                 continue
+
+            if was_in_reset:
+                self._model.reset()
+                self._expected_out_bytes = 1 # Account for wakeup byte after reset
+                was_in_reset = False
 
             # INPUT handshake: update expected queue FIRST
             in_fire = (int(dut.valid_i.value) == 1) and (int(dut.ready_o.value) == 1)

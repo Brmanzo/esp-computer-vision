@@ -6,7 +6,10 @@
 #include "includes/uart.h"
 
 static void camera_task(void *arg) {
-    
+    // Wait for FPGA to signal it's ready before starting capture loop
+    if (!uart_wait_for_wakeup_byte(UART_NUM_1, 0)) {
+        vTaskDelete(NULL);
+    }
     for (;;) {
         singleCapture();
         vTaskDelay(pdMS_TO_TICKS(10));

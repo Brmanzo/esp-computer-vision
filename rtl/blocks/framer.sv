@@ -8,9 +8,10 @@ module framer #(
   ,parameter int unsigned  PackedWidth    = UnpackedWidth * PackedNum
   ,parameter int unsigned  PacketLenElems = 1024 // Number of packed elements per packet
 
-  ,parameter logic [PackedWidth-1:0] TailByte0 = PackedWidth'($unsigned(165)) // 0xA5
-  ,parameter logic [PackedWidth-1:0] TailByte1 = PackedWidth'($unsigned(90))  // 0x5A
-  ,localparam int unsigned CountWidth          = $clog2(PacketLenElems)
+  ,parameter  logic [PackedWidth-1:0] TailByte0 = PackedWidth'($unsigned(165)) // 0xA5
+  ,parameter  logic [PackedWidth-1:0] TailByte1 = PackedWidth'($unsigned(90))  // 0x5A
+  ,parameter  logic [PackedWidth-1:0] WakeupCmd = PackedWidth'($unsigned(153))  // 0x99
+  ,localparam int unsigned CountWidth           = $clog2(PacketLenElems)
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -24,7 +25,7 @@ module framer #(
   ,output [PackedWidth-1:0] data_o
 );
   // FSM States
-  typedef enum logic [1:0] {Forward, Footer0, Footer1} fsm_e;
+  typedef enum logic [1:0] {Wakeup, Forward, Footer0, Footer1} fsm_e;
   fsm_e state_q, state_d;
 
   // Packer Wires
@@ -82,7 +83,7 @@ module framer #(
   // Current state logic
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
-      state_q <= Forward;
+      state_q <= Wakeup;
       data_q  <= '0;
       valid_q <= 1'b0;
     end else begin
@@ -98,6 +99,9 @@ module framer #(
   always_comb begin
     state_d = state_q;
     case (state_q)
+      Wakeup: begin
+        if (out_fire)    state_d = Forward;
+      end
       Forward: begin
         if (tx_complete) state_d = Footer0;
       end
@@ -107,16 +111,16 @@ module framer #(
       Footer1: begin
         if (out_fire)    state_d = Forward;
       end
-      default:           state_d = Forward;
+      default:           state_d = Wakeup;
     endcase
   end
 
   // Data output is either packed data or footer bytes
   logic [PackedWidth-1:0] data_q,  data_d;
-  assign data_o  = data_d;
+  assign data_o  = rst_i ? '0 : data_d;
   // Valid output unless packer is not valid in forward state
   logic [0:0]             valid_q, valid_d;
-  assign valid_o = valid_d;
+  assign valid_o = (!rst_i) && valid_d;
   // Forward data from packer until footer state, then send tail bytes
   // Only ready to accept new input data in forward state and not complete
   assign ready_o = (state_q == Forward) && pack_ready && !rx_complete;
@@ -126,6 +130,7 @@ module framer #(
     data_d  = data_q;  // Default hold
     valid_d = valid_q; // Default hold
     case (state_q)
+      Wakeup:  begin data_d = WakeupCmd;   valid_d = !rst_i;     end
       Forward: begin data_d = packed_data; valid_d = pack_valid; end
       Footer0: begin data_d = TailByte0;   valid_d = 1'b1;       end
       Footer1: begin data_d = TailByte1;   valid_d = 1'b1;       end
