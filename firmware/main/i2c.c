@@ -4,6 +4,7 @@
 
 #include "includes/i2c.h"
 #include "includes/globals.h"
+#include "includes/gpio.h"
 
 /* -------------------------------------- I2C -------------------------------------- */
 /* Initialize i2c for configuring the ArduCAM-M-2MP device. */

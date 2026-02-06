@@ -4,20 +4,27 @@
 #include "includes/wifi_cam.h"
 #include "includes/capture.h"
 #include "includes/uart.h"
+#include "includes/gpio.h"
 
 static void camera_task(void *arg) {
-    for (;;){
-        // Wait for FPGA to signal it's ready before starting capture loop
+    fpga_reset();
+
+    for (;;) {
         ESP_LOGI("main", "Waiting for FPGA wakeup byte...");
-        uart_flush_input(UART_NUM_1);
-        if (!uart_wait_for_wakeup_byte(UART_NUM_1, 0)) {
-            vTaskDelete(NULL);
+
+        while (!uart_wait_for_wakeup_byte(UART_NUM_1, pdMS_TO_TICKS(30000))) {
+            ESP_LOGI("main", "FPGA wakeup byte not received; resetting FPGA...");
+            fpga_reset();
         }
+
         ESP_LOGI("main", "FPGA awake; starting capture loop");
-        while(singleCapture()) {
+
+        while (singleCapture()) {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
-        ESP_LOGW("main", "Capture failed; returning to wakeup wait");
+
+        ESP_LOGW("main", "Capture failed; resetting FPGA and returning to wakeup wait");
+        fpga_reset();
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
@@ -25,6 +32,8 @@ static void camera_task(void *arg) {
 void app_main(void) {
     // Board bring-up
     arducam.systemInit();
+    
+    gpio_init();
 
     // Initialize UART to Icebreaker FPGA
     uart_init();

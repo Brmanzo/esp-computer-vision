@@ -9,8 +9,8 @@
 #include "includes/spi.h"
 #include "includes/uart.h"
 #include "includes/wifi_cam.h"
+#include "includes/gpio.h"
 
-#define GPIO_BYPASS_FPGA    GPIO_NUM_3
 #define KERNEL_W            3
 
 /* -------------------------------------- Packet Encoding -------------------------------------- */

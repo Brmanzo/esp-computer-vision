@@ -5,21 +5,16 @@
 
 #include "driver/gpio.h"
 #include "esp_err.h"
+#include "includes/gpio.h"
 
 #define HEADER_SIZE  2
 #define FOOTER_SIZE  2
 
 /*spi pin source*/
-#define PIN_SCK    GPIO_NUM_4
-#define PIN_MISO   GPIO_NUM_5
-#define PIN_MOSI   GPIO_NUM_6
-#define PIN_CS     GPIO_NUM_7
 #define SPI_CHUNK  4092
 #define SPI_FREQ   8000000
 
 /*i2c pin source */
-#define PIN_SCL                    GPIO_NUM_8
-#define PIN_SDA                    GPIO_NUM_10
 #define I2C_MASTER_NUM             I2C_NUM_0
 #define I2C_MASTER_FREQ_HZ         400000
 #define I2C_TIMEOUT_MS             1000
@@ -32,8 +27,6 @@
 #define DATA_BITS   8
 #define STOP_BITS   1
 #define PARITY      UART_PARITY_NONE
-#define UART_TX_PIN GPIO_NUM_0
-#define UART_RX_PIN GPIO_NUM_1
 #define BUF_SIZE    (256)
 #define QUEUE_DEPTH (20)
 #define RX_BUF_SIZE (BUF_SIZE*2)

@@ -13,6 +13,7 @@ module top #(
 
   ,input  [0:0] esp_rx_i
   ,output [0:0] esp_tx_o
+  ,input  [0:0] esp_rst_i
 
   ,output [0:0] uart_rts_o
   ,output [5:1] led_o
@@ -23,7 +24,7 @@ module top #(
 
   wire [0:0] reset_n_sync_q;
   wire [0:0] reset_sync_q;
-  wire [0:0] rst; // Use this as your reset_signal
+  wire [0:0] rst_sync; // Use this as your reset_signal
 
   wire [3:1] button_sync_q;
   wire [3:1] button_q;
@@ -36,7 +37,7 @@ module top #(
      .clk_i  (clk_25mhz_o)
     ,.reset_i(1'b0)
     ,.en_i   (1'b1)
-    ,.d_i    (reset_n_async_unsafe_i)
+    ,.d_i    (reset_n_async_unsafe_i & esp_rst_i)
     ,.q_o    (reset_n_sync_q)
   );
 
@@ -52,7 +53,7 @@ module top #(
     ,.reset_i(1'b0)
     ,.en_i   (1'b1)
     ,.d_i    (reset_sync_q)
-    ,.q_o    (rst)
+    ,.q_o    (rst_sync)
   );
 
   // Synchronize and Debounce Buttons
@@ -120,14 +121,14 @@ wire [0:0] uart_tx;
     ,.QuantizedWidth (1)
   ) uart_cnn_inst (
      .clk_i      (clk_25mhz_o)
-    ,.rst_i      (rst)
+    ,.rst_i      (rst_sync)
 
     ,.button_i   (button_q[3:1])
     ,.rx_serial_i(uart_rx)
     ,.tx_serial_o(uart_tx)
 
-    ,.led_o      (led_o[5:1])
     ,.uart_rts_o (rts)
+    ,.led_o      (led_o)
   );
 
 endmodule

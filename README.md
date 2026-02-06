@@ -32,12 +32,14 @@ My goal for this project is to implement a dynamic system that captures live dat
   - Quantized from 256 values (8 bits) to as low as 2 (1 bit)
   - Downsampling from default 320x240 down to 80x60
   - Periodic auto-exposure to adjust to changing light levels
+  - Fault detection and recovery via reset-driven SYN/ACK polling
 - Hardware Acceleration of Image processing via FPGA
   - Decoupled interface via UART for non-blocking transmission
   - Packet framing for proper data alignment
   - UART RTS line to ensure data integrity
   - Kernel-stationary sliding-window convolution architecture
   - Parameterized kernel size and weight widths for model flexibility
+  - Convolution layer supporting N kernels with single RAM buffer
 - Unit Testing of all hardware components using CocoTB
 - Dynamic HTML viewing of image over ESP32 Wi-Fi
 
@@ -122,6 +124,7 @@ ESP32c3       icebreakerV1.1a
 GPIO_NUM_21 - GPIO  4 (PMOD1A)
 GPIO_NUM_20 - GPIO  2 (PMOD1A)
 GPIO_NUM_1  - GPIO 47 (PMOD1A)
+GPIO_NUM_2  - GPIO 45 (PMOD1A)
 GND         - GND     (PMOD1B)
 ```
 ### Synthesizing for Icebreaker Board

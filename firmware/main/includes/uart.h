@@ -4,14 +4,13 @@
 #define UART_H
 
 #include "driver/uart.h"
+#include "includes/gpio.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* -------------------------------------- UART -------------------------------------- */
-#define TXD_PIN (GPIO_NUM_21)
-#define RXD_PIN (GPIO_NUM_20)
 
 /* Initialize UART for streaming camera image to Icebreaker FPGA */
 void uart_init(void);

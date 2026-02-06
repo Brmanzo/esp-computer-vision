@@ -6,8 +6,8 @@
 #include "includes/arducam.h"
 #include "includes/uart.h"
 #include "driver/gpio.h"
+#include "includes/gpio.h"
 
-#define UART_RTS_PIN GPIO_NUM_1
 #define FPGA_WAKEUP_BYTE 0x99
 
 /* Initialize UART for streaming images to interfaces. */

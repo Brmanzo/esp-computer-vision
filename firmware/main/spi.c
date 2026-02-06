@@ -5,6 +5,7 @@
 #include "includes/arducam.h"
 #include "includes/spi.h"
 #include "includes/globals.h"
+#include "includes/gpio.h"
 
 /* -------------------------------------- SPI -------------------------------------- */
 /* Initialize SPI for receiving image data from the ArduCAM-M-2MP device. */
