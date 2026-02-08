@@ -76,7 +76,7 @@ module unpacker #(
     ,.down_i   ('0)
     ,.count_o  (counter)
   );
-
+  /* verilator lint_off UNUSEDSIGNAL */
   wire [ElasticWidth-1:0] elastic_out;
   assign unpacked_o = elastic_out[UnpackedWidth-1:0];
   assign done_o = done;

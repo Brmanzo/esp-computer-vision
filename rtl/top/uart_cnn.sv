@@ -11,23 +11,14 @@ module uart_cnn #(
   ,parameter int unsigned BusWidth       = 8
   ,parameter int unsigned QuantizedWidth = 1
   ,parameter int unsigned PackedNum      = BusWidth / QuantizedWidth
-  ,parameter int unsigned Channels       = 2
+  ,parameter int unsigned OutChannels    = 2
 
   ,localparam int unsigned BytesIn       = WidthIn * HeightIn / PackedNum
   ,localparam int unsigned KernelArea    = KernelWidth * KernelWidth
-  ,localparam int unsigned MaxInput      = (1 << QuantizedWidth) - 1
-  ,localparam int unsigned MaxWeight     = (1 << (WeightWidth - 1)) - 1
-  ,localparam int unsigned WorstCaseSum  = KernelArea * MaxInput * MaxWeight
-  ,localparam int unsigned ConvOutWidth  = $clog2(WorstCaseSum + 1) + 1 // Plus signed bit
-  ,localparam int unsigned MagOutWidth   = ConvOutWidth + 1 // Plus bit for magnitude potentially being larger than either Gx or Gy
 
-  ,localparam int unsigned WidthOut  = WidthIn - (KernelWidth - 1)
+  ,localparam int unsigned WidthOut  = WidthIn  - (KernelWidth - 1)
   ,localparam int unsigned HeightOut = HeightIn - (KernelWidth - 1)
 
-  ,localparam int unsigned ConvThreshold = 2
-  ,localparam int unsigned MagThreshold  = ConvThreshold << 1
-  ,localparam logic [ConvOutWidth-1:0] ConvThresh = ConvOutWidth'(ConvThreshold)
-  ,localparam logic [MagOutWidth-1:0]  MagThresh  = MagOutWidth'(MagThreshold)
 )  (
    input  [0:0] clk_i // 25 MHz Clock
   ,input  [0:0] rst_i
@@ -39,6 +30,26 @@ module uart_cnn #(
 
   ,output [5:1] led_o
 );
+
+  function automatic int unsigned conv_output_width;
+    input int unsigned kernel_area, quantized_width, weight_width, in_channels;
+    longint unsigned max_input, max_weight, worst_case_sum;
+    begin
+      max_input      = (64'd1 << quantized_width) - 1;
+      max_weight     = (64'd1 << (weight_width - 1)) - 1;
+      worst_case_sum = longint'(kernel_area) * max_input * max_weight * longint'(in_channels);
+
+      conv_output_width = $clog2(worst_case_sum + 1) + 1; // assign to function name
+    end
+  endfunction
+
+  localparam int unsigned ConvOutWidth = conv_output_width(KernelArea, QuantizedWidth, WeightWidth, 1);
+  localparam int unsigned MagOutWidth  = ConvOutWidth + 1; // One extra bit to prevent overflow when summing squares of Gx and Gy
+
+  localparam int unsigned ConvThreshold = 2;
+  localparam int unsigned MagThreshold  = ConvThreshold << 1;
+  localparam logic [ConvOutWidth-1:0] ConvThresh = ConvOutWidth'(ConvThreshold);
+  localparam logic [MagOutWidth-1:0]  MagThresh  = MagOutWidth'(MagThreshold);
 
   // UART Interface Wires
   wire [0:0]                uart_ready;
@@ -56,16 +67,15 @@ module uart_cnn #(
   wire [QuantizedWidth-1:0] deframer_data;
 
   // conv_layer Wires
-  wire [0:0]                               conv_layer_ready;
-  wire [0:0]                               conv_layer_valid;
-  wire signed [Channels-1:0][ConvOutWidth-1:0] conv_layer_data;
+  wire [0:0]                conv_layer_ready;
+  wire [0:0]                conv_layer_valid;
+
+  wire signed [OutChannels-1:0][ConvOutWidth-1:0] conv_layer_data;
 
   // Magnitude Wires
   wire [0:0]              mag_ready;
   wire [0:0]              mag_valid;
-  /* verilator lint_off UNUSEDSIGNAL */
   wire [MagOutWidth-1:0]  mag_data;
-  /* verilator lint_on UNUSEDSIGNAL */
 
   // Mux Logic
   logic [0:0]             mux_data;
@@ -99,7 +109,7 @@ module uart_cnn #(
     endcase
   endfunction
 
-  logic signed [Channels-1:0][KernelArea-1:0][WeightWidth-1:0] weights;
+  logic signed [OutChannels-1:0][KernelArea-1:0][WeightWidth-1:0] weights;
   genvar k;
   generate
     for (k = 0; k < KernelArea; k++) begin : gen_gy
@@ -170,7 +180,7 @@ module uart_cnn #(
     ,.unpacked_o(deframer_data)
   );
 
-  // conv_layer Filter for Gy gradient
+  // conv_layer Filter for Gx and Gy gradients
   conv_layer #(
      .LineWidthPx(WidthIn)
     ,.LineCountPx(HeightIn)
@@ -178,15 +188,15 @@ module uart_cnn #(
     ,.WidthOut   (ConvOutWidth)
     ,.KernelWidth(KernelWidth)
     ,.WeightWidth(WeightWidth)
-    ,.Channels   (Channels)
+    ,.OutChannels(OutChannels)
   ) conv_layer_inst (
      .clk_i    (clk_i)
     ,.rst_i    (rst_i)
-    // Unpacker to Gy
+    // Unpacker to Gx and Gy
     ,.ready_o  (conv_layer_ready)
     ,.valid_i  (deframer_valid)
     ,.data_i   (deframer_data)
-    // Gy to Elastic Stage
+    // Gx and Gy to Elastic Stage
     ,.ready_i  (mag_ready)
     ,.valid_o  (conv_layer_valid)
     ,.data_o   (conv_layer_data)
@@ -195,7 +205,8 @@ module uart_cnn #(
 
   // Magnitude calculated from Gx and Gy
   mag #(
-     .Width  (ConvOutWidth)
+     .WidthIn  (ConvOutWidth)
+    ,.WidthOut (MagOutWidth)
   ) mag_inst (
      .clk_i  (clk_i)
     ,.rst_i  (rst_i)
@@ -210,7 +221,7 @@ module uart_cnn #(
     ,.mag_o  (mag_data)
   );
 
-  // Instead of selecting arbitrary bit off of signed conv output, take absolute value above a given
+  // Instead of selecting arbitrary bit off of signed conv output, take absolute value above a given threshold
   logic gx_edge  = ($signed(conv_layer_data[0]) >= $signed(ConvThresh));
   logic gy_edge  = ($signed(conv_layer_data[1]) >= $signed(ConvThresh));
   logic mag_edge = (mag_data >= MagThresh);

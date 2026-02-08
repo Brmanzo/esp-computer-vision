@@ -28,3 +28,4 @@ build/
 managed_components/
 firmware/dependencies.lock
 firmware/sdkconfig
+firmware/sdkconfig.old

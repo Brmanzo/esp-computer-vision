@@ -164,8 +164,8 @@ class RandomDataGenerator():
         self._dut = dut
 
     def generate(self):
-        a_i = random.randint(0, (1 << self._dut.Width.value) - 1)
-        b_i = random.randint(0, (1 << self._dut.Width.value) - 1)
+        a_i = random.randint(0, (1 << self._dut.WidthIn.value) - 1)
+        b_i = random.randint(0, (1 << self._dut.WidthIn.value) - 1)
         return (a_i, b_i)
     
 class EdgeCaseGenerator():

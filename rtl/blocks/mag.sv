@@ -3,25 +3,26 @@
 
 `timescale 1ns / 1ps
 module mag #(
-   parameter int unsigned Width = 14
+   parameter int unsigned WidthIn = 14
+  ,parameter int unsigned WidthOut = WidthIn + 1
 )  (
    input [0:0] clk_i
   ,input [0:0] rst_i
 
-  ,input  [0:0]                valid_i
-  ,input  signed [Width - 1:0] gx_i
-  ,input  signed [Width - 1:0] gy_i
-  ,output signed [0:0]         ready_o
+  ,input  [0:0]                  valid_i
+  ,input  signed [WidthIn - 1:0] gx_i
+  ,input  signed [WidthIn - 1:0] gy_i
+  ,output signed [0:0]           ready_o
 
   ,output [0:0]     valid_o
-  ,output [Width:0] mag_o
+  ,output [WidthOut-1:0] mag_o
   ,input [0:0]      ready_i
 );
   wire [0:0] elastic_ready;
   assign ready_o = elastic_ready;
 
   elastic
-  #(.Width((Width)*2)
+  #(.Width((WidthIn)*2)
    ,.DatapathGate(1'b1)
    ,.DatapathReset(1)
    )
@@ -36,13 +37,13 @@ module mag #(
    ,.ready_i(ready_i)
   );
 
-  logic [Width-1:0] gx,    gy;
-  logic [Width:0]   mag_d, mag_q; // One extra bit to avoid overflow on shift and add
+  logic [WidthIn-1:0]  gx,    gy;
+  logic [WidthOut-1:0] mag_d, mag_q; // One extra bit to avoid overflow on shift and add
   assign mag_o = mag_d;
 
-  wire [0:0]     gy_greater = {1'b0, gy} >= {gx, 1'b0};
-  wire [0:0]     gx_greater = {1'b0, gx} >= {gy, 1'b0};
-  wire [Width:0] half_gx    = {1'b0, (gx >> 1)};
+  wire [0:0]          gy_greater = {1'b0, gy} >= {gx, 1'b0};
+  wire [0:0]          gx_greater = {1'b0, gx} >= {gy, 1'b0};
+  wire [WidthOut-1:0] half_gx    = {1'b0, (gx >> 1)};
 
   always_ff @(posedge clk_i) begin
     if (rst_i) mag_q <= '0;

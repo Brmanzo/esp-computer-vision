@@ -44,6 +44,7 @@ module deframer #(
 
   wire  [0:0] counter_max = (counter_q == MaxCount);
 
+  /* verilator lint_off PINCONNECTEMPTY */
   counter #(
     .Width(CountWidth)
   )  elem_counter_inst (

@@ -36,11 +36,11 @@ module conv_layer #(
 );
   // Helper function to compute the next phase in the stride cycle for strides greater than 1.
   // Rolls over when the current phase is the last in the cycle, otherwise returns the next phase.
-  function automatic logic [StrideWidth-1:0] mod_stride(input [StrideWidth-1:0] value);
-    if (Stride <= 1) return '0;
-    else begin
-      if (value == StrideWidth'(Stride - 1)) return '0;
-      else return (value + StrideWidth'(1));
+  function automatic logic [StrideWidth-1:0] mod_stride(input logic [StrideWidth-1:0] value);
+    begin
+      if (Stride <= 1) mod_stride = '0;
+      else if (value == StrideWidth'(Stride - 1)) mod_stride = '0;
+      else mod_stride = value + StrideWidth'(1);
     end
   endfunction
   /* ---------------------------------------- Kernel Validation ---------------------------------------- */
