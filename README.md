@@ -30,7 +30,7 @@ My goal for this project is to implement a dynamic system that captures live dat
 - Frontend image compression
   - YUV422 Luma values interpreted as grayscale
   - Quantized from 256 values (8 bits) to as low as 2 (1 bit)
-  - Downsampling from default 320x240 down to 80x60
+  - Down-sampling from default 320x240 down to 80x60
   - Periodic auto-exposure to adjust to changing light levels
   - Fault detection and recovery via reset-driven SYN/ACK polling
 - Hardware Acceleration of Image processing via FPGA
@@ -38,22 +38,22 @@ My goal for this project is to implement a dynamic system that captures live dat
   - Packet framing for proper data alignment
   - UART RTS line to ensure data integrity
   - Kernel-stationary sliding-window convolution architecture
-  - Parameterized kernel size and weight widths for model flexibility
-  - Convolution layer supporting N kernels with single RAM buffer
+  - Parameterized kernel size, stride, input and weight widths for model flexibility
+  - Convolution layer supporting N Output Channels with single RAM buffer
 - Unit Testing of all hardware components using CocoTB
 - Dynamic HTML viewing of image over ESP32 Wi-Fi
 
 ## Milestones
-- **2026-02-05** — Convolution Layer with N Channels
+- **2026-02-05** — Convolution Layer with N Output Channels
 - **2026-01-27** — FPGA packet data framing
 - **2026-01-13** — Streaming raw grayscale image
-- **2026-01-03** — Unpacking hardware to support quantized bitstream
+- **2026-01-03** — Bit-packing hardware to support quantized bitstream
 - **2025-12-18** — ESP–FPGA integration via UART loopback
 - **2025-12-10** — Edge detection on FPGA using sliding-window filters
 - **2025-08-22** — Quantization and run-length encoding
 - **2025-08-17** — Convolution and image differencing (software)
 - **2025-08-12** — Web server integration
-- **2025-07-27** — JPEG image decoding from ArduCam
+- **2025-07-27** — JPEG image decoding from Arducam
 
 ## Bill of Materials
 - 1 [ESP32c3 RUST Dev Board](https://www.digikey.com/en/products/detail/espressif-systems/ESP32-C3-DEVKIT-RUST-1/17883272)

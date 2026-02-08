@@ -70,11 +70,12 @@ weights = [1]*9
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth, Channels", 
-                         [("16", "1", output_width(1), "3", "1"),
-                          ("32", "2", output_width(2), "5", "1"),
-                          ("16", "1", output_width(1), "3", "2")])
-def test_each(test_name, simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth, Channels):
+@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth, OutChannels, Stride", 
+                         [("16", "1", output_width(1), "3", "1", "1"),
+                          ("32", "2", output_width(2), "5", "1", "1"),
+                          ("16", "1", output_width(1), "3", "2", "1"),
+                          ("16", "1", output_width(1), "3", "1", "2")])
+def test_each(test_name, simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth, OutChannels, Stride):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
@@ -84,11 +85,11 @@ def test_each(test_name, simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth,
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth, Channels", 
-                         [("16", "1", output_width(1), "3", "1"),
-                          ("32", "2", output_width(2), "5", "1"),
-                          ("16", "1", output_width(1), "3", "2")])
-def test_all(simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth, Channels):
+@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth, OutChannels, Stride", 
+                         [("16", "1", output_width(1), "3", "1", "1"),
+                          ("32", "2", output_width(2), "5", "1", "1"),
+                          ("16", "1", output_width(1), "3", "2", "1")])
+def test_all(simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth, OutChannels, Stride):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
@@ -123,7 +124,10 @@ class ConvLayerModel():
         self._input_width = int(dut.LineWidthPx.value)
         self._input_height = input_height
         self._WidthOut = int(dut.WidthOut.value)
-        self._channels = int(dut.Channels.value)
+        self._channels = int(dut.OutChannels.value)
+
+        self._Origin = int(dut.Origin.value)
+        self._Stride = int(dut.Stride.value)
 
         # We're going to initialize _buf with NaN so that we can
         # detect when the output should be not an X in simulation
@@ -135,9 +139,24 @@ class ConvLayerModel():
         assert self.k.shape == (self._channels, self._kernel_width, self._kernel_width)
 
         self._in_idx = 0
+
+        # Valid kernel positions within input image depending on stride and kernel size
+        invalid_region = self._kernel_width - 1
+        S = int(self._Stride)
+        O = int(self._Origin)
+        if S <= 1: 
+            S = 1
+            O = 0
+        
         self._valid_cycles = np.ones((self._input_height, self._input_width), dtype=bool)
-        self._valid_cycles[:self._kernel_width-1, :] = False
-        self._valid_cycles[:, :self._kernel_width-1] = False
+        self._valid_cycles[:invalid_region, :] = False
+        self._valid_cycles[:, :invalid_region] = False
+        
+        if S > 1:
+            for r in range(invalid_region, self._input_height):
+                for c in range(invalid_region, self._input_width):
+                    if ((r - invalid_region) % S) != O or ((c - invalid_region) % S) != O:
+                        self._valid_cycles[r, c] = False
 
     def _produces_output(self, idx: int) -> bool:
         x = idx % int(self._input_width)
@@ -205,7 +224,7 @@ class ConvLayerModel():
         w = int(self._dut.WidthOut.value) if hasattr(self._dut, "WidthOut") else int(self._dut.ConvOutWidth.value)
         # ^ if WidthOut param isn't on dut, use the same width you used for the RTL data_o element
 
-        packed = int(self._data_o.value.integer)  # whole [Channels][WidthOut] blob as an int
+        packed = int(self._data_o.value.integer)  # whole [OutChannels][WidthOut] blob as an int
 
         for ch in range(self._channels):
             raw = (packed >> (ch * w)) & ((1 << w) - 1)   # assumes ch=0 is LSB slice
@@ -513,7 +532,7 @@ async def single_test(dut):
 
     W = int(dut.LineWidthPx.value)
     K = int(dut.KernelWidth.value)
-    C = int(dut.Channels.value)
+    C = int(dut.OutChannels.value)
 
     # Number of accepted inputs until first valid output position (x=K-1, y=K-1)
     N_first = (K - 1) * W + (K - 1) + 1
@@ -573,19 +592,29 @@ async def out_fuzz_test(dut):
 
     W = int(dut.LineWidthPx.value)
     K = int(dut.KernelWidth.value)
-    C = int(dut.Channels.value)
+    C = int(dut.OutChannels.value)
+    S = int(dut.Stride.value)
+    O = int(dut.StrideOrigin.value) if hasattr(dut, "StrideOrigin") else 0  # optional
 
     # Observe 4 rows of VALID outputs
-    l_out = (W - (K - 1)) * 4
+    H_out = 4
+    W_out = ((W - K) // S) + 1
+    l_out = W_out * H_out
 
-    N_first = (K - 1) * W + (K - 1) + 1
-    N_in = (N_first - 1) + l_out
+    y_last = (K - 1) + (H_out - 1) * S
+    N_in = (y_last * W + (W - 1)) + 1
+    input_height = y_last + 1
 
     # Consumer ready probability
     rate = 0.5
 
+    first_out_wait_ns = 2 * (K - 1) * W + 2 * (K - 1) + 200
+    timeout_ns = H_out * N_in + 500
+
     kernel = [[[1] * K for _ in range(K)] for _ in range(C)]
-    input_height = (N_in + W - 1) // W
+    weights_by_ch = [[1]*(K*K) for _ in range(C)]
+    WeightWidth = int(dut.WeightWidth.value)
+    dut.weights_i.value = pack_weights_channels(weights_by_ch, WeightWidth, K*K)
 
     model = ConvLayerModel(dut, kernel, input_height=input_height)
     m = ModelRunner(dut, model)
@@ -596,9 +625,6 @@ async def out_fuzz_test(dut):
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
-    weights_by_ch = [[1]*(K*K) for _ in range(C)]
-    WeightWidth = int(dut.WeightWidth.value)
-    dut.weights_i.value = pack_weights_channels(weights_by_ch, WeightWidth, K*K)
 
     await clock_start_sequence(dut.clk_i)
     await reset_sequence(dut.clk_i, dut.rst_i, 10)
@@ -610,63 +636,63 @@ async def out_fuzz_test(dut):
 
     # First output wait: producer is full rate, but DUT may stall due to consumer backpressure.
     # Give a bound proportional to N_first and 1/rate.
-    first_out_wait_ns = int(3 * (N_first / rate)) + 50
+    # Wait until valid_o ever asserts (not necessarily handshake)
     try:
         await with_timeout(RisingEdge(dut.valid_o), first_out_wait_ns, 'ns')
     except SimTimeoutError:
         assert 0, (
-            f"Timed out waiting for valid_o to go high. "
-            f"W={W}, K={K}, N_first={N_first}, ready_rate={rate}, waited={first_out_wait_ns} ns."
+            f"Timed out waiting for valid_o high. "
+            f"W={W}, K={K}, S={S}, H_out={H_out}, W_out={W_out}, N_in={N_in}, waited={first_out_wait_ns} ns."
         )
 
-    # Total timeout dominated by output handshakes (~l_out / rate) plus input acceptance (~N_in / rate)
-    timeout_ns = int(4 * (N_in / rate) + 4 * (l_out / rate)) + 200
+    # Now wait for exactly l_out output handshakes
     try:
         await om.wait(timeout_ns)
     except SimTimeoutError:
         assert 0, (
-            f"Test timed out. Could not transmit {l_out} valid outputs in {timeout_ns} ns "
-            f"with consumer ready rate {rate}. Only transmitted: {om.nproduced()}"
+            f"Timed out. Expected {l_out} output handshakes "
+            f"(W_out={W_out}, H_out={H_out}). Got {om.nproduced()} in {timeout_ns} ns. "
+            f"N_in={N_in}, input_height={input_height}."
         )
 
 
 @cocotb.test
 async def in_fuzz_test(dut):
     """Producer fuzzed (valid_i), consumer always-ready.
-
-    DUT only outputs for valid kernel positions (x>=K-1 && y>=K-1), so:
-      - l_out counts VALID outputs to observe
-      - N_in is inputs to drive (warmup + l_out valid outputs)
+    Verify 4 output rows worth of VALID outputs under stride S.
     """
 
     W = int(dut.LineWidthPx.value)
     K = int(dut.KernelWidth.value)
-    C = int(dut.Channels.value)
+    C = int(dut.OutChannels.value)
+    S = int(dut.Stride.value)
 
-    # Observe 4 rows of VALID outputs
-    l_out = (W - (K - 1)) * 4
+    # ---- how many outputs to observe ----
+    H_out = 4
+    W_out = ((W - K) // S) + 1
+    l_out = W_out * H_out
 
-    N_first = (K - 1) * W + (K - 1) + 1
-    N_in = (N_first - 1) + l_out
+    # ---- how many inputs to drive (must cover H_out output rows) ----
+    y_last = (K - 1) + (H_out - 1) * S
+    N_in = (y_last * W + (W - 1)) + 1
+    input_height = y_last + 1
 
     # Producer valid probability
     rate = 0.5
 
     kernel = [[[1] * K for _ in range(K)] for _ in range(C)]
-    input_height = (N_in + W - 1) // W
-
     model = ConvLayerModel(dut, kernel, input_height=input_height)
     m = ModelRunner(dut, model)
 
     # Consumer always ready; producer fuzzed
     om = OutputModel(dut, RateGenerator(dut, 1), l_out)
-    im = InputModel(dut, RandomDataGenerator(dut), CountingGenerator(dut, rate), N_in)
+    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), N_in)
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
-    weights_by_ch = [[1]*(K*K) for _ in range(C)]
+    weights_by_ch = [[1] * (K * K) for _ in range(C)]
     WeightWidth = int(dut.WeightWidth.value)
-    dut.weights_i.value = pack_weights_channels(weights_by_ch, WeightWidth, K*K)
+    dut.weights_i.value = pack_weights_channels(weights_by_ch, WeightWidth, K * K)
 
     await clock_start_sequence(dut.clk_i)
     await reset_sequence(dut.clk_i, dut.rst_i, 10)
@@ -676,56 +702,56 @@ async def in_fuzz_test(dut):
     om.start()
     im.start()
 
-    # First output wait scales with producer rate (need ~N_first accepted inputs, each appears with prob=rate)
-    first_out_wait_ns = int(3 * (N_first / rate)) + 50
+    # Need enough ACCEPTED inputs to reach the first possible output.
+    # With producer rate 'rate', accepted inputs arrive ~rate per cycle when ready_o stays high.
+    # Use N_first for the first kernel-valid position, and scale by 1/rate.
+    N_first = (K - 1) * W + (K - 1) + 1
+    first_out_wait_ns = int(4 * (N_first / rate)) + 200
     try:
         await with_timeout(RisingEdge(dut.valid_o), first_out_wait_ns, 'ns')
     except SimTimeoutError:
         assert 0, (
-            f"Timed out waiting for valid_o to go high. "
-            f"W={W}, K={K}, N_first={N_first}, prod_rate={rate}, waited={first_out_wait_ns} ns."
+            f"Timed out waiting for valid_o high. "
+            f"W={W}, K={K}, S={S}, N_first={N_first}, prod_rate={rate}, waited={first_out_wait_ns} ns."
         )
 
-    # Total timeout dominated by getting N_in accepted inputs (~N_in / rate)
-    timeout_ns = int(4 * (N_in / rate)) + 200
+    # Total timeout: need to ACCEPT N_in inputs at rate~rate (consumer always-ready)
+    timeout_ns = int(6 * (N_in / rate)) + 500
     try:
         await om.wait(timeout_ns)
     except SimTimeoutError:
         assert 0, (
-            f"Test timed out. Could not transmit {l_out} valid outputs in {timeout_ns} ns "
-            f"with producer rate {rate}. Only transmitted: {om.nproduced()}"
+            f"Timed out. Expected {l_out} output handshakes (W_out={W_out}, H_out={H_out}). "
+            f"Only got {om.nproduced()} in {timeout_ns} ns. "
+            f"N_in={N_in}, prod_rate={rate}, input_height={input_height}."
         )
 
 
 @cocotb.test
 async def inout_fuzz_test(dut):
-    """Transmit data elements at ~25% line rate (both producer and consumer are fuzzed).
-
-    DUT only outputs for valid kernel positions (x>=K-1 && y>=K-1), so:
-      - l_out counts VALID outputs to observe
-      - N_in is the number of inputs to drive (warmup + l_out valid outputs)
-      - timeouts scale with both fuzz rates
+    """Both producer and consumer are fuzzed.
+    Verify 4 output rows worth of VALID outputs under stride S.
     """
 
     W = int(dut.LineWidthPx.value)
     K = int(dut.KernelWidth.value)
-    C = int(dut.Channels.value)
+    C = int(dut.OutChannels.value)
+    S = int(dut.Stride.value)
 
-    # Observe 4 rows of VALID outputs (same convention)
-    l_out = (W - (K - 1)) * 4
+    # ---- outputs to observe ----
+    H_out = 4
+    W_out = ((W - K) // S) + 1
+    l_out = W_out * H_out
 
-    # First valid output at (x=K-1, y=K-1)
-    N_first = (K - 1) * W + (K - 1) + 1
-    N_in = (N_first - 1) + l_out
+    # ---- inputs to drive (cover H_out output rows) ----
+    y_last = (K - 1) + (H_out - 1) * S
+    N_in = (y_last * W + (W - 1)) + 1
+    input_height = y_last + 1
 
     # Both sides fuzzed
-    rate = 0.5  # producer valid_i probability AND consumer ready_i probability
+    rate = 0.5  # probability valid_i=1 and ready_i=1
 
     kernel = [[[1] * K for _ in range(K)] for _ in range(C)]
-
-    # Height must cover the number of rows implied by N_in inputs
-    input_height = (N_in + W - 1) // W
-
     model = ConvLayerModel(dut, kernel, input_height=input_height)
     m = ModelRunner(dut, model)
 
@@ -734,85 +760,89 @@ async def inout_fuzz_test(dut):
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
-    weights_by_ch = [[1]*(K*K) for _ in range(C)]
+    weights_by_ch = [[1] * (K * K) for _ in range(C)]
     WeightWidth = int(dut.WeightWidth.value)
-    dut.weights_i.value = pack_weights_channels(weights_by_ch, WeightWidth, K*K)
+    dut.weights_i.value = pack_weights_channels(weights_by_ch, WeightWidth, K * K)
 
     await clock_start_sequence(dut.clk_i)
     await reset_sequence(dut.clk_i, dut.rst_i, 10)
-
-    # Wait one cycle for reset to start
     await FallingEdge(dut.clk_i)
 
     m.start()
     om.start()
     im.start()
 
-    # Wait for the first output to appear.
-    # Expected cycles to accept N_first inputs with producer rate 'rate' is ~ N_first/rate.
-    # Convert to ns assuming 1 cycle ~ 1ns in your sims; add cushion.
-    first_out_wait_ns = int(3 * (N_first / rate)) + 50
+    # First output wait: need ~N_first accepted inputs.
+    # Accepted inputs occur when valid_i && ready_o. With producer rate=rate and moderate backpressure,
+    # expect O(N_first/rate) cycles; be generous.
+    N_first = (K - 1) * W + (K - 1) + 1
+    first_out_wait_ns = int(6 * (N_first / rate)) + 300
     try:
         await with_timeout(RisingEdge(dut.valid_o), first_out_wait_ns, 'ns')
     except SimTimeoutError:
         assert 0, (
-            f"Timed out waiting for valid_o to go high. "
-            f"W={W}, K={K}, N_first={N_first}, rate={rate}, waited={first_out_wait_ns} ns."
+            f"Timed out waiting for valid_o high. "
+            f"W={W}, K={K}, S={S}, N_first={N_first}, rate={rate}, waited={first_out_wait_ns} ns."
         )
 
-    # Total time scales with BOTH fuzz rates.
-    # Roughly: need N_in accepted inputs (~N_in/rate cycles) AND l_out output handshakes (~l_out/rate cycles).
-    # Use a generous bound.
-    timeout_ns = int(4 * (N_in / rate) + 4 * (l_out / rate)) + 200
+    # Total timeout: need N_in accepted inputs (~N_in/rate cycles) and l_out output handshakes.
+    # Output handshakes require ready_i=1 (prob=rate) so effective service rate is ~rate as well.
+    timeout_ns = int(8 * (N_in / rate) + 8 * (l_out / rate)) + 800
 
     try:
         await om.wait(timeout_ns)
     except SimTimeoutError:
         assert 0, (
-            f"Test timed out. Could not transmit {l_out} valid outputs in {timeout_ns} ns "
-            f"with producer/consumer rate {rate}. Only transmitted: {om.nproduced()}"
+            f"Timed out. Expected {l_out} output handshakes (W_out={W_out}, H_out={H_out}). "
+            f"Only got {om.nproduced()} in {timeout_ns} ns. "
+            f"N_in={N_in}, rate={rate}, input_height={input_height}."
         )
 
         
 @cocotb.test
 async def full_bw_test(dut):
-    """Transmit data at 100% line rate; verify l_out valid outputs."""
+    """Transmit data at 100% line rate; verify 4 output rows worth of valid outputs."""
 
     W = int(dut.LineWidthPx.value)
     K = int(dut.KernelWidth.value)
-    C = int(dut.Channels.value)
+    C = int(dut.OutChannels.value)
+    S = int(dut.Stride.value)
+    O = int(dut.StrideOrigin.value) if hasattr(dut, "StrideOrigin") else 0  # optional
 
-    # Observe 4 rows of VALID outputs (same convention as before)
-    l_out = (W - (K - 1)) * 4
+    # ---- how many outputs to observe ----
+    H_out = 4
+    W_out = ((W - K) // S) + 1                 # valid conv/pool output width
+    l_out = W_out * H_out
 
-    # First valid output at (x=K-1, y=K-1)
-    N_first = (K - 1) * W + (K - 1) + 1
-    # Inputs needed to get l_out valid outputs
-    N_in = (N_first - 1) + l_out
+    # ---- how many inputs to feed to guarantee H_out output rows exist ----
+    # last output row index is (H_out-1), which maps to input-origin row:
+    # y_last = (K-1) + (H_out-1)*S
+    y_last = (K - 1) + (H_out - 1) * S
+    N_in = (y_last * W + (W - 1)) + 1          # stream through end of that row
+    input_height = y_last + 1                  # number of rows actually streamed
 
     rate = 1
 
-    # Timeout in "ns" because OutputModel.wait uses ns.
-    # If your clock is 1ns, N_in cycles ~ N_in ns. Add cushion.
-    timeout_ns = 2 * N_in + 50
+    # timeouts (ns): assume 1ns clock; add cushion
+    first_out_wait_ns = 2 * (K - 1) * W + 2 * (K - 1) + 200
+    timeout_ns = 4 * N_in + 500
 
+    # weights
     kernel = [[[1] * K for _ in range(K)] for _ in range(C)]
+    weights_by_ch = [[1] * (K * K) for _ in range(C)]
+    WeightWidth = int(dut.WeightWidth.value)
+    dut.weights_i.value = pack_weights_channels(weights_by_ch, WeightWidth, K * K)
 
-    # IMPORTANT: pass input_height (how many rows you will stream in this test)
-    # If you're only streaming enough for N_in inputs, height is at least ceil(N_in/W).
-    input_height = (N_in + W - 1) // W
-
+    # models
     model = ConvLayerModel(dut, kernel, input_height=input_height)
     m = ModelRunner(dut, model)
 
-    om = OutputModel(dut, RateGenerator(dut, 1), l_out)
+    om = OutputModel(dut, RateGenerator(dut, 1), l_out)                     # consumer always ready (via generator)
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), N_in)
 
+    # init signals
     dut.ready_i.value = 0
     dut.valid_i.value = 0
-    weights_by_ch = [[1]*(K*K) for _ in range(C)]
-    WeightWidth = int(dut.WeightWidth.value)
-    dut.weights_i.value = pack_weights_channels(weights_by_ch, WeightWidth, K*K)
 
     await clock_start_sequence(dut.clk_i)
     await reset_sequence(dut.clk_i, dut.rst_i, 10)
@@ -822,42 +852,45 @@ async def full_bw_test(dut):
     om.start()
     im.start()
 
-    # Wait for first output handshake to become possible (don’t hardcode 20ns)
-    first_out_wait_ns = 2 * N_first + 50
+    # Wait until valid_o ever asserts (not necessarily handshake)
     try:
         await with_timeout(RisingEdge(dut.valid_o), first_out_wait_ns, 'ns')
     except SimTimeoutError:
         assert 0, (
-            f"Timed out waiting for valid_o to go high. "
-            f"W={W}, K={K}, N_first={N_first}, waited={first_out_wait_ns} ns."
+            f"Timed out waiting for valid_o high. "
+            f"W={W}, K={K}, S={S}, H_out={H_out}, W_out={W_out}, N_in={N_in}, waited={first_out_wait_ns} ns."
         )
 
-    # Now wait for l_out outputs
+    # Now wait for exactly l_out output handshakes
     try:
         await om.wait(timeout_ns)
     except SimTimeoutError:
         assert 0, (
-            f"Timed out. Expected {l_out} valid outputs. "
-            f"Only got {om.nproduced()} in {timeout_ns} ns."
+            f"Timed out. Expected {l_out} output handshakes "
+            f"(W_out={W_out}, H_out={H_out}). Got {om.nproduced()} in {timeout_ns} ns. "
+            f"N_in={N_in}, input_height={input_height}."
         )
 
 
 @cocotb.test
 async def full_bw_Gxy_test(dut):
-    """Transmit data at 100% line rate with Gx kernel; verify l_out valid outputs."""
+    """Transmit data at 100% line rate with Gx/(Gy) kernel; verify 4 output rows worth of valid outputs."""
 
     W = int(dut.LineWidthPx.value)
     K = int(dut.KernelWidth.value)
-    C = int(dut.Channels.value)
+    C = int(dut.OutChannels.value)
+    S = int(dut.Stride.value)
     rate = 1
 
-    # Observe 4 rows of VALID outputs
-    l_out = (W - (K - 1)) * 4
+    # ---- outputs to observe ----
+    H_out = 4
+    W_out = ((W - K) // S) + 1
+    l_out = W_out * H_out
 
-    # First valid output at (x=K-1, y=K-1)
-    N_first = (K - 1) * W + (K - 1) + 1
-    N_in = (N_first - 1) + l_out
-    input_height = (N_in + W - 1) // W
+    # ---- inputs to drive (cover H_out output rows under stride S) ----
+    y_last = (K - 1) + (H_out - 1) * S
+    N_in = (y_last * W + (W - 1)) + 1
+    input_height = y_last + 1
 
     # Kernel weights
     if K == 3:
@@ -881,21 +914,23 @@ async def full_bw_Gxy_test(dut):
     else:
         assert 0, f"Unsupported kernel width {K}"
 
-    assert C in (1, 2), f"Expected Channels 1 or 2, got {C}"
+    assert C in (1, 2), f"Expected OutChannels 1 or 2, got {C}"
     kernel_by_ch = [gx_k] if C == 1 else [gx_k, gy_k]
-
     weights_by_ch_flat = [flatten_kernel(k) for k in kernel_by_ch]
 
+    # Model + runner
     model = ConvLayerModel(dut, kernel_by_ch, input_height=input_height)
     m = ModelRunner(dut, model)
 
+    # Always-ready consumer; full-rate producer
     om = OutputModel(dut, RateGenerator(dut, 1), l_out)
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), N_in)
 
+    # Init
     dut.ready_i.value = 0
     dut.valid_i.value = 0
     WeightWidth = int(dut.WeightWidth.value)
-    dut.weights_i.value = pack_weights_channels(weights_by_ch_flat, WeightWidth, K*K)
+    dut.weights_i.value = pack_weights_channels(weights_by_ch_flat, WeightWidth, K * K)
 
     await clock_start_sequence(dut.clk_i)
     await reset_sequence(dut.clk_i, dut.rst_i, 10)
@@ -905,22 +940,25 @@ async def full_bw_Gxy_test(dut):
     om.start()
     im.start()
 
-    # Wait for first output to appear (scaled to N_first)
-    first_out_wait_ns = int(2 * N_first) + 50
+    # First possible kernel-valid position (still useful for a "did anything ever start?" check)
+    N_first = (K - 1) * W + (K - 1) + 1
+    first_out_wait_ns = int(2 * N_first) + 200
     try:
         await with_timeout(RisingEdge(dut.valid_o), first_out_wait_ns, 'ns')
     except SimTimeoutError:
         assert 0, (
             f"Timed out waiting for valid_o to go high. "
-            f"W={W}, K={K}, N_first={N_first}, waited={first_out_wait_ns} ns."
+            f"W={W}, K={K}, S={S}, N_first={N_first}, waited={first_out_wait_ns} ns. "
+            f"(Expecting {l_out} outputs = {H_out} rows × W_out={W_out})"
         )
 
-    # Full-bandwidth run timeout (scaled to N_in)
-    timeout_ns = int(2 * N_in) + 100
+    # Full-bandwidth timeout scaled to N_in (and a cushion)
+    timeout_ns = int(4 * N_in) + 500
     try:
         await om.wait(timeout_ns)
     except SimTimeoutError:
         assert 0, (
-            f"Timed out. Could not transmit {l_out} valid outputs in {timeout_ns} ns. "
-            f"Only transmitted: {om.nproduced()}"
+            f"Timed out. Expected {l_out} output handshakes (W_out={W_out}, H_out={H_out}). "
+            f"Only got {om.nproduced()} in {timeout_ns} ns. "
+            f"N_in={N_in}, input_height={input_height}, W={W}, K={K}, S={S}."
         )

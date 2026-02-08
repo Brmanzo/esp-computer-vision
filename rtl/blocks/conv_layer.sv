@@ -4,14 +4,22 @@
 /* verilator lint_off PINCONNECTEMPTY */
 `timescale 1ns / 1ps
 module conv_layer #(
-   parameter  int unsigned LineWidthPx = 160
-  ,parameter  int unsigned LineCountPx = 120
-  ,parameter  int unsigned WidthIn     = 1
-  ,parameter  int unsigned WidthOut    = 32
-  ,parameter  int unsigned KernelWidth = 3
-  ,parameter  int unsigned WeightWidth = 2
-  ,parameter  int unsigned Channels    = 1
-  ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
+   parameter  int unsigned LineWidthPx  = 160
+  ,parameter  int unsigned LineCountPx  = 120
+  ,parameter  int unsigned WidthIn      = 1
+  ,parameter  int unsigned WidthOut     = 32
+  ,parameter  int unsigned KernelWidth  = 3
+  ,parameter  int unsigned WeightWidth  = 2
+  ,parameter  int unsigned OutChannels  = 1
+  ,localparam int unsigned KernelArea   = KernelWidth * KernelWidth
+
+  ,parameter  int unsigned Stride            = 1
+  ,parameter  int unsigned StrideOrigin      = 0
+  ,localparam int unsigned StrideWidth       = (Stride <= 1) ? 1 : $clog2(Stride)
+  ,localparam logic [StrideWidth-1:0] Origin = (Stride <= 1) ? '0 : StrideWidth'(StrideOrigin)
+
+  ,localparam int XWidth = (LineWidthPx <= 1) ? 1 : $clog2(LineWidthPx)
+  ,localparam int YWidth = (LineCountPx <= 1) ? 1 : $clog2(LineCountPx)
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -23,27 +31,46 @@ module conv_layer #(
   ,output [0:0] valid_o
   ,input  [0:0] ready_i
 
-  ,output logic signed [Channels-1:0][WidthOut-1:0] data_o
-  ,input  logic signed [Channels-1:0][KernelArea-1:0][WeightWidth-1:0] weights_i
+  ,output logic signed [OutChannels-1:0][WidthOut-1:0] data_o
+  ,input  logic signed [OutChannels-1:0][KernelArea-1:0][WeightWidth-1:0] weights_i
 );
-
+  // Helper function to compute the next phase in the stride cycle for strides greater than 1.
+  // Rolls over when the current phase is the last in the cycle, otherwise returns the next phase.
+  function automatic logic [StrideWidth-1:0] mod_stride(input [StrideWidth-1:0] value);
+    if (Stride <= 1) return '0;
+    else begin
+      if (value == StrideWidth'(Stride - 1)) return '0;
+      else return (value + StrideWidth'(1));
+    end
+  endfunction
   /* ---------------------------------------- Kernel Validation ---------------------------------------- */
   wire [0:0] in_fire = valid_i & ready_o;
 
-  localparam int XWidth = (LineWidthPx <= 1) ? 1 : $clog2(LineWidthPx);
-  localparam int YWidth = (LineCountPx <= 1) ? 1 : $clog2(LineCountPx);
-
+  // Position counters track the current x and y pixel positions within the input image.
   logic [XWidth-1:0] x_pos;
   logic [YWidth-1:0] y_pos;
 
+  wire [0:0] valid_x_pos = (x_pos >= (XWidth'(KernelWidth - 1)));
+  wire [0:0] valid_y_pos = (y_pos >= (YWidth'(KernelWidth - 1)));
+
   wire [0:0] last_col = (x_pos == XWidth'(LineWidthPx - 1));
   wire [0:0] last_row = (y_pos == YWidth'(LineCountPx - 1));
+
+  // Stride phase counters track the current position within the stride cycle for x and y dimensions.
+  logic [StrideWidth-1:0] x_phase;
+  logic [StrideWidth-1:0] y_phase;
+
+  wire [0:0] valid_x_stride = (Stride <= 1) ? 1'b1 : (x_phase == Origin);
+  wire [0:0] valid_y_stride = (Stride <= 1) ? 1'b1 : (y_phase == Origin);
 
   always_ff @(posedge clk_i) begin
     // Update x and y position counters
     if (rst_i) begin
       x_pos <= '0;
       y_pos <= '0;
+      x_phase <= Origin;
+      y_phase <= Origin;
+    // Upon in_fire, update positions
     end else if (in_fire) begin
       if (last_col) begin
         x_pos <= '0;
@@ -51,15 +78,23 @@ module conv_layer #(
       end else begin
         x_pos <= x_pos + 1;
       end
+      // If valid kernel, update the stride phases
+      // Reevaluate x stride phase each pixel
+      if (valid_x_pos) x_phase <= mod_stride(x_phase);
+      // Reevaluate y stride phase each row
+      if (last_col) begin
+        // If end of row, reset x stride phase
+        x_phase <= Origin;
+        if (valid_y_pos) y_phase <= mod_stride(y_phase);
+        // If the end of the image, reset the y stride phase as well
+        if (last_row) y_phase <= Origin;
+      end
     end
   end
 
-  wire [0:0] valid_x_pos = (x_pos >= (XWidth'(KernelWidth - 1)));
-  wire [0:0] valid_y_pos = (y_pos >= (YWidth'(KernelWidth - 1)));
-
   wire [0:0] valid_kernel_pos = valid_x_pos && valid_y_pos;
 
-  wire [0:0] produce = valid_kernel_pos & in_fire;
+  wire [0:0] produce = valid_kernel_pos & in_fire && valid_x_stride && valid_y_stride;
 
   /* ------------------------------------ Elastic Handshaking Logic ------------------------------------ */
   // Provided Elastic State Machine Logic
@@ -127,7 +162,7 @@ module conv_layer #(
   end
   /* ------------------------------------ Output Logic ------------------------------------ */
   generate
-    for (genvar ch = 0; ch < Channels; ch++) begin : gen_channels
+    for (genvar ch = 0; ch < OutChannels; ch++) begin : gen_OutChannels
       mac #(
          .KernelWidth(KernelWidth)
         ,.WidthIn    (WidthIn)
