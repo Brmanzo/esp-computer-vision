@@ -15,10 +15,6 @@ module uart_cnn #(
 
   ,localparam int unsigned BytesIn       = WidthIn * HeightIn / PackedNum
   ,localparam int unsigned KernelArea    = KernelWidth * KernelWidth
-
-  ,localparam int unsigned WidthOut  = WidthIn  - (KernelWidth - 1)
-  ,localparam int unsigned HeightOut = HeightIn - (KernelWidth - 1)
-
 )  (
    input  [0:0] clk_i // 25 MHz Clock
   ,input  [0:0] rst_i
@@ -50,6 +46,17 @@ module uart_cnn #(
   localparam int unsigned MagThreshold  = ConvThreshold << 1;
   localparam logic [ConvOutWidth-1:0] ConvThresh = ConvOutWidth'(ConvThreshold);
   localparam logic [MagOutWidth-1:0]  MagThresh  = MagOutWidth'(MagThreshold);
+
+  function automatic int unsigned image_output_dims;
+    input int unsigned dim_in, kernel_width, stride;
+    begin
+      image_output_dims = ((dim_in - kernel_width) / stride) + 1; // assign to function name
+    end
+  endfunction
+
+  localparam int unsigned Stride    = 1;
+  localparam int unsigned WidthOut  = image_output_dims(WidthIn, KernelWidth, Stride);
+  localparam int unsigned HeightOut = image_output_dims(HeightIn, KernelWidth, Stride);
 
   // UART Interface Wires
   wire [0:0]                uart_ready;
@@ -182,13 +189,15 @@ module uart_cnn #(
 
   // conv_layer Filter for Gx and Gy gradients
   conv_layer #(
-     .LineWidthPx(WidthIn)
-    ,.LineCountPx(HeightIn)
-    ,.WidthIn    (QuantizedWidth)
-    ,.WidthOut   (ConvOutWidth)
-    ,.KernelWidth(KernelWidth)
-    ,.WeightWidth(WeightWidth)
-    ,.OutChannels(OutChannels)
+     .LineWidthPx (WidthIn)
+    ,.LineCountPx (HeightIn)
+    ,.WidthIn     (QuantizedWidth)
+    ,.WidthOut    (ConvOutWidth)
+    ,.KernelWidth (KernelWidth)
+    ,.WeightWidth (WeightWidth)
+    ,.OutChannels (OutChannels)
+    ,.Stride      (Stride)
+    ,.StrideOrigin(0)
   ) conv_layer_inst (
      .clk_i    (clk_i)
     ,.rst_i    (rst_i)

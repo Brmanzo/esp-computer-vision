@@ -122,8 +122,12 @@ bool singleCapture(void) {
     const size_t tx_bytes = (((size_t)W * H + 7) / 8) + HEADER_SIZE;
 
     // Downsample if needed
-    const uint16_t W_rx = (QVGA_WIDTH/downsample_factor)  - (KERNEL_W - 1);
-    const uint16_t H_rx = (QVGA_HEIGHT/downsample_factor) - (KERNEL_W - 1);
+    // const uint16_t W_rx = (QVGA_WIDTH/downsample_factor)  - (KERNEL_W - 1);
+    // const uint16_t H_rx = (QVGA_HEIGHT/downsample_factor) - (KERNEL_W - 1);
+    const uint16_t stride = 1;
+    const uint16_t W_rx = ((QVGA_WIDTH - KERNEL_W)/stride) + 1;
+    const uint16_t H_rx = ((QVGA_HEIGHT - KERNEL_W)/stride) + 1;
+
     // Received output activation is smaller
     const size_t rx_bytes = ((size_t)W_rx * H_rx + 7) / 8 + FOOTER_SIZE; // For FPGA processed data
 

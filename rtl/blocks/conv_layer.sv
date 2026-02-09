@@ -36,11 +36,11 @@ module conv_layer #(
 );
   // Helper function to compute the next phase in the stride cycle for strides greater than 1.
   // Rolls over when the current phase is the last in the cycle, otherwise returns the next phase.
-  function automatic logic [StrideWidth-1:0] mod_stride(input logic [StrideWidth-1:0] value);
+  function automatic logic [StrideWidth-1:0] inc_stride(input logic [StrideWidth-1:0] value);
     begin
-      if (Stride <= 1) mod_stride = '0;
-      else if (value == StrideWidth'(Stride - 1)) mod_stride = '0;
-      else mod_stride = value + StrideWidth'(1);
+      if (Stride <= 1) inc_stride = '0;
+      else if (value == StrideWidth'(Stride - 1)) inc_stride = '0;
+      else inc_stride = value + StrideWidth'(1);
     end
   endfunction
   /* ---------------------------------------- Kernel Validation ---------------------------------------- */
@@ -80,12 +80,12 @@ module conv_layer #(
       end
       // If valid kernel, update the stride phases
       // Reevaluate x stride phase each pixel
-      if (valid_x_pos) x_phase <= mod_stride(x_phase);
+      if (valid_x_pos) x_phase <= inc_stride(x_phase);
       // Reevaluate y stride phase each row
       if (last_col) begin
         // If end of row, reset x stride phase
         x_phase <= Origin;
-        if (valid_y_pos) y_phase <= mod_stride(y_phase);
+        if (valid_y_pos) y_phase <= inc_stride(y_phase);
         // If the end of the image, reset the y stride phase as well
         if (last_row) y_phase <= Origin;
       end
@@ -160,7 +160,7 @@ module conv_layer #(
       end
     end
   end
-  /* ------------------------------------ Output Logic ------------------------------------ */
+  /* ------------------------------------ Output Channels ------------------------------------ */
   generate
     for (genvar ch = 0; ch < OutChannels; ch++) begin : gen_OutChannels
       mac #(
