@@ -10,9 +10,14 @@ RSVG       ?= rsvg-convert
 
 FILELIST ?= $(REPO_ROOT)/filelists/top.json
 TOP_SV   ?= $(REPO_ROOT)/rtl/top/top.sv
+RTL_ROOT ?= $(REPO_ROOT)/rtl
 
 SYNTH_SOURCES = $(shell python3 $(REPO_ROOT)/sim/util/get_filelist.py $(FILELIST))
 ABSTRACT_TOP  = $(shell python3 $(REPO_ROOT)/sim/util/get_top.py $(FILELIST))
+
+define find_sv
+	$(firstword $(wildcard $(RTL_ROOT)/**/$1.sv))
+endef
 
 # The ice40 commands will only work if top.sv is provided, i.e. if
 # there is a design for the FPGA.
@@ -49,22 +54,49 @@ abstract.pdf: abstract.json
 synth-abstract: abstract.json
 abstract.json: $(FILELIST) $(SYNTH_SOURCES)
 	$(YOSYS) -ql abstract.yslog -p 'read_verilog -sv $(SYNTH_SOURCES); hierarchy -top $(ABSTRACT_TOP); proc; opt; flatten; delete t:$$scopeinfo; clean -purge; write_json $@'
+
+%.json:
+	@sv="$(call find_sv,$*)"; \
+	if [ -z "$$sv" ]; then \
+	  echo "ERROR: Could not find SV file for module '$*' under $(RTL_ROOT)/**/$*.sv"; \
+	  exit 1; \
+	fi; \
+	echo "[Yosys] $$sv -> $@ (top=$*)"; \
+	$(YOSYS) -ql $*.yslog -p "read_verilog -sv $(SYNTH_SOURCES); hierarchy -top $*; proc; opt; delete t:\$$scopeinfo; clean -purge; write_json $@"
+
+%.pdf: %.json
+	$(NETLISTSVG) $< -o $(subst pdf,svg,$@)
+	$(RSVG) -f pdf $(subst pdf,svg,$@) -o $@
+
+%.mapped.json:
+	@sv="$(call find_sv,$*)"; \
+	if [ -z "$$sv" ]; then \
+	  echo "ERROR: Could not find SV file for module '$*' under $(RTL_ROOT)/**/$*.sv"; \
+	  exit 1; \
+	fi; \
+	echo "[Yosys] $$sv -> $@ (synth_ice40 top=$*)"; \
+	$(YOSYS) -ql $*.mapped.yslog -p "read_verilog -sv $(SYNTH_SOURCES); hierarchy -top $*; synth_ice40 -dsp -top $*; delete t:\$$scopeinfo; clean -purge; write_json $@"
+
+%.mapped.pdf: %.mapped.json
+	$(NETLISTSVG) $< -o $(subst .pdf,.svg,$@)
+	$(RSVG) -f pdf $(subst .pdf,.svg,$@) -o $@
+
+.PHONY: module-help
+module-help:
+	@echo "Per-module targets:"
+	@echo "  make <mod>.pdf         (abstract proc/opt netlist for <mod>, found under rtl/**/<mod>.sv)"
+	@echo "  make <mod>.mapped.pdf  (iCE40 mapped netlist for <mod>)"
+
 synth-clean:
 	rm -rf ice40.json
-	rm -rf ice40.yslog
-	rm -rf ice40.svg ice40.pdf
 
 	rm -rf mapped.json
-	rm -rf mapped.yslog
-	rm -rf mapped.svg mapped.pdf
 
 	rm -rf xilinx.json
-	rm -rf xilinx.yslog
-	rm -rf xilinx.svg xilinx.pdf
 
 	rm -rf abstract.json
 	rm -rf abstract.yslog
-	rm -rf abstract.svg abstract.pdf
+	rm -rf *.svg *.pdf *.yslog
 
 synth-help:
 	@echo "  synth-abstract: Synthesize the circuit for abstract boolean gates, without a top level"

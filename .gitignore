@@ -22,8 +22,8 @@ __pycache__/
 *.asc
 *.bin
 *.bit
-abstract.pdf
-abstract.svg
+*.pdf
+*.svg
 
 # ESP-IDF
 build/

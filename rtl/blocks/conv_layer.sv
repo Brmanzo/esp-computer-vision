@@ -10,7 +10,7 @@ module conv_layer #(
   ,parameter  int unsigned WidthOut     = 32
   ,parameter  int unsigned KernelWidth  = 3
   ,parameter  int unsigned WeightWidth  = 2
-  ,parameter  int unsigned OutChannels  = 1
+  ,parameter  int unsigned OutChannels  = 2
   ,localparam int unsigned KernelArea   = KernelWidth * KernelWidth
 
   ,parameter  int unsigned Stride            = 1
@@ -116,9 +116,9 @@ module conv_layer #(
   assign row_buffers[0] = data_i; // Row buffer 0 is current data input
 
   multi_delay_buffer #(
-     .Width    (WidthIn)
-    ,.Delay    (LineWidthPx - 1)
-    ,.BufferCnt(KernelWidth - 1)
+     .BufferWidth(WidthIn)
+    ,.Delay      (LineWidthPx - 1)
+    ,.BufferRows (KernelWidth - 1)
   ) multi_delay_buffer_inst (
     .clk_i   (clk_i)
     ,.rst_i  (rst_i)
