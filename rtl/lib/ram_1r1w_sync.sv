@@ -25,12 +25,13 @@ module ram_1r1w_sync #(
   // Assign read output synchronously
   assign rd_data_o = rd_data_r;
 
-  `ifndef SYNTHESIS // YOSYS ignores
-  initial begin
-    for (int i = 0; i < Depth; i++) begin
-      $dumpvars(0, mem[i]);
+  `ifndef SYNTHESIS
+    initial begin
+      for (int unsigned i = 0; i < Depth; i++) begin
+        mem[i] = '0;
+      end
+      rd_data_r = '0;
     end
-  end
   `endif
 
   // Synchronous read and write

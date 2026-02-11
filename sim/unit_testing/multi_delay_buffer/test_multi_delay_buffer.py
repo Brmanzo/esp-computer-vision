@@ -53,7 +53,7 @@ def safe_int_from_value(val, *, x_as=0):
     return int(s, 2)
 
 @pytest.mark.parametrize("test_name", tests)
-@pytest.mark.parametrize("simulator", ["verilator"])
+@pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize("BufferWidth, Delay, BufferRows, InputChannels", [("1", "8", "2", "1"), ("1", "8", "2", "2"), ("1", "16", "10", "10")])
 def test_each(test_name, simulator, BufferWidth, Delay, BufferRows, InputChannels):
     # This line must be first
@@ -64,7 +64,7 @@ def test_each(test_name, simulator, BufferWidth, Delay, BufferRows, InputChannel
 
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
-@pytest.mark.parametrize("simulator", ["verilator"])
+@pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize("BufferWidth, Delay, BufferRows, InputChannels", [("1", "8", "2", "1"), ("1", "8", "2", "2"), ("1", "16", "10", "10")])
 def test_all(simulator, BufferWidth, Delay, BufferRows, InputChannels):
     # This line must be first
@@ -113,7 +113,7 @@ class MultiDelayBufferModel():
 
         self._mask = (1 << self._BufferWidth) - 1
         # Model the single cycle output delay
-        self._warmup = self._Delay * self._BufferRows
+        self._warmup = self._Delay * self._BufferRows + 1
 
         # We're going to initialize _buf with zeros so that we can
         # detect when the output should be not an X in simulation
@@ -570,6 +570,21 @@ class ModelRunner():
             print(f"Output observed got={got} expected={expected_words}")
             assert got == expected_words, f"Mismatch: got={got} expected={expected_words}"
 
+async def flush_dut(dut, duration):
+    """
+    Drives 0s into the DUT to overwrite any old data in the RAM.
+    Does not check output, effectively ignoring 'garbage' from previous tests.
+    """
+    dut.valid_i.value = 1
+    dut.ready_i.value = 1
+    dut.data_i.value = 0 
+    
+    for _ in range(duration):
+        await RisingEdge(dut.clk_i)
+        
+    dut.valid_i.value = 0
+    dut.ready_i.value = 0
+
 @cocotb.test
 async def reset_test(dut):
     """Test for Initialization"""
@@ -617,7 +632,7 @@ async def single_test(dut):
     except SimTimeoutError:
         timed_out = True
     finally:
-        # ---- CLEANUP SECTION (critical for test_all) ----
+
         try:
             im.stop()
         except Exception:
@@ -629,7 +644,7 @@ async def single_test(dut):
             pass
 
         try:
-            m.stop()   # Make sure ModelRunner has a stop() method
+            m.stop()
         except Exception:
             pass
 
@@ -685,7 +700,7 @@ async def out_fuzz_test(dut):
     except SimTimeoutError:
         timed_out = True
     finally:
-        # ---- CLEANUP SECTION (critical for test_all) ----
+
         try:
             im.stop()
         except Exception:
@@ -697,7 +712,7 @@ async def out_fuzz_test(dut):
             pass
 
         try:
-            m.stop()   # Make sure ModelRunner has a stop() method
+            m.stop()
         except Exception:
             pass
 
@@ -717,6 +732,20 @@ async def out_fuzz_test(dut):
 async def in_fuzz_test(dut):
 
     D = int(dut.Delay.value)
+    rows = int(dut.BufferRows.value)
+
+    await clock_start_sequence(dut.clk_i)
+
+    await reset_sequence(dut.clk_i, dut.rst_i, 10)
+
+
+    flush_depth = rows * D + 5
+    await flush_dut(dut, flush_depth)
+
+    await reset_sequence(dut.clk_i, dut.rst_i, 10)
+
+
+    await FallingEdge(dut.clk_i)
 
     rate = 0.5
 
@@ -753,7 +782,7 @@ async def in_fuzz_test(dut):
     except SimTimeoutError:
         timed_out = True
     finally:
-        # ---- CLEANUP SECTION (critical for test_all) ----
+
         try:
             im.stop()
         except Exception:
@@ -765,7 +794,7 @@ async def in_fuzz_test(dut):
             pass
 
         try:
-            m.stop()   # Make sure ModelRunner has a stop() method
+            m.stop()
         except Exception:
             pass
 
@@ -786,6 +815,21 @@ async def in_fuzz_test(dut):
 async def inout_fuzz_test(dut):
 
     D = int(dut.Delay.value)
+
+    rows = int(dut.BufferRows.value)
+
+    await clock_start_sequence(dut.clk_i)
+
+    await reset_sequence(dut.clk_i, dut.rst_i, 10)
+
+
+    flush_depth = rows * D + 5
+    await flush_dut(dut, flush_depth)
+
+    await reset_sequence(dut.clk_i, dut.rst_i, 10)
+
+
+    await FallingEdge(dut.clk_i)
 
     rate = 0.5
 
@@ -822,7 +866,7 @@ async def inout_fuzz_test(dut):
     except SimTimeoutError:
         timed_out = True
     finally:
-        # ---- CLEANUP SECTION (critical for test_all) ----
+
         try:
             im.stop()
         except Exception:
@@ -834,7 +878,7 @@ async def inout_fuzz_test(dut):
             pass
 
         try:
-            m.stop()   # Make sure ModelRunner has a stop() method
+            m.stop()
         except Exception:
             pass
 
@@ -854,6 +898,19 @@ async def inout_fuzz_test(dut):
 async def full_bw_test(dut):
 
     D = int(dut.Delay.value)
+
+    rows = int(dut.BufferRows.value)
+
+    await clock_start_sequence(dut.clk_i)
+
+    await reset_sequence(dut.clk_i, dut.rst_i, 10)
+
+    flush_depth = rows * D + 5
+    await flush_dut(dut, flush_depth)
+
+    await reset_sequence(dut.clk_i, dut.rst_i, 10)
+
+    await FallingEdge(dut.clk_i)
 
     rate = 0.5
 
@@ -890,7 +947,7 @@ async def full_bw_test(dut):
     except SimTimeoutError:
         timed_out = True
     finally:
-        # ---- CLEANUP SECTION (critical for test_all) ----
+
         try:
             im.stop()
         except Exception:
@@ -902,7 +959,7 @@ async def full_bw_test(dut):
             pass
 
         try:
-            m.stop()   # Make sure ModelRunner has a stop() method
+            m.stop()
         except Exception:
             pass
 
