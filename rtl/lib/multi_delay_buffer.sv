@@ -6,7 +6,7 @@ module multi_delay_buffer #(
    parameter  int unsigned BufferWidth   = 8
   ,parameter  int unsigned Delay         = 8
   ,parameter  int unsigned BufferRows    = 2
-  ,parameter  int unsigned InputChannels = 2
+  ,parameter  int unsigned InputChannels = 1
   ,localparam int unsigned AddrWidth     = $clog2(Delay)
   ,localparam int unsigned ChannelWidth  = BufferWidth * BufferRows
   ,localparam int unsigned RamWidth      = InputChannels * ChannelWidth
@@ -62,11 +62,13 @@ module multi_delay_buffer #(
   logic [RamWidth-1:0] ram_rd;
 
   // Pack single RAM write from unpacked channel writes
+  // ram_wr = { << {channel_wr[ch]}}
   for (genvar ch = 0; ch < InputChannels; ch++) begin : gen_pack
     assign ram_wr[ch*ChannelWidth +: ChannelWidth] = channel_wr[ch];
   end
 
-  // Unpack from channel read from packed RAM read
+  // Unpack from channel read from packed RAM read 
+  // channel_rd[ch] = { << {ram_rd}}
   for (genvar ch = 0; ch < InputChannels; ch++) begin : gen_unpack
     assign channel_rd[ch] = ram_rd[ch*ChannelWidth +: ChannelWidth];
   end

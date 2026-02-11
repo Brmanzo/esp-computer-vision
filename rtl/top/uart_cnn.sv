@@ -4,14 +4,15 @@
 `timescale 1ns / 1ps
 /* verilator lint_off PINCONNECTEMPTY */
 module uart_cnn #(
-   parameter int unsigned WidthIn        = 320
-  ,parameter int unsigned HeightIn       = 240
-  ,parameter int unsigned KernelWidth    = 3
-  ,parameter int unsigned WeightWidth    = 2
-  ,parameter int unsigned BusWidth       = 8
-  ,parameter int unsigned QuantizedWidth = 1
-  ,parameter int unsigned PackedNum      = BusWidth / QuantizedWidth
-  ,parameter int unsigned OutChannels    = 2
+   parameter  int unsigned WidthIn        = 320
+  ,parameter  int unsigned HeightIn       = 240
+  ,parameter  int unsigned KernelWidth    = 3
+  ,parameter  int unsigned WeightWidth    = 2
+  ,parameter  int unsigned BusWidth       = 8
+  ,parameter  int unsigned QuantizedWidth = 1
+  ,parameter  int unsigned PackedNum      = BusWidth / QuantizedWidth
+  ,parameter  int unsigned OutChannels    = 2
+  ,localparam int unsigned Stride         = 1
 
   ,localparam int unsigned BytesIn       = WidthIn * HeightIn / PackedNum
   ,localparam int unsigned KernelArea    = KernelWidth * KernelWidth
@@ -53,10 +54,6 @@ module uart_cnn #(
       image_output_dims = ((dim_in - kernel_width) / stride) + 1; // assign to function name
     end
   endfunction
-
-  localparam int unsigned Stride    = 1;
-  localparam int unsigned WidthOut  = image_output_dims(WidthIn, KernelWidth, Stride);
-  localparam int unsigned HeightOut = image_output_dims(HeightIn, KernelWidth, Stride);
 
   // UART Interface Wires
   wire [0:0]                uart_ready;
@@ -244,6 +241,9 @@ module uart_cnn #(
     endcase
   end
   // Packs 8 pixels onto a single byte, adds footer at end of frame and sends to UART
+  localparam int unsigned WidthOut  = image_output_dims(WidthIn, KernelWidth, Stride);
+  localparam int unsigned HeightOut = image_output_dims(HeightIn, KernelWidth, Stride);
+  
   framer #(
      .UnpackedWidth (QuantizedWidth)
     ,.PackedNum     (PackedNum)
