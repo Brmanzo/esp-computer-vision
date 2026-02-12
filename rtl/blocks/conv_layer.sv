@@ -33,7 +33,7 @@ module conv_layer #(
   ,input  [0:0] ready_i
 
   ,output logic signed [OutChannels-1:0][WidthOut-1:0] data_o
-  ,input  logic signed [InChannels-1:0][OutChannels-1:0][KernelArea-1:0][WeightWidth-1:0] weights_i
+  ,input  logic signed [OutChannels-1:0][InChannels-1:0][KernelArea-1:0][WeightWidth-1:0] weights_i
 );
   // Helper function to compute the next phase in the stride cycle for strides greater than 1.
   // Rolls over when the current phase is the last in the cycle, otherwise returns the next phase.
@@ -117,7 +117,6 @@ module conv_layer #(
   generate
     for (genvar ch = 0; ch < InChannels; ch++) begin : gen_data_input
       assign row_buffers[ch][0] = data_i[ch]; // Row buffer 0 is current data input
-
       assign row_buffers[ch][KernelWidth-1:1] = row_buffer_taps[ch];
     end
   endgenerate
@@ -126,6 +125,7 @@ module conv_layer #(
      .BufferWidth(WidthIn)
     ,.Delay      (LineWidthPx - 1)
     ,.BufferRows (KernelWidth - 1)
+    ,.InputChannels(InChannels)
   ) multi_delay_buffer_inst (
     .clk_i   (clk_i)
     ,.rst_i  (rst_i)
@@ -139,23 +139,38 @@ module conv_layer #(
     ,.ready_i(1'b1)
   );
 
+  /* ------------------------------------ Window Generation Logic ------------------------------------ */
+  // For each input channel, instantiate one window to represent unique kernel position 
+  logic [InChannels-1:0][KernelArea-1:0][WidthIn-1:0] windows;
+  generate
+    for (genvar ch = 0; ch < InChannels; ch++) begin : gen_windows
+      window #(
+         .KernelWidth(KernelWidth)
+        ,.WidthIn    (WidthIn)
+      ) win_i (
+         .clk_i   (clk_i)
+        ,.rst_i   (rst_i)
+
+        ,.in_fire_i    (in_fire)
+        ,.row_buffers_i(row_buffers[ch])
+        ,.window_o     (windows[ch])
+      );
+    end
+  endgenerate
+
   /* ------------------------------------ Filter Logic ------------------------------------ */
   generate
-    for (genvar ch = 0; ch < InChannels; ch++) begin : gen_row_buffer_delayed
+    for (genvar ch = 0; ch < OutChannels; ch++) begin : gen_row_buffer_delayed
       filter #(
         .WidthIn     (WidthIn)
         ,.WidthOut   (WidthOut)
         ,.KernelWidth(KernelWidth)
         ,.WeightWidth(WeightWidth)
-        ,.OutChannels(OutChannels)
+        ,.InChannels (InChannels)
       ) filter_inst (
-         .clk_i    (clk_i)
-        ,.rst_i    (rst_i)
-        ,.in_fire_i(in_fire)
-
-        ,.row_buffers(row_buffers)
+         .windows_i  (windows)
         ,.weights_i  (weights_i[ch])
-        ,.data_o     (data_o)
+        ,.data_o     (data_o[ch])
       );
     end
   endgenerate

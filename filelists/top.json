@@ -21,5 +21,7 @@
     ,"rtl/blocks/deframer.sv"
     ,"rtl/lib/multi_delay_buffer.sv"
     ,"rtl/lib/mac.sv"
+    ,"rtl/lib/filter.sv"
+    ,"rtl/lib/window.sv"
     ]
 }
