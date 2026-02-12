@@ -10,6 +10,7 @@ module conv_layer #(
   ,parameter  int unsigned WidthOut     = 32
   ,parameter  int unsigned KernelWidth  = 3
   ,parameter  int unsigned WeightWidth  = 2
+  ,parameter  int unsigned InChannels   = 1
   ,parameter  int unsigned OutChannels  = 2
   ,localparam int unsigned KernelArea   = KernelWidth * KernelWidth
 
@@ -26,13 +27,13 @@ module conv_layer #(
 
   ,input  [0:0]         valid_i
   ,output [0:0]         ready_o
-  ,input  [WidthIn-1:0] data_i
+  ,input  [InChannels-1:0][WidthIn-1:0] data_i
 
   ,output [0:0] valid_o
   ,input  [0:0] ready_i
 
   ,output logic signed [OutChannels-1:0][WidthOut-1:0] data_o
-  ,input  logic signed [OutChannels-1:0][KernelArea-1:0][WeightWidth-1:0] weights_i
+  ,input  logic signed [InChannels-1:0][OutChannels-1:0][KernelArea-1:0][WeightWidth-1:0] weights_i
 );
   // Helper function to compute the next phase in the stride cycle for strides greater than 1.
   // Rolls over when the current phase is the last in the cycle, otherwise returns the next phase.
@@ -108,12 +109,18 @@ module conv_layer #(
   assign valid_o =  valid_r;
   assign ready_o = ~valid_r | ready_i;
 
-  /* ------------------------------------ FIFO RAM Instantiations ------------------------------------ */
-  // Both RAMs step forward with each new pixel input (in_fire) so that delay is exactly one row each.
-  // RAM 1 produces a delay of one row. Reads off of data_i as the bottom row of the kernel receives new data.
-  // Unpacked array of vectors to hold each row buffer
-  logic [KernelWidth-1:0][WidthIn-1:0] row_buffers;
-  assign row_buffers[0] = data_i; // Row buffer 0 is current data input
+  
+  /* ------------------------------------ Delay Buffer Logic ------------------------------------ */
+  // Vertically partition channels and row buffers for each channel within RAM
+  logic [InChannels-1:0][KernelWidth-1:0][WidthIn-1:0] row_buffers;
+  logic [InChannels-1:0][KernelWidth-1:1][WidthIn-1:0] row_buffer_taps;
+  generate
+    for (genvar ch = 0; ch < InChannels; ch++) begin : gen_data_input
+      assign row_buffers[ch][0] = data_i[ch]; // Row buffer 0 is current data input
+
+      assign row_buffers[ch][KernelWidth-1:1] = row_buffer_taps[ch];
+    end
+  endgenerate
 
   multi_delay_buffer #(
      .BufferWidth(WidthIn)
@@ -127,51 +134,28 @@ module conv_layer #(
     ,.valid_i(in_fire)
     ,.ready_o()
 
-    ,.data_o (row_buffers[KernelWidth-1:1]) // Row buffers >= 1 read from delay buffer
+    ,.data_o (row_buffer_taps) // Row buffers >= 1 read from delay buffer
     ,.valid_o()
     ,.ready_i(1'b1)
   );
 
-  /* ------------------------------------ Window Register Logic ------------------------------------ */
-  // Row major Order(window[row][col])
-  logic [KernelArea-1:0][WidthIn-1:0] window; // Packed 1D array to hold the kernel window pixels for MAC input
-
-  always_ff @(posedge clk_i) begin
-    if (rst_i) begin
-        for (int r = 0; r < KernelWidth; r++) begin
-          for (int c = 0; c < KernelWidth; c++) begin
-              window[r*KernelWidth + c] <= '0;
-          end
-        end
-    end else if (in_fire) begin
-      /* ------------------------------- Internal Connections ------------------------------- */
-      // Line feeds from right to left within window
-      // Bottom line
-      for (int r = 0; r < KernelWidth; r++) begin
-        for (int c = 0; c < KernelWidth - 1; c++) begin
-            window[r*KernelWidth + c] <= window[r*KernelWidth + c+1];
-        end
-      end
-      /* -------------------------------- Input Connections -------------------------------- */
-      // Load new data into the rightmost column of the window
-      // Top line <- Twice seen data from second RAM
-      for (int r = 0; r < KernelWidth; r++) begin
-        window[r*KernelWidth + KernelWidth-1] <= row_buffers[KernelWidth-1 - r];
-      end
-    end
-  end
-  /* ------------------------------------ Output Channels ------------------------------------ */
+  /* ------------------------------------ Filter Logic ------------------------------------ */
   generate
-    for (genvar ch = 0; ch < OutChannels; ch++) begin : gen_OutChannels
-      mac #(
-         .KernelWidth(KernelWidth)
-        ,.WidthIn    (WidthIn)
+    for (genvar ch = 0; ch < InChannels; ch++) begin : gen_row_buffer_delayed
+      filter #(
+        .WidthIn     (WidthIn)
         ,.WidthOut   (WidthOut)
+        ,.KernelWidth(KernelWidth)
         ,.WeightWidth(WeightWidth)
-      ) mac_inst (
-         .window   (window)
-        ,.weights_i(weights_i[ch])
-        ,.data_o   (data_o[ch])
+        ,.OutChannels(OutChannels)
+      ) filter_inst (
+         .clk_i    (clk_i)
+        ,.rst_i    (rst_i)
+        ,.in_fire_i(in_fire)
+
+        ,.row_buffers(row_buffers)
+        ,.weights_i  (weights_i[ch])
+        ,.data_o     (data_o)
       );
     end
   endgenerate

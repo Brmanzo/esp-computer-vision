@@ -54,7 +54,7 @@ def safe_int_from_value(val, *, x_as=0):
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("BufferWidth, Delay, BufferRows, InputChannels", [("1", "8", "2", "1"), ("1", "8", "2", "2"), ("1", "16", "10", "10")])
+@pytest.mark.parametrize("BufferWidth, Delay, BufferRows, InputChannels", [("1", "8", "2", "1"), ("1", "8", "2", "4"), ("2", "16", "4", "10")])
 def test_each(test_name, simulator, BufferWidth, Delay, BufferRows, InputChannels):
     # This line must be first
     parameters = dict(locals())
@@ -65,7 +65,7 @@ def test_each(test_name, simulator, BufferWidth, Delay, BufferRows, InputChannel
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("BufferWidth, Delay, BufferRows, InputChannels", [("1", "8", "2", "1"), ("1", "8", "2", "2"), ("1", "16", "10", "10")])
+@pytest.mark.parametrize("BufferWidth, Delay, BufferRows, InputChannels", [("1", "8", "2", "1"), ("1", "8", "2", "4"), ("2", "16", "4", "10")])
 def test_all(simulator, BufferWidth, Delay, BufferRows, InputChannels):
     # This line must be first
     parameters = dict(locals())
