@@ -94,14 +94,31 @@ def gen_ternary_kernels(OC: int, IC: int, K: int, seed: int | None = None):
 
     return kernels4, kernels_flat
 
+def pack_input_channels(samples, width):
+    """
+    samples: list[int] length = InChannels
+    width: WidthIn
+    Returns packed int: sum(samples[ic] << (ic*width))
+    """
+    mask = (1 << width) - 1
+    out = 0
+    for ic, v in enumerate(samples):
+        out |= (int(v) & mask) << (ic * width)
+    return out
+
+def unpack_data_i(packed, width_in, IC):
+    mask = (1 << width_in) - 1
+    return [ (packed >> (ic * width_in)) & mask for ic in range(IC) ]
+
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth, OutChannels, Stride", 
-                         [("16", "1", output_width(1), "3", "1", "1"),
-                          ("32", "2", output_width(2), "5", "1", "1"),
-                          ("16", "1", output_width(1), "3", "2", "1"),
-                          ("16", "1", output_width(1), "3", "1", "2")])
-def test_each(test_name, simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth, OutChannels, Stride):
+@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth, InChannels, OutChannels, Stride", 
+                         [("16", "1", output_width(1), "3", "1", "1", "1"),
+                          ("32", "2", output_width(2), "5", "1", "1", "1"),
+                          ("16", "1", output_width(1), "3", "1", "2", "1"),
+                          ("16", "1", output_width(1), "3", "1", "1", "2"),
+                          ("16", "1", output_width(1), "3", "2", "2", "2")])
+def test_each(test_name, simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth, InChannels, OutChannels, Stride):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
@@ -153,15 +170,19 @@ class ConvLayerModel():
         self._InChannels  = int(dut.InChannels.value)
         self._OutChannels = int(dut.OutChannels.value)
 
-        self._Origin = int(dut.Origin.value)
+        self._Origin = int(dut.StrideOrigin.value)
         self._Stride = int(dut.Stride.value)
+
+        self._empty_output = 0
 
         # We're going to initialize _buf with NaN so that we can
         # detect when the output should be not an X in simulation
-        self._buf = np.zeros((self._kernel_width,self._input_width))/0
+        # Buffer for all input channels, storing the most recent kernel_width values for each channel
+        self._buf = [np.zeros((self._kernel_width,self._input_width))/0 for _ in range(self._InChannels)]
         self._deqs = 0
         self._enqs = 0
 
+        # kernel 4D array storing all kernels in each filter: [OC][IC][K][K]
         self.k = np.array(weights, dtype=int)
         assert self.k.shape == (self._OutChannels, self._InChannels, self._kernel_width, self._kernel_width)
         self._in_idx = 0
@@ -184,13 +205,6 @@ class ConvLayerModel():
                     if ((r - invalid_region) % S) != O or ((c - invalid_region) % S) != O:
                         self._valid_cycles[r, c] = False
 
-    def _produces_output(self, idx: int) -> bool:
-        x = idx % int(self._input_width)
-        y = idx // int(self._input_width)
-        if y >= int(self._input_height):
-            return False
-        return bool(self._valid_cycles[y, x])
-
     # Now let's scale this up a little bit
     # You can define functions to do the steps in convolution
     def update_window(self, buf, inp):
@@ -207,13 +221,17 @@ class ConvLayerModel():
         buf = temp
         return buf
 
-    def apply_kernel(self, buf):
-        window = buf[:,-self._kernel_width:]
-        window = window.astype(int, copy=False)
+    def apply_kernel(self, bufs):
         result = np.zeros(self._OutChannels, dtype=int)
-        # Now take the dot product between the window, and the kernel
-        for ch in range(self._OutChannels):
-            result[ch] = int((self.k[ch] * window).sum())
+
+        windows = [b[:, -self._kernel_width:].astype(int, copy=False) for b in bufs]
+
+        result = np.zeros(self._OutChannels, dtype=int)
+        for oc in range(self._OutChannels):
+            acc = 0
+            for ic in range(self._InChannels):
+                acc += int((self.k[oc, ic] * windows[ic]).sum())
+            result[oc] = acc
         return result
 
     def consume(self):
@@ -223,10 +241,13 @@ class ConvLayerModel():
           - int expected value if it SHOULD produce an output
         """
         assert_resolvable(self._data_i)
-        inp = int(self._data_i.value.integer)
+        packed_data_i = []
+        packed = int(self._data_i.value.integer)
+        packed_data_i = unpack_data_i(packed, int(self._dut.WidthIn.value), self._InChannels)
 
-        # advance window on EVERY accepted input
-        self._buf = self.update_window(self._buf, inp)
+        # advance windows on EVERY accepted input
+        for ic, inp in enumerate(packed_data_i):
+            self._buf[ic] = self.update_window(self._buf[ic], inp)
 
         idx = self._enqs
         x = idx % int(self._input_width)
@@ -256,7 +277,8 @@ class ConvLayerModel():
             raw = (packed >> (ch * w)) & ((1 << w) - 1)   # assumes ch=0 is LSB slice
             got = sign_extend(raw, w)
             exp = int(expected[ch])
-
+            
+            print(f"Output #{self._deqs} ch{ch}: expected {exp}, got {got} (raw=0x{raw:x})")
             assert got == exp, (
                 f"Mismatch at output #{self._deqs} ch{ch}: expected {exp}, got {got} "
                 f"(raw=0x{raw:x})"
@@ -313,10 +335,13 @@ class RandomDataGenerator():
     def __init__(self, dut):
         self._dut = dut
         self._width_p = int(dut.WidthIn.value)
+        self._InChannels = int(dut.InChannels.value)
 
     def generate(self):
-        x_i = random.randint(0, (1 << self._width_p) - 1)
-        return (x_i)
+        data_i = []
+        for _ in range(self._InChannels):
+            data_i.append(random.randint(0, (1 << self._width_p) - 1))
+        return (data_i)
 
 class CountingGenerator():
     def __init__(self, dut, r):
@@ -475,12 +500,7 @@ class InputModel():
 
             w = int(self._dut.WidthIn.value)
 
-            if w == 1:
-                # 1-bit data: allow 0/1
-                data_i.value = din & 0x1
-            else:
-                # Keep MSB clear -> only non-negative signed values (0 .. 2^(w-1)-1)
-                data_i.value = din & ((1 << (w - 1)) - 1)
+            data_i.value = pack_input_channels(din, w)
 
             success = False
             while produce and not success:
