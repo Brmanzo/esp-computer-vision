@@ -26,7 +26,7 @@ from cocotb.triggers import Timer, ClockCycles, RisingEdge, FallingEdge, with_ti
 from cocotb.types import LogicArray
 from cocotb.utils import get_sim_time
 
-def runner(simulator, timescale, tbpath, params, defs=[], testname=None, pymodule=None, jsonpath=None, jsonname="filelist.json", root=None):
+def runner(simulator, timescale, tbpath, params, defs=[], testname=None, pymodule=None, jsonpath=None, jsonname="filelist.json", root=None, work_dir=None, sim_build=None):
     """Run the simulator on test n, with parameters params, and defines
     defs. If n is none, it will run all tests"""
 
@@ -54,8 +54,22 @@ def runner(simulator, timescale, tbpath, params, defs=[], testname=None, pymodul
 
     sources = get_sources(root, tbpath)
 
-    work_dir = os.path.join(tbpath, "run", testdir, get_param_string(params), simulator)
-    build_dir = os.path.join(tbpath, "build", get_param_string(params))
+    # Only calculate work_dir if the user didn't provide one
+    if work_dir is None:
+        work_dir = os.path.join(tbpath, "run", testdir, get_param_string(params), simulator)
+
+    # Only calculate build_dir if the user didn't provide one (sim_build)
+    if sim_build is None:
+        # Default behavior
+        build_dir = os.path.join(tbpath, "build", get_param_string(params))
+        if simulator.startswith("icarus"):
+            build_dir = work_dir
+    else:
+        # User override behavior
+        build_dir = sim_build
+
+    if not os.path.exists(work_dir):
+        os.makedirs(work_dir, exist_ok=True)
 
     # Icarus doesn't build, it just runs.
     if simulator.startswith("icarus"):

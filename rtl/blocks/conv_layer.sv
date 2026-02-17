@@ -4,8 +4,8 @@
 /* verilator lint_off PINCONNECTEMPTY */
 `timescale 1ns / 1ps
 module conv_layer #(
-   parameter  int unsigned LineWidthPx  = 160
-  ,parameter  int unsigned LineCountPx  = 120
+   parameter  int unsigned LineWidthPx  = 16
+  ,parameter  int unsigned LineCountPx  = 12
   ,parameter  int unsigned WidthIn      = 1
   ,parameter  int unsigned WidthOut     = 32
   ,parameter  int unsigned KernelWidth  = 3

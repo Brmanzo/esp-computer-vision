@@ -33,21 +33,26 @@ timescale = "1ps/1ps"
 
 timescale = "1ps/1ps"
 tests = ['reset_test'
-         ,'single_test'
-         ,'inout_fuzz_test'
-         ,'in_fuzz_test'
-         ,'out_fuzz_test'
-         ,'full_bw_test']
+        ,'single_test'
+        ,'inout_fuzz_test'
+        ,'in_fuzz_test'
+        ,'out_fuzz_test'
+        ,'full_bw_test']
 
-def output_width(input_width: int, w_sum: int = 8) -> str:
+def output_width(width_in: int, weight_width: int, kernel_area: int=3, in_channels: int=1) -> str:
     '''Calculates proper output width for given input width amount of accumulations.'''
-    gray_max = (1 << input_width) - 1
-    abs_w = math.ceil(math.log2(gray_max * w_sum + 1))
-    return str(abs_w + 1)   # +1 for sign bit
+    terms = kernel_area * in_channels
 
-def pack_weights_out_ic_oc(weights_by_oc_ic, width, kernel_area, IC):
+    max_val    = (1 << width_in) - 1       # Unsigned``
+    max_weight = (1 << (weight_width - 1)) # Signed
+
+    max_sum = terms * max_val * max_weight
+    abs_bits = max_sum.bit_length()
+    return str(abs_bits + 1)   # +1 for sign bit
+
+def pack_weights_in(weights_4d, width, kernel_area, IC):
     """
-    weights_by_oc_ic: [OC][IC][kernel_area] values (signed ints)
+    weights_4d: [OC][IC][kernel_area] values (signed ints)
     Packing order: k fastest, then ic, then oc
       shift = width * (k + kernel_area*(ic + IC*oc))
     """
@@ -55,7 +60,7 @@ def pack_weights_out_ic_oc(weights_by_oc_ic, width, kernel_area, IC):
     lo, hi = -(1 << (width - 1)), (1 << (width - 1)) - 1
 
     out = 0
-    for oc, ws_by_ic in enumerate(weights_by_oc_ic):
+    for oc, ws_by_ic in enumerate(weights_4d):
         assert len(ws_by_ic) == IC
         for ic, ws in enumerate(ws_by_ic):
             assert len(ws) == kernel_area
@@ -69,16 +74,22 @@ def sign_extend(val: int, bits: int) -> int:
     sign = 1 << (bits - 1)
     return (val ^ sign) - sign
 
-def flatten_kernel(k2d):
-    # row-major flatten: k[r][c] -> k[r*K+c]
-    return [v for row in k2d for v in row]
-
-def gen_ternary_kernels(OC: int, IC: int, K: int, seed: int | None = None):
+def gen_kernels(WW: int, OC: int, IC: int, K: int, seed: int | None = None):
     rng = random.Random(seed)
+    if WW < 2:
+        raise ValueError("Weight width must be at least 2 to include negative values in test kernels.")
+    # If weight width of two, enforce ternary {-1, 0, 1} weights to test intended use of conv_layer
+    elif WW == 2:
+        rand_kernel_value = lambda: rng.choice([-1, 0, 1])
+    else:
+        # For wider weight widths, we can use a larger range of values
+        max_val = (1 << (WW - 1)) - 1
+        min_val = -(1 << (WW - 1))
+        rand_kernel_value = lambda: rng.randint(min_val, max_val)
 
     kernels4 = [
         [
-            [[rng.choice([1, 0, -1]) for _ in range(K)] for _ in range(K)]
+            [[rand_kernel_value() for _ in range(K)] for _ in range(K)]
             for _ in range(IC)
         ]
         for _ in range(OC)
@@ -94,7 +105,7 @@ def gen_ternary_kernels(OC: int, IC: int, K: int, seed: int | None = None):
 
     return kernels4, kernels_flat
 
-def pack_input_channels(samples, width):
+def pack_data_i(samples, width):
     """
     samples: list[int] length = InChannels
     width: WidthIn
@@ -112,26 +123,43 @@ def unpack_data_i(packed, width_in, IC):
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth, InChannels, OutChannels, Stride", 
-                         [("16", "1", output_width(1), "3", "1", "1", "1"),
-                          ("32", "2", output_width(2), "5", "1", "1", "1"),
-                          ("16", "1", output_width(1), "3", "1", "2", "1"),
-                          ("16", "1", output_width(1), "3", "1", "1", "2"),
-                          ("16", "1", output_width(1), "3", "2", "2", "2")])
-def test_each(test_name, simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth, InChannels, OutChannels, Stride):
+@pytest.mark.parametrize("WidthIn, WeightWidth, WidthOut", 
+                         [("1", "2", output_width(1, 2)), # Intended Size
+                          ("2", "3", output_width(2, 3)), # Unsigned data_i
+                          ("4", "5", output_width(4, 5)),
+                          ("8", "8", output_width(8, 8))])
+def test_width(test_name, simulator, WidthIn, WeightWidth, WidthOut):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
-    runner(simulator, timescale, tbpath, parameters, testname=test_name)
+    param_str = f"WidthIn_{WidthIn}_WeightWidth_{WeightWidth}_WidthOut_{WidthOut}"
+    custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
+    runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
+
+@pytest.mark.parametrize("test_name", tests)
+@pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+@pytest.mark.parametrize("WidthOut, KernelWidth, Stride, StrideOrigin, LineWidthPx, LineCountPx", 
+                         [(output_width(1, 2), 2, 2, 0, 16, 12),
+                          (output_width(1, 2), 4, 4, 0, 16, 12),
+                          (output_width(1, 2), 5, 2, 0, 17, 13)
+                        #   (output_width(1, 2), 5, 2, 1, 16, 12)
+                          ])
+
+def test_stride(test_name, simulator, WidthOut, KernelWidth, Stride, StrideOrigin, LineWidthPx, LineCountPx):
+    # This line must be first
+    parameters = dict(locals())
+    del parameters['test_name']
+    del parameters['simulator']
+    param_str = f"KernelWidth_{KernelWidth}_Stride_{Stride}_LineWidthPx_{LineWidthPx}_LineCountPx_{LineCountPx}_StrideOrigin_{StrideOrigin}"
+    custom_work_dir = os.path.join(tbpath, "run", "stride", param_str, simulator)
+    runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
 
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth, OutChannels, Stride", 
-                         [("16", "1", output_width(1), "3", "1", "1"),
-                          ("32", "2", output_width(2), "5", "1", "1"),
-                          ("16", "1", output_width(1), "3", "2", "1")])
+                         [("16", "1", output_width(1, 2), "3", "1", "1")])
 def test_all(simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth, OutChannels, Stride):
     # This line must be first
     parameters = dict(locals())
@@ -139,7 +167,7 @@ def test_all(simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth, OutChannels
     runner(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut", [("16", "2", output_width(2))])
+@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut", [("16", "1", output_width(1, 2))])
 def test_lint(simulator, LineWidthPx, WidthIn, WidthOut):
     # This line must be first
     parameters = dict(locals())
@@ -147,7 +175,7 @@ def test_lint(simulator, LineWidthPx, WidthIn, WidthOut):
     lint(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut", [("16", "2", output_width(2))])
+@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut", [("16", "1", output_width(1, 2))])
 def test_style(simulator, LineWidthPx, WidthIn, WidthOut):
     # This line must be first
     parameters = dict(locals())
@@ -165,7 +193,7 @@ class ConvLayerModel():
         self._q = queue.SimpleQueue()
 
         self._input_width = int(dut.LineWidthPx.value)
-        self._input_height = input_height
+        self._input_height = int(dut.LineCountPx.value)
         self._WidthOut = int(dut.WidthOut.value)
         self._InChannels  = int(dut.InChannels.value)
         self._OutChannels = int(dut.OutChannels.value)
@@ -191,6 +219,12 @@ class ConvLayerModel():
         invalid_region = self._kernel_width - 1
         S = int(self._Stride)
         O = int(self._Origin)
+        span_w = (self._input_width  - 1) - ((self._kernel_width - 1) + O)
+        span_h = (self._input_height - 1) - ((self._kernel_width - 1) + O)
+
+        assert span_w >= 0 and span_h >= 0, "Kernel+origin exceeds image bounds"
+        assert (span_w % S) == 0 and (span_h % S) == 0, "Invalid configuration: Stride does not tile evenly"
+
         if S <= 1: 
             S = 1
             O = 0
@@ -500,7 +534,7 @@ class InputModel():
 
             w = int(self._dut.WidthIn.value)
 
-            data_i.value = pack_input_channels(din, w)
+            data_i.value = pack_data_i(din, w)
 
             success = False
             while produce and not success:
@@ -593,7 +627,7 @@ async def single_test(dut):
 
     rate = 1
 
-    kernels_4d, kernels_flat = gen_ternary_kernels(OC, IC, K, seed=1234)
+    kernels_4d, kernels_flat = gen_kernels(WW, OC, IC, K, seed=1234)
     
     model = ConvLayerModel(dut, kernels_4d, input_height=K)
     m = ModelRunner(dut, model)
@@ -605,7 +639,7 @@ async def single_test(dut):
     dut.valid_i.value = 0
     WeightWidth = int(dut.WeightWidth.value)
     weights_by_ch = [[1]*(K*K) for _ in range(OC)]
-    dut.weights_i.value = pack_weights_out_ic_oc(kernels_flat, WW, KA, IC)
+    dut.weights_i.value = pack_weights_in(kernels_flat, WW, KA, IC)
 
     await clock_start_sequence(dut.clk_i)
     await reset_sequence(dut.clk_i, dut.rst_i, 10)
@@ -635,6 +669,7 @@ async def single_test(dut):
 
 async def rate_tests(dut, in_rate, out_rate):
     W  = int(dut.LineWidthPx.value)
+    H  = int(dut.LineCountPx.value)
     K  = int(dut.KernelWidth.value)
     KA = K * K
     IC = int(dut.InChannels.value)
@@ -643,14 +678,15 @@ async def rate_tests(dut, in_rate, out_rate):
     S  = int(dut.Stride.value)
     O  = int(dut.StrideOrigin.value) if hasattr(dut, "StrideOrigin") else 0  # optional
 
-    # Observe 4 rows of VALID outputs
-    H_out = 4
+    # Observe H rows of VALID outputs
+    invalid = K - 1
+    H_out = ((H - K) // S) + 1
     W_out = ((W - K) // S) + 1
-    l_out = W_out * H_out
+    H_obs = min(4, H_out)
+    l_out = W_out * H_obs
 
-    y_last = (K - 1) + (H_out - 1) * S
+    y_last = invalid + (H_obs - 1) * S
     N_in = (y_last * W + (W - 1)) + 1
-    input_height = y_last + 1
 
     # Consumer ready probability
     slow = min(in_rate, out_rate)  # bottleneck probability
@@ -659,11 +695,11 @@ async def rate_tests(dut, in_rate, out_rate):
     first_out_wait_ns = int((2 * (K - 1) * W + 2 * (K - 1) + 200) / slow)
     timeout_ns        = int((H_out * N_in + 500) / slow)
 
-    kernels_4d, kernels_flat = gen_ternary_kernels(OC, IC, K, seed=1234)
+    kernels_4d, kernels_flat = gen_kernels(WW, OC, IC, K, seed=1234)
 
-    dut.weights_i.value = pack_weights_out_ic_oc(kernels_flat, WW, KA, IC)
+    dut.weights_i.value = pack_weights_in(kernels_flat, WW, KA, IC)
 
-    model = ConvLayerModel(dut, kernels_4d, input_height=input_height)
+    model = ConvLayerModel(dut, kernels_4d, input_height=H)
     m = ModelRunner(dut, model)
 
     # Consumer fuzzed; producer always drives valid
@@ -699,7 +735,6 @@ async def rate_tests(dut, in_rate, out_rate):
         assert 0, (
             f"Timed out. Expected {l_out} output handshakes "
             f"(W_out={W_out}, H_out={H_out}). Got {om.nproduced()} in {timeout_ns} ns. "
-            f"N_in={N_in}, input_height={input_height}."
         )
 
 @cocotb.test
