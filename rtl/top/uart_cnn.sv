@@ -11,6 +11,7 @@ module uart_cnn #(
   ,parameter  int unsigned BusWidth       = 8
   ,parameter  int unsigned QuantizedWidth = 1
   ,parameter  int unsigned PackedNum      = BusWidth / QuantizedWidth
+  ,parameter  int unsigned InChannels     = 1
   ,parameter  int unsigned OutChannels    = 2
   ,localparam int unsigned Stride         = 1
 
@@ -192,6 +193,7 @@ module uart_cnn #(
     ,.WidthOut    (ConvOutWidth)
     ,.KernelWidth (KernelWidth)
     ,.WeightWidth (WeightWidth)
+    ,.InChannels  (InChannels)
     ,.OutChannels (OutChannels)
     ,.Stride      (Stride)
     ,.StrideOrigin(0)

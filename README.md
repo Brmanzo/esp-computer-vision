@@ -39,11 +39,12 @@ My goal for this project is to implement a dynamic system that captures live dat
   - UART RTS line to ensure data integrity
   - Kernel-stationary sliding-window convolution architecture
   - Parameterized kernel size, stride, input and weight widths for model flexibility
-  - Convolution layer supporting N Output Channels with single RAM buffer
+  - Convolution layer supporting N Input and M Output Channels with single RAM buffer
 - Unit Testing of all hardware components using CocoTB
 - Dynamic HTML viewing of image over ESP32 Wi-Fi
 
 ## Milestones
+- **2026-02-17** — Verified Convolution Layer with actual pytorch.conv2d() output
 - **2026-02-11** — Convolution Layer with N Input and M Output Channels
 - **2026-01-27** — FPGA packet data framing
 - **2026-01-13** — Streaming raw grayscale image

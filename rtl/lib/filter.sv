@@ -7,7 +7,7 @@ module filter #(
   ,parameter   int unsigned WidthOut     = 32
   ,parameter   int unsigned KernelWidth  = 3
   ,parameter   int unsigned WeightWidth  = 2
-  ,parameter   int unsigned InChannels   = 1
+  ,parameter   int unsigned InChannels   = 2
   ,localparam  int unsigned KernelArea   = KernelWidth * KernelWidth
 )  (
    input [InChannels-1:0][KernelArea-1:0][WidthIn-1:0] windows_i

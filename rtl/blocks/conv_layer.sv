@@ -11,13 +11,11 @@ module conv_layer #(
   ,parameter  int unsigned KernelWidth  = 3
   ,parameter  int unsigned WeightWidth  = 2
   ,parameter  int unsigned InChannels   = 1
-  ,parameter  int unsigned OutChannels  = 2
+  ,parameter  int unsigned OutChannels  = 1
   ,localparam int unsigned KernelArea   = KernelWidth * KernelWidth
 
   ,parameter  int unsigned Stride            = 1
-  ,parameter  int unsigned StrideOrigin      = 0
   ,localparam int unsigned StrideWidth       = (Stride <= 1) ? 1 : $clog2(Stride)
-  ,localparam logic [StrideWidth-1:0] Origin = (Stride <= 1) ? '0 : StrideWidth'(StrideOrigin)
 
   ,localparam int XWidth = (LineWidthPx <= 1) ? 1 : $clog2(LineWidthPx)
   ,localparam int YWidth = (LineCountPx <= 1) ? 1 : $clog2(LineCountPx)
@@ -61,16 +59,16 @@ module conv_layer #(
   logic [StrideWidth-1:0] x_phase;
   logic [StrideWidth-1:0] y_phase;
 
-  wire [0:0] valid_x_stride = (Stride <= 1) ? 1'b1 : (x_phase == Origin);
-  wire [0:0] valid_y_stride = (Stride <= 1) ? 1'b1 : (y_phase == Origin);
+  wire [0:0] valid_x_stride = (Stride <= 1) ? 1'b1 : (x_phase == '0);
+  wire [0:0] valid_y_stride = (Stride <= 1) ? 1'b1 : (y_phase == '0);
 
   always_ff @(posedge clk_i) begin
     // Update x and y position counters
     if (rst_i) begin
       x_pos <= '0;
       y_pos <= '0;
-      x_phase <= Origin;
-      y_phase <= Origin;
+      x_phase <= '0;
+      y_phase <= '0;
     // Upon in_fire, update positions
     end else if (in_fire) begin
       if (last_col) begin
@@ -85,10 +83,10 @@ module conv_layer #(
       // Reevaluate y stride phase each row
       if (last_col) begin
         // If end of row, reset x stride phase
-        x_phase <= Origin;
+        x_phase <= '0;
         if (valid_y_pos) y_phase <= inc_stride(y_phase);
         // If the end of the image, reset the y stride phase as well
-        if (last_row) y_phase <= Origin;
+        if (last_row) y_phase <= '0;
       end
     end
   end
@@ -110,7 +108,7 @@ module conv_layer #(
   assign ready_o = ~valid_r | ready_i;
 
   
-  /* ------------------------------------ Delay Buffer Logic ------------------------------------ */
+  /* --------------------------------------- Input Channel Logic --------------------------------------- */
   // Vertically partition channels and row buffers for each channel within RAM
   logic [InChannels-1:0][KernelWidth-1:0][WidthIn-1:0] row_buffers;
   logic [InChannels-1:0][KernelWidth-1:1][WidthIn-1:0] row_buffer_taps;
@@ -140,7 +138,8 @@ module conv_layer #(
   );
 
   /* ------------------------------------ Window Generation Logic ------------------------------------ */
-  // For each input channel, instantiate one window to represent unique kernel position 
+  // Every input channel is represented within its own matrix and passed to every filter
+  // Which each have input channel number of kernels 
   logic [InChannels-1:0][KernelArea-1:0][WidthIn-1:0] windows;
   generate
     for (genvar ch = 0; ch < InChannels; ch++) begin : gen_windows

@@ -7,6 +7,8 @@ import math
 import numpy as np
 from typing import List, Optional
 from functools import reduce
+import torch
+import torch.nn.functional as F
 
 _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
 assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
@@ -39,8 +41,9 @@ tests = ['reset_test'
         ,'out_fuzz_test'
         ,'full_bw_test']
 
-def output_width(width_in: int, weight_width: int, kernel_area: int=3, in_channels: int=1) -> str:
+def output_width(width_in: int, weight_width: int, kernel_width: int=3, in_channels: int=1) -> str:
     '''Calculates proper output width for given input width amount of accumulations.'''
+    kernel_area = kernel_width * kernel_width
     terms = kernel_area * in_channels
 
     max_val    = (1 << width_in) - 1       # Unsigned``
@@ -117,6 +120,23 @@ def pack_data_i(samples, width):
         out |= (int(v) & mask) << (ic * width)
     return out
 
+def to_torch_input(input_activation):
+    # input_activation: [IC][H][W]
+    x = torch.tensor(input_activation, dtype=torch.int32)   # (IC,H,W)
+    x = x.unsqueeze(0).to(torch.int32)                      # (1,IC,H,W)
+    return x
+
+def to_torch_weights(kernels4):
+    # kernels4: [OC][IC][K][K]
+    w = torch.tensor(kernels4, dtype=torch.int32)           # (OC,IC,K,K)
+    return w
+
+def torch_conv_ref(input_activation, kernels4, stride):
+    x = to_torch_input(input_activation).to(torch.float32)
+    w = to_torch_weights(kernels4).to(torch.float32)
+    y = F.conv2d(x, w, stride=stride, padding=0)            # (1,OC,H_out,W_out)
+    return y.squeeze(0)
+
 def unpack_data_i(packed, width_in, IC):
     mask = (1 << width_in) - 1
     return [ (packed >> (ic * width_in)) & mask for ic in range(IC) ]
@@ -124,10 +144,10 @@ def unpack_data_i(packed, width_in, IC):
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize("WidthIn, WeightWidth, WidthOut", 
-                         [("1", "2", output_width(1, 2)), # Intended Size
-                          ("2", "3", output_width(2, 3)), # Unsigned data_i
-                          ("4", "5", output_width(4, 5)),
-                          ("8", "8", output_width(8, 8))])
+                         [("1", "2", output_width(1, 2, 3)), # Intended Size
+                          ("2", "3", output_width(2, 3, 3)), # Unsigned data_i
+                          ("4", "5", output_width(4, 5, 3)),
+                          ("8", "8", output_width(8, 8, 3))])
 def test_width(test_name, simulator, WidthIn, WeightWidth, WidthOut):
     # This line must be first
     parameters = dict(locals())
@@ -139,27 +159,43 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, WidthOut):
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("WidthOut, KernelWidth, Stride, StrideOrigin, LineWidthPx, LineCountPx", 
-                         [(output_width(1, 2), 2, 2, 0, 16, 12),
-                          (output_width(1, 2), 4, 4, 0, 16, 12),
-                          (output_width(1, 2), 5, 2, 0, 17, 13)
-                        #   (output_width(1, 2), 5, 2, 1, 16, 12)
+@pytest.mark.parametrize("WidthOut, KernelWidth, Stride, LineWidthPx, LineCountPx", 
+                         [(output_width(1, 2, 2), 2, 2, 16, 12),
+                          (output_width(1, 2, 4), 4, 4, 16, 12),
+                          (output_width(1, 2, 5), 5, 2, 17, 13)
                           ])
 
-def test_stride(test_name, simulator, WidthOut, KernelWidth, Stride, StrideOrigin, LineWidthPx, LineCountPx):
+def test_stride(test_name, simulator, WidthOut, KernelWidth, Stride, LineWidthPx, LineCountPx):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
-    param_str = f"KernelWidth_{KernelWidth}_Stride_{Stride}_LineWidthPx_{LineWidthPx}_LineCountPx_{LineCountPx}_StrideOrigin_{StrideOrigin}"
+    param_str = f"KernelWidth_{KernelWidth}_Stride_{Stride}_LineWidthPx_{LineWidthPx}_LineCountPx_{LineCountPx}"
     custom_work_dir = os.path.join(tbpath, "run", "stride", param_str, simulator)
+    runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
+
+@pytest.mark.parametrize("test_name", tests)
+@pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+@pytest.mark.parametrize("WidthOut, InChannels, OutChannels", 
+                         [(output_width(1, 2, 3), 1, 2),
+                          (output_width(2, 3, 3), 2, 3),
+                          (output_width(4, 5, 3), 4, 5),
+                          (output_width(8, 8, 3), 8, 8)])
+def test_channels(test_name, simulator, WidthOut, InChannels, OutChannels):
+    # This line must be first
+    parameters = dict(locals())
+    del parameters['test_name']
+    del parameters['simulator']
+    param_str = f"WidthOut_{WidthOut}_InChannels_{InChannels}_OutChannels_{OutChannels}"
+    custom_work_dir = os.path.join(tbpath, "run", "channels", param_str, simulator)
     runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
 
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth, OutChannels, Stride", 
-                         [("16", "1", output_width(1, 2), "3", "1", "1")])
+                         [("16", "1", output_width(1, 2, 3), "3", "1", "1")])
+
 def test_all(simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth, OutChannels, Stride):
     # This line must be first
     parameters = dict(locals())
@@ -167,7 +203,7 @@ def test_all(simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth, OutChannels
     runner(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut", [("16", "1", output_width(1, 2))])
+@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut", [("16", "1", output_width(1, 2, 3))])
 def test_lint(simulator, LineWidthPx, WidthIn, WidthOut):
     # This line must be first
     parameters = dict(locals())
@@ -183,7 +219,7 @@ def test_style(simulator, LineWidthPx, WidthIn, WidthOut):
     lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"])
 
 class ConvLayerModel():
-    def __init__(self, dut, weights: List[List[List[int]]], input_height: int):
+    def __init__(self, dut, weights: List[List[List[List[int]]]], output_activation: Optional[List[List[List[int]]]] = None):
         self._kernel_width = int(dut.KernelWidth.value)
         self._f = np.ones((self._kernel_width,self._kernel_width), dtype=int)
         self._dut = dut
@@ -197,11 +233,13 @@ class ConvLayerModel():
         self._WidthOut = int(dut.WidthOut.value)
         self._InChannels  = int(dut.InChannels.value)
         self._OutChannels = int(dut.OutChannels.value)
-
-        self._Origin = int(dut.StrideOrigin.value)
         self._Stride = int(dut.Stride.value)
 
-        self._empty_output = 0
+        self._output_activation = output_activation 
+        self._r = 0
+        self._c = 0
+        self._OW = (self._input_width - self._kernel_width) // self._Stride + 1
+        self._OH = (self._input_height - self._kernel_width) // self._Stride + 1
 
         # We're going to initialize _buf with NaN so that we can
         # detect when the output should be not an X in simulation
@@ -218,25 +256,21 @@ class ConvLayerModel():
         # Valid kernel positions within input image depending on stride and kernel size
         invalid_region = self._kernel_width - 1
         S = int(self._Stride)
-        O = int(self._Origin)
-        span_w = (self._input_width  - 1) - ((self._kernel_width - 1) + O)
-        span_h = (self._input_height - 1) - ((self._kernel_width - 1) + O)
+        span_w = (self._input_width  - 1) - (self._kernel_width - 1)
+        span_h = (self._input_height - 1) - (self._kernel_width - 1)
 
-        assert span_w >= 0 and span_h >= 0, "Kernel+origin exceeds image bounds"
+        assert span_w >= 0 and span_h >= 0, "Kernel exceeds image bounds"
         assert (span_w % S) == 0 and (span_h % S) == 0, "Invalid configuration: Stride does not tile evenly"
-
-        if S <= 1: 
-            S = 1
-            O = 0
         
         self._valid_cycles = np.ones((self._input_height, self._input_width), dtype=bool)
         self._valid_cycles[:invalid_region, :] = False
         self._valid_cycles[:, :invalid_region] = False
         
+        # If stride larger than normal, invalidate the skipped over elements
         if S > 1:
             for r in range(invalid_region, self._input_height):
                 for c in range(invalid_region, self._input_width):
-                    if ((r - invalid_region) % S) != O or ((c - invalid_region) % S) != O:
+                    if ((r - invalid_region) % S) != 0 or ((c - invalid_region) % S) != 0:
                         self._valid_cycles[r, c] = False
 
     # Now let's scale this up a little bit
@@ -301,22 +335,32 @@ class ConvLayerModel():
     def produce(self, expected):
         assert_resolvable(self._data_o)
 
-        # Per-channel width in bits (ConvOutWidth)
         w = int(self._dut.WidthOut.value) if hasattr(self._dut, "WidthOut") else int(self._dut.ConvOutWidth.value)
-        # ^ if WidthOut param isn't on dut, use the same width you used for the RTL data_o element
+        packed = int(self._data_o.value.integer)
 
-        packed = int(self._data_o.value.integer)  # whole [OutChannels][WidthOut] blob as an int
-
+        # Write all channels at the SAME (r,c)
         for ch in range(self._OutChannels):
-            raw = (packed >> (ch * w)) & ((1 << w) - 1)   # assumes ch=0 is LSB slice
+            raw = (packed >> (ch * w)) & ((1 << w) - 1)   # ch0 in LSB slice assumption
             got = sign_extend(raw, w)
             exp = int(expected[ch])
-            
-            print(f"Output #{self._deqs} ch{ch}: expected {exp}, got {got} (raw=0x{raw:x})")
+
+            print(f"Output #{self._deqs} (r={self._r}, c={self._c}) ch{ch}: expected {exp}, got {got} (raw=0x{raw:x})")
+
+            if self._output_activation is not None:
+                self._output_activation[ch][self._r][self._c] = got
+
             assert got == exp, (
-                f"Mismatch at output #{self._deqs} ch{ch}: expected {exp}, got {got} "
+                f"Mismatch at output #{self._deqs} (r={self._r}, c={self._c}) ch{ch}: expected {exp}, got {got} "
                 f"(raw=0x{raw:x})"
             )
+
+        # Advance pixel position ONCE per output handshake/vector
+        self._c += 1
+        if self._c >= self._OW:
+            self._c = 0
+            self._r += 1
+            if self._r >= self._OH:
+                self._r = 0
 
 class ReadyValidInterface():
     def __init__(self, clk, reset, ready, valid):
@@ -365,17 +409,14 @@ class CountingDataGenerator():
         self._cur += 1
         return value
     
-class RandomDataGenerator():
+class RandomDataGenerator:
     def __init__(self, dut):
-        self._dut = dut
         self._width_p = int(dut.WidthIn.value)
         self._InChannels = int(dut.InChannels.value)
 
     def generate(self):
-        data_i = []
-        for _ in range(self._InChannels):
-            data_i.append(random.randint(0, (1 << self._width_p) - 1))
-        return (data_i)
+        return [random.randint(0, (1 << self._width_p) - 1)
+                for _ in range(self._InChannels)]
 
 class CountingGenerator():
     def __init__(self, dut, r):
@@ -473,7 +514,7 @@ class OutputModel():
         return self._nout
 
 class InputModel():
-    def __init__(self, dut, data, rate, l):
+    def __init__(self, dut, data, rate, l, input_activation=None):
         self._clk_i = dut.clk_i
         self._rst_i = dut.rst_i
         self._dut = dut
@@ -484,6 +525,7 @@ class InputModel():
         self._rate = rate
         self._data = data
         self._length = l
+        self._input_activation = input_activation
 
         self._coro = None
 
@@ -510,42 +552,78 @@ class InputModel():
         return self._nin
 
     async def _run(self):
-        """ Input Model Coroutine"""
+        """Input Model Coroutine (records input_activation on handshake)."""
 
         self._nin = 0
-        clk_i = self._clk_i
-        rst_i = self._dut.rst_i
+        clk_i   = self._clk_i
+        rst_i   = self._dut.rst_i
         ready_o = self._dut.ready_o
         valid_i = self._dut.valid_i
-        data_i = self._dut.data_i
+        data_i  = self._dut.data_i
+
+        # Geometry + channel count
+        W  = int(self._dut.LineWidthPx.value)
+        H  = int(self._dut.LineCountPx.value)
+        IC = int(self._dut.InChannels.value)
+        w  = int(self._dut.WidthIn.value)
+
+        # Cursor for activation matrix (y,x)
+        y = 0
+        x = 0
+
+        valid_i.value = 0
+        data_i.value  = 0
 
         await delay_cycles(self._dut, 1, False)
 
-        if(not (rst_i.value.is_resolvable and rst_i.value == 0)):
+        if not (rst_i.value.is_resolvable and rst_i.value == 0):
             await FallingEdge(rst_i)
 
         await delay_cycles(self._dut, 2, False)
 
-        # Precondition: Falling Edge of Clock
-        din = self._data.generate()
+        # Precondition: Falling edge of clock
+        din = self._data.generate()  # list length IC
+
         while self._nin < self._length:
-            produce = self._rate.generate()
-            valid_i.value = produce
+            produce = bool(self._rate.generate())
+            valid_i.value = int(produce)
 
-            w = int(self._dut.WidthIn.value)
-
+            # Drive current sample (hold stable until handshake)
             data_i.value = pack_data_i(din, w)
 
+            # Wait for handshake if producing, otherwise just advance a cycle
             success = False
             while produce and not success:
                 await RisingEdge(clk_i)
                 assert_resolvable(ready_o)
                 success = bool(valid_i.value) and bool(ready_o.value)
+
                 if success:
+                    # Record ONLY on accepted input
+                    if self._input_activation is not None:
+                        # Optional safety checks
+                        assert len(din) == IC, f"din has {len(din)} chans, expected {IC}"
+                        assert y < H and x < W, f"Activation cursor out of bounds (y={y}, x={x}, H={H}, W={W})"
+
+                        for ic in range(IC):
+                            self._input_activation[ic][y][x] = int(din[ic])
+
+                    # Advance pixel cursor once per accepted input
+                    x += 1
+                    if x >= W:
+                        x = 0
+                        y += 1
+                        if y >= H:
+                            y = 0  # wrap (or raise if you expect exactly one frame)
+
+                    # Next sample
                     din = self._data.generate()
                     self._nin += 1
 
             await FallingEdge(clk_i)
+
+        # Stop driving
+        valid_i.value = 0
         return self._nin
 
 class ModelRunner():
@@ -617,8 +695,7 @@ async def single_test(dut):
     OC = int(dut.OutChannels.value)
     WW = int(dut.WeightWidth.value)
     S  = int(dut.Stride.value)
-    O  = int(dut.StrideOrigin.value) if hasattr(dut, "StrideOrigin") else 0  # optional
-    
+
     # Number of accepted inputs until first valid output position (x=K-1, y=K-1)
     N_first = (K - 1) * W + (K - 1) + 1
 
@@ -629,7 +706,7 @@ async def single_test(dut):
 
     kernels_4d, kernels_flat = gen_kernels(WW, OC, IC, K, seed=1234)
     
-    model = ConvLayerModel(dut, kernels_4d, input_height=K)
+    model = ConvLayerModel(dut, kernels_4d)
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, RateGenerator(dut, 1), N_out)               # consume 1 output
@@ -637,8 +714,8 @@ async def single_test(dut):
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
-    WeightWidth = int(dut.WeightWidth.value)
-    weights_by_ch = [[1]*(K*K) for _ in range(OC)]
+    dut.data_i.value = 0
+
     dut.weights_i.value = pack_weights_in(kernels_flat, WW, KA, IC)
 
     await clock_start_sequence(dut.clk_i)
@@ -676,17 +753,16 @@ async def rate_tests(dut, in_rate, out_rate):
     OC = int(dut.OutChannels.value)
     WW = int(dut.WeightWidth.value)
     S  = int(dut.Stride.value)
-    O  = int(dut.StrideOrigin.value) if hasattr(dut, "StrideOrigin") else 0  # optional
 
     # Observe H rows of VALID outputs
     invalid = K - 1
+    N_in = W * H
     H_out = ((H - K) // S) + 1
     W_out = ((W - K) // S) + 1
-    H_obs = min(4, H_out)
-    l_out = W_out * H_obs
+    l_out = W_out * H_out   
 
-    y_last = invalid + (H_obs - 1) * S
-    N_in = (y_last * W + (W - 1)) + 1
+    input_activation  = [[[0 for _ in range(W)] for _ in range(H)] for _ in range(IC)]
+    output_activation = [[[0 for _ in range(W_out)] for _ in range(H_out)] for _ in range(OC)]
 
     # Consumer ready probability
     slow = min(in_rate, out_rate)  # bottleneck probability
@@ -699,12 +775,12 @@ async def rate_tests(dut, in_rate, out_rate):
 
     dut.weights_i.value = pack_weights_in(kernels_flat, WW, KA, IC)
 
-    model = ConvLayerModel(dut, kernels_4d, input_height=H)
+    model = ConvLayerModel(dut, kernels_4d, output_activation)
     m = ModelRunner(dut, model)
 
     # Consumer fuzzed; producer always drives valid
     om = OutputModel(dut, RateGenerator(dut, out_rate), l_out)
-    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, in_rate), N_in)
+    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, in_rate), N_in, input_activation)
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
@@ -731,6 +807,34 @@ async def rate_tests(dut, in_rate, out_rate):
     # Now wait for exactly l_out output handshakes
     try:
         await om.wait(timeout_ns)
+        # --- Print input ---
+        for ic in range(IC):
+            print(f"\nInput Activation for IC{ic}")
+            for r in range(H):
+                print(" ".join(f"{input_activation[ic][r][c]:2d}" for c in range(W)))
+
+        # --- Print kernels ---
+        for oc in range(OC):
+            print(f"\nKernel for OC{oc}")
+            for ic in range(IC):
+                print(f"  IC{ic}")
+                for r in range(K):
+                    print(" ".join(f"{kernels_4d[oc][ic][r][c]:4d}" for c in range(K)))
+
+        # --- Print DUT-captured output (make sure output_activation is H_out x W_out) ---
+        for oc in range(OC):
+            print(f"\nOutput Activation (DUT) for OC{oc}")
+            for r in range(H_out):
+                print(" ".join(f"{output_activation[oc][r][c]:4d}" for c in range(W_out)))
+
+        
+        ref = torch_conv_ref(input_activation, kernels_4d, S)  # (OC,H_out,W_out)
+
+        for oc in range(OC):
+            print(f"\nExpected (PyTorch) for OC{oc}")
+            for r in range(H_out):
+                print(" ".join(f"{int(ref[oc, r, c]):4d}" for c in range(W_out)))
+        assert np.allclose(output_activation, ref.int().numpy()), "Output activation does not match PyTorch reference"
     except SimTimeoutError:
         assert 0, (
             f"Timed out. Expected {l_out} output handshakes "
