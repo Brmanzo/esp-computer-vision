@@ -196,7 +196,6 @@ module uart_cnn #(
     ,.InChannels  (InChannels)
     ,.OutChannels (OutChannels)
     ,.Stride      (Stride)
-    ,.StrideOrigin(0)
   ) conv_layer_inst (
      .clk_i    (clk_i)
     ,.rst_i    (rst_i)

@@ -44,7 +44,7 @@ My goal for this project is to implement a dynamic system that captures live dat
 - Dynamic HTML viewing of image over ESP32 Wi-Fi
 
 ## Milestones
-- **2026-02-17** — Verified Convolution Layer with actual pytorch.conv2d() output
+- **2026-02-17** — Verified Convolution Layer with actual PyTorch.Conv2d() output
 - **2026-02-11** — Convolution Layer with N Input and M Output Channels
 - **2026-01-27** — FPGA packet data framing
 - **2026-01-13** — Streaming raw grayscale image
