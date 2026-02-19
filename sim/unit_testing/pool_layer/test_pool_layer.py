@@ -41,72 +41,9 @@ tests = ['reset_test'
         ,'out_fuzz_test'
         ,'full_bw_test']
 
-def output_width(width_in: int, weight_width: int, kernel_width: int=3, in_channels: int=1) -> str:
-    '''Calculates proper output width for given input width amount of accumulations.'''
-    kernel_area = kernel_width * kernel_width
-    terms = kernel_area * in_channels
-
-    max_val    = (1 << width_in) - 1       # Unsigned``
-    max_weight = (1 << (weight_width - 1)) # Signed
-
-    max_sum = terms * max_val * max_weight
-    abs_bits = max_sum.bit_length()
-    return str(abs_bits + 1)   # +1 for sign bit
-
-def pack_weights_in(weights_4d, width, kernel_area, IC):
-    """
-    weights_4d: [OC][IC][kernel_area] values (signed ints)
-    Packing order: k fastest, then ic, then oc
-      shift = width * (k + kernel_area*(ic + IC*oc))
-    """
-    mask = (1 << width) - 1
-    lo, hi = -(1 << (width - 1)), (1 << (width - 1)) - 1
-
-    out = 0
-    for oc, ws_by_ic in enumerate(weights_4d):
-        assert len(ws_by_ic) == IC
-        for ic, ws in enumerate(ws_by_ic):
-            assert len(ws) == kernel_area
-            for k, w in enumerate(ws):
-                assert lo <= w <= hi
-                shift = width * (k + kernel_area * (ic + IC * oc))
-                out |= (w & mask) << shift
-    return out
-
 def sign_extend(val: int, bits: int) -> int:
     sign = 1 << (bits - 1)
     return (val ^ sign) - sign
-
-def gen_kernels(WW: int, OC: int, IC: int, K: int, seed: int | None = None):
-    rng = random.Random(seed)
-    if WW < 2:
-        raise ValueError("Weight width must be at least 2 to include negative values in test kernels.")
-    # If weight width of two, enforce ternary {-1, 0, 1} weights to test intended use of conv_layer
-    elif WW == 2:
-        rand_kernel_value = lambda: rng.choice([-1, 0, 1])
-    else:
-        # For wider weight widths, we can use a larger range of values
-        max_val = (1 << (WW - 1)) - 1
-        min_val = -(1 << (WW - 1))
-        rand_kernel_value = lambda: rng.randint(min_val, max_val)
-
-    kernels4 = [
-        [
-            [[rand_kernel_value() for _ in range(K)] for _ in range(K)]
-            for _ in range(IC)
-        ]
-        for _ in range(OC)
-    ]
-
-    kernels_flat = [
-        [
-            [kernels4[oc][ic][r][c] for r in range(K) for c in range(K)]
-            for ic in range(IC)
-        ]
-        for oc in range(OC)
-    ]
-
-    return kernels4, kernels_flat
 
 def pack_data_i(samples, width):
     """
@@ -126,16 +63,13 @@ def to_torch_input(input_activation):
     x = x.unsqueeze(0).to(torch.int32)                      # (1,IC,H,W)
     return x
 
-def to_torch_weights(kernels4):
-    # kernels4: [OC][IC][K][K]
-    w = torch.tensor(kernels4, dtype=torch.int32)           # (OC,IC,K,K)
-    return w
-
-def torch_conv_ref(input_activation, kernels4, stride):
+def torch_pool_ref(input_activation, kernel_size, stride=None, mode=0):
     x = to_torch_input(input_activation).to(torch.float32)
-    w = to_torch_weights(kernels4).to(torch.float32)
-    y = F.conv2d(x, w, stride=stride, padding=0)            # (1,OC,H_out,W_out)
-    return y.squeeze(0)
+    if mode == 0:
+        y = F.max_pool2d(x, kernel_size=kernel_size, stride=stride, padding=0)
+    elif mode == 1:
+        y = F.avg_pool2d(x, kernel_size=kernel_size, stride=stride, padding=0)
+    return y.squeeze(0) 
 
 def unpack_data_i(packed, width_in, IC):
     mask = (1 << width_in) - 1
@@ -143,83 +77,64 @@ def unpack_data_i(packed, width_in, IC):
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("WidthIn, WeightWidth, WidthOut", 
-                         [("1", "2", output_width(1, 2, 3)), # Intended Size
-                          ("2", "3", output_width(2, 3, 3)), # Unsigned data_i
-                          ("4", "5", output_width(4, 5, 3)),
-                          ("8", "8", output_width(8, 8, 3))])
-def test_width(test_name, simulator, WidthIn, WeightWidth, WidthOut):
+@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, WidthIn, PoolMode", 
+                         [("16", "16", "2", "1", "0"),
+                          ("16", "16", "2", "2", "0"),
+                          ("16", "16", "4", "1", "0"),
+                          ("16", "16", "4", "2", "0")])
+def test_max(test_name, simulator, LineWidthPx, LineCountPx, KernelWidth, WidthIn, PoolMode):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
-    param_str = f"WidthIn_{WidthIn}_WeightWidth_{WeightWidth}_WidthOut_{WidthOut}"
+    param_str = f"WidthIn{WidthIn}_LineWidth{LineWidthPx}_LineCount{LineCountPx}_Kernel{KernelWidth}"
     custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
     runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("WidthOut, KernelWidth, Stride, LineWidthPx, LineCountPx", 
-                         [(output_width(1, 2, 2), 2, 2, 16, 12),
-                          (output_width(1, 2, 4), 4, 4, 16, 12),
-                          (output_width(1, 2, 5), 5, 2, 17, 13)
-                          ])
-
-def test_stride(test_name, simulator, WidthOut, KernelWidth, Stride, LineWidthPx, LineCountPx):
+@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, WidthIn, PoolMode", 
+                         [("16", "16", "2", "1", "1"),
+                          ("16", "16", "2", "2", "1"),
+                          ("16", "16", "4", "1", "1"),
+                          ("16", "16", "4", "2", "1")])
+def test_avg(test_name, simulator, LineWidthPx, LineCountPx, KernelWidth, WidthIn, PoolMode):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
-    param_str = f"KernelWidth_{KernelWidth}_Stride_{Stride}_LineWidthPx_{LineWidthPx}_LineCountPx_{LineCountPx}"
-    custom_work_dir = os.path.join(tbpath, "run", "stride", param_str, simulator)
+    param_str = f"WidthIn{WidthIn}_LineWidth{LineWidthPx}_LineCount{LineCountPx}_Kernel{KernelWidth}"
+    custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
     runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
 
-@pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("WidthOut, InChannels, OutChannels", 
-                         [(output_width(1, 2, 3), 1, 2),
-                          (output_width(2, 3, 3), 2, 3),
-                          (output_width(4, 5, 3), 4, 5),
-                          (output_width(8, 8, 3), 8, 8)])
-def test_channels(test_name, simulator, WidthOut, InChannels, OutChannels):
-    # This line must be first
-    parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
-    param_str = f"WidthOut_{WidthOut}_InChannels_{InChannels}_OutChannels_{OutChannels}"
-    custom_work_dir = os.path.join(tbpath, "run", "channels", param_str, simulator)
-    runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
+@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, WidthIn", 
+                         [("16", "16", "2", "1")])
 
-# Opposite above, run all the tests in one simulation but reset
-# between tests to ensure that reset is clearing all state.
-@pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth, OutChannels, Stride", 
-                         [("16", "1", output_width(1, 2, 3), "3", "1", "1")])
-
-def test_all(simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth, OutChannels, Stride):
+def test_all(simulator, LineWidthPx, LineCountPx, KernelWidth, WidthIn):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
     runner(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut", [("16", "1", output_width(1, 2, 3))])
-def test_lint(simulator, LineWidthPx, WidthIn, WidthOut):
+@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, WidthIn", [("16", "16", "2", "1")])
+def test_lint(simulator, LineWidthPx, LineCountPx, KernelWidth, WidthIn):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut", [("16", "1", output_width(1, 2))])
-def test_style(simulator, LineWidthPx, WidthIn, WidthOut):
+@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, WidthIn", [("16", "16", "2", "1")])
+def test_style(simulator, LineWidthPx, LineCountPx, KernelWidth, WidthIn):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"])
 
-class ConvLayerModel():
-    def __init__(self, dut, weights: List[List[List[List[int]]]], output_activation: Optional[List[List[List[int]]]] = None):
+class PoolLayerModel():
+    def __init__(self, dut, output_activation: Optional[List[List[List[int]]]] = None):
         self._kernel_width = int(dut.KernelWidth.value)
         self._f = np.ones((self._kernel_width,self._kernel_width), dtype=int)
         self._dut = dut
@@ -234,6 +149,7 @@ class ConvLayerModel():
         self._InChannels  = int(dut.InChannels.value)
         self._OutChannels = int(dut.OutChannels.value)
         self._Stride = int(dut.Stride.value)
+        self._PoolMode = int(dut.PoolMode.value)
 
         self._output_activation = output_activation 
         self._r = 0
@@ -249,8 +165,6 @@ class ConvLayerModel():
         self._enqs = 0
 
         # kernel 4D array storing all kernels in each filter: [OC][IC][K][K]
-        self.k = np.array(weights, dtype=int)
-        assert self.k.shape == (self._OutChannels, self._InChannels, self._kernel_width, self._kernel_width)
         self._in_idx = 0
 
         # Valid kernel positions within input image depending on stride and kernel size
@@ -294,12 +208,13 @@ class ConvLayerModel():
 
         windows = [b[:, -self._kernel_width:].astype(int, copy=False) for b in bufs]
 
-        result = np.zeros(self._OutChannels, dtype=int)
-        for oc in range(self._OutChannels):
-            acc = 0
-            for ic in range(self._InChannels):
-                acc += int((self.k[oc, ic] * windows[ic]).sum())
-            result[oc] = acc
+        for ch in range(self._OutChannels):
+            # Numpy computes the max of the entire KxK window for this channel
+            if self._PoolMode == 0:
+                result[ch] = np.max(windows[ch])
+            else:
+                result[ch] = np.sum(windows[ch]) // windows[ch].size
+
         return result
 
     def consume(self):
@@ -340,18 +255,16 @@ class ConvLayerModel():
 
         # Write all channels at the SAME (r,c)
         for ch in range(self._OutChannels):
-            raw = (packed >> (ch * w)) & ((1 << w) - 1)   # ch0 in LSB slice assumption
-            got = sign_extend(raw, w)
+            got = (packed >> (ch * w)) & ((1 << w) - 1)   # ch0 in LSB slice assumption
             exp = int(expected[ch])
 
-            print(f"Output #{self._deqs} (r={self._r}, c={self._c}) ch{ch}: expected {exp}, got {got} (raw=0x{raw:x})")
+            print(f"Output #{self._deqs} (r={self._r}, c={self._c}) ch{ch}: expected {exp}, got {got}")
 
             if self._output_activation is not None:
                 self._output_activation[ch][self._r][self._c] = got
 
             assert got == exp, (
                 f"Mismatch at output #{self._deqs} (r={self._r}, c={self._c}) ch{ch}: expected {exp}, got {got} "
-                f"(raw=0x{raw:x})"
             )
 
         # Advance pixel position ONCE per output handshake/vector
@@ -693,7 +606,6 @@ async def single_test(dut):
     KA = K * K
     IC = int(dut.InChannels.value)
     OC = int(dut.OutChannels.value)
-    WW = int(dut.WeightWidth.value)
     S  = int(dut.Stride.value)
 
     # Number of accepted inputs until first valid output position (x=K-1, y=K-1)
@@ -704,9 +616,9 @@ async def single_test(dut):
 
     rate = 1
 
-    kernels_4d, kernels_flat = gen_kernels(WW, OC, IC, K, seed=1234)
+
     
-    model = ConvLayerModel(dut, kernels_4d)
+    model = PoolLayerModel(dut)
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, RateGenerator(dut, 1), N_out)               # consume 1 output
@@ -715,8 +627,6 @@ async def single_test(dut):
     dut.ready_i.value = 0
     dut.valid_i.value = 0
     dut.data_i.value = 0
-
-    dut.weights_i.value = pack_weights_in(kernels_flat, WW, KA, IC)
 
     await clock_start_sequence(dut.clk_i)
     await reset_sequence(dut.clk_i, dut.rst_i, 10)
@@ -751,8 +661,8 @@ async def rate_tests(dut, in_rate, out_rate):
     KA = K * K
     IC = int(dut.InChannels.value)
     OC = int(dut.OutChannels.value)
-    WW = int(dut.WeightWidth.value)
     S  = int(dut.Stride.value)
+    mode = int(dut.PoolMode.value)
 
     # Observe H rows of VALID outputs
     invalid = K - 1
@@ -771,11 +681,7 @@ async def rate_tests(dut, in_rate, out_rate):
     first_out_wait_ns = int((2 * (K - 1) * W + 2 * (K - 1) + 200) / slow)
     timeout_ns        = int((H_out * N_in + 500) / slow)
 
-    kernels_4d, kernels_flat = gen_kernels(WW, OC, IC, K, seed=1234)
-
-    dut.weights_i.value = pack_weights_in(kernels_flat, WW, KA, IC)
-
-    model = ConvLayerModel(dut, kernels_4d, output_activation)
+    model = PoolLayerModel(dut, output_activation)
     m = ModelRunner(dut, model)
 
     # Consumer fuzzed; producer always drives valid
@@ -807,34 +713,22 @@ async def rate_tests(dut, in_rate, out_rate):
     # Now wait for exactly l_out output handshakes
     try:
         await om.wait(timeout_ns)
-        # --- Print input ---
         for ic in range(IC):
             print(f"\nInput Activation for IC{ic}")
             for r in range(H):
                 print(" ".join(f"{input_activation[ic][r][c]:2d}" for c in range(W)))
-
-        # --- Print kernels ---
-        for oc in range(OC):
-            print(f"\nKernel for OC{oc}")
-            for ic in range(IC):
-                print(f"  IC{ic}")
-                for r in range(K):
-                    print(" ".join(f"{kernels_4d[oc][ic][r][c]:4d}" for c in range(K)))
-
-        # --- Print DUT-captured output (make sure output_activation is H_out x W_out) ---
         for oc in range(OC):
             print(f"\nOutput Activation (DUT) for OC{oc}")
             for r in range(H_out):
                 print(" ".join(f"{output_activation[oc][r][c]:4d}" for c in range(W_out)))
 
-        
-        ref = torch_conv_ref(input_activation, kernels_4d, S)  # (OC,H_out,W_out)
-
+        ref = torch_pool_ref(input_activation, kernel_size=K, stride=S, mode=mode)
         for oc in range(OC):
             print(f"\nExpected (PyTorch) for OC{oc}")
             for r in range(H_out):
                 print(" ".join(f"{int(ref[oc, r, c]):4d}" for c in range(W_out)))
         assert np.allclose(output_activation, ref.int().numpy()), "Output activation does not match PyTorch reference"
+
     except SimTimeoutError:
         assert 0, (
             f"Timed out. Expected {l_out} output handshakes "
