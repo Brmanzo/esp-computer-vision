@@ -221,7 +221,7 @@ bool singleCapture(void) {
         return false;
     }
     /* ----------------------------- Package and Publish Frame ----------------------------- */
-    const bool bypass = gpio_get_level(GPIO_BYPASS_FPGA);
+    const bool bypass = !gpio_get_level(GPIO_BYPASS_FPGA);
 
     const size_t payload_bytes = bypass ? (tx_bytes-HEADER_SIZE) : rx_bytes;
     const uint16_t outW = bypass ? W    : W_rx;

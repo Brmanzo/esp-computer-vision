@@ -1,40 +1,76 @@
-<!-- server.html -->
-<!-- Bradley Manzo 2026 -->
-
 <!doctype html>
-<meta name=\viewport\ content=\width=device-width,initial-scale=1\>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-  body{margin:0;background:#111;display:grid;place-items:center;height:100vh}
-  #dbg{color:#9f9;font:12px/1.3 monospace;white-space:pre-wrap;max-width:96vw;margin-top:8px}
+  body{margin:0;background:#111;display:flex;justify-content:center;align-items:center;height:100vh}
+  #wrap{display:flex;flex-direction:column;align-items:center;gap:12px}
+  #dbg{color:#9f9;font:12px/1.3 monospace;white-space:pre-wrap;max-width:96vw}
   canvas{image-rendering:pixelated;max-width:100vw;max-height:90vh;display:block}
+  #dl{font:12px/1 monospace;padding:8px 10px;border:1px solid #333;
+      background:#1a1a1a;color:#ddd;border-radius:6px;cursor:pointer}
+  #dl:hover{background:#222}
 </style>
-<canvas id=\c\></canvas>
-<pre id=\dbg\>boot…</pre>
+<div id="wrap">
+  <canvas id="c"></canvas>
+  <button id="dl" type="button">Download PNG</button>
+  <pre id="dbg">boot...</pre>
+</div>
 <script>
-(async function(){
-  const canvas = document.getElementById('c');
-  const dbg = document.getElementById('dbg');
-  const ctx = canvas.getContext('2d', { alpha: false });
+(function(){
+  var pngClickCount = 0;
+  var canvas = document.getElementById('c');
+  var dbg = document.getElementById('dbg');
+  var ctx = canvas.getContext('2d', { alpha: false });
   ctx.imageSmoothingEnabled = false;
-  const PALETTE = [[0,0,0],[255,255,255]];
-  const DATA_START = 10;
+  var PALETTE = [[0,0,0],[255,255,255]];
+  var DATA_START = 10;
   function hex2(x){ return x.toString(16).padStart(2,'0'); }
 
+  function ts(){
+    var d = new Date();
+    function pad(n){ return String(n).padStart(2,'0'); }
+    return String(d.getFullYear())
+      + pad(d.getMonth()+1)
+      + pad(d.getDate())
+      + '_' + pad(d.getHours())
+      + pad(d.getMinutes())
+      + pad(d.getSeconds());
+  }
+
+  document.getElementById('dl').addEventListener('click', function(){
+    if(!canvas.width || !canvas.height){
+      dbg.textContent = 'ERR: canvas is empty';
+      return;
+    }
+    pngClickCount++;
+    canvas.toBlob(function(blob){
+      if(!blob){ dbg.textContent = 'ERR: PNG export failed'; return; }
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'thumbs_up_' + pngClickCount + '.png';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }, 'image/png');
+  });
+
   async function fetchAndDraw(){
-    const resp = await fetch('/frame?' + Date.now(), { cache: 'no-store' });
+    var resp = await fetch('/frame?' + Date.now(), { cache: 'no-store' });
     if(!resp.ok) throw new Error('Fetch failed: ' + resp.status);
-    const buf = await resp.arrayBuffer();
-    const view = new Uint8Array(buf);
+    var buf = await resp.arrayBuffer();
+    var view = new Uint8Array(buf);
     if(view.length < DATA_START + 2) throw new Error('Frame too short: ' + view.length);
 
     if(view[0] !== 0xFF || view[1] !== 0x01 || view[8] !== 0xFF || view[9] !== 0x02){
       throw new Error('Header mismatch: ' + hex2(view[0])+' '+hex2(view[1])+' '+hex2(view[8])+' '+hex2(view[9]));
     }
 
-    const h = (view[2] << 8) | view[3];
-    const w = (view[4] << 8) | view[5];
-    const payloadLen = (view[6] << 8) | view[7];
-    const need = DATA_START + payloadLen + 2;
+    var h = (view[2] << 8) | view[3];
+    var w = (view[4] << 8) | view[5];
+    var payloadLen = (view[6] << 8) | view[7];
+    var need = DATA_START + payloadLen + 2;
     if(view.length < need){
       throw new Error('Frame truncated: need ' + need + ', got ' + view.length);
     }
@@ -42,17 +78,17 @@
     dbg.textContent = 'ok w=' + w + ' h=' + h + ' payloadLen=' + payloadLen + ' total=' + view.length;
 
     canvas.width = w; canvas.height = h;
-    const imageData = ctx.createImageData(w, h);
-    const out = imageData.data;
-    const pixels = w * h;
+    var imageData = ctx.createImageData(w, h);
+    var out = imageData.data;
+    var pixels = w * h;
 
-    let pixelIndex = 0;
-    for(let i = 0; i < payloadLen && pixelIndex < pixels; i++){
-      const b = view[DATA_START + i];
-      for(let bit = 0; bit < 8 && pixelIndex < pixels; bit++){
-        const color = (b >> bit) & 1;   // LSB-first (matches your C packer)
-        const RGB = PALETTE[color];
-        const base = pixelIndex * 4;
+    var pixelIndex = 0;
+    for(var i = 0; i < payloadLen && pixelIndex < pixels; i++){
+      var b = view[DATA_START + i];
+      for(var bit = 0; bit < 8 && pixelIndex < pixels; bit++){
+        var color = (b >> bit) & 1; // LSB-first
+        var RGB = PALETTE[color];
+        var base = pixelIndex * 4;
         out[base+0] = RGB[0];
         out[base+1] = RGB[1];
         out[base+2] = RGB[2];
@@ -63,11 +99,11 @@
 
     ctx.putImageData(imageData, 0, 0);
 
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const scaleX = Math.floor(vw / w) || 1;
-    const scaleY = Math.floor(vh / h) || 1;
-    const scale = Math.max(1, Math.min(scaleX, scaleY));
+    var vw = window.innerWidth;
+    var vh = window.innerHeight;
+    var scaleX = Math.floor(vw / w) || 1;
+    var scaleY = Math.floor(vh / h) || 1;
+    var scale = Math.max(1, Math.min(scaleX, scaleY));
     canvas.style.width = (w * scale) + 'px';
     canvas.style.height = (h * scale) + 'px';
   }
@@ -77,7 +113,7 @@
     catch(err){ dbg.textContent = 'ERR: ' + err.message; console.error(err); }
   }
 
-  await tick();
+  tick();
   setInterval(tick, 1000);
 })();
 </script>
