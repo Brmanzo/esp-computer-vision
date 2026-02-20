@@ -10,6 +10,7 @@ module pool_layer #(
   ,parameter  int unsigned KernelWidth  = 3
 
   ,parameter  int unsigned InChannels   = 1
+  ,parameter  int unsigned PoolMode     = 0 // 0 for max pooling, 1 for average pooling
   ,localparam int unsigned WidthOut     = WidthIn
   ,localparam int unsigned OutChannels  = InChannels
   ,localparam int unsigned KernelArea   = KernelWidth * KernelWidth
@@ -17,7 +18,7 @@ module pool_layer #(
   // Pooling layer kernel should have a stride equal to kernel width,
   // But strides greater than 1 can stride farther if necessary
   ,parameter  int unsigned Stride       = KernelWidth
-  ,localparam int unsigned StrideWidth  = $clog2(KernelWidth)
+  ,localparam int unsigned StrideWidth  = (Stride <= 1) ? 1 : $clog2(Stride)
 
   ,localparam int XWidth = (LineWidthPx <= 1) ? 1 : $clog2(LineWidthPx)
   ,localparam int YWidth = (LineCountPx <= 1) ? 1 : $clog2(LineCountPx)
@@ -154,14 +155,24 @@ module pool_layer #(
         ,.row_buffers_i(row_buffers[ch])
         ,.window_o     (windows[ch])
       );
-
-      max #(
-         .KernelWidth(KernelWidth)
-        ,.WidthIn    (WidthIn)
-      ) max_i (
-         .window(windows[ch])
-        ,.data_o(data_o[ch])
-      );
+      // Depending on mode, take max (0) or average (1)
+      if (PoolMode == 0) begin
+        max #(
+          .KernelWidth(KernelWidth)
+          ,.WidthIn   (WidthIn)
+        ) max_i (
+          .window(windows[ch])
+          ,.data_o(data_o[ch])
+        );
+      end else if (PoolMode == 1) begin
+        avg #(
+          .KernelWidth(KernelWidth)
+          ,.WidthIn   (WidthIn)
+        ) avg_i (
+          .window(windows[ch])
+          ,.data_o(data_o[ch])
+        );
+      end
     end
   endgenerate
 

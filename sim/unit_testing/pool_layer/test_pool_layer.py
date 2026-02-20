@@ -63,11 +63,13 @@ def to_torch_input(input_activation):
     x = x.unsqueeze(0).to(torch.int32)                      # (1,IC,H,W)
     return x
 
-# def torch_conv_ref(input_activation, kernels4, stride):
-#     x = to_torch_input(input_activation).to(torch.float32)
-#     w = to_torch_weights(kernels4).to(torch.float32)
-#     y = F.conv2d(x, w, stride=stride, padding=0)            # (1,OC,H_out,W_out)
-#     return y.squeeze(0)
+def torch_pool_ref(input_activation, kernel_size, stride=None, mode=0):
+    x = to_torch_input(input_activation).to(torch.float32)
+    if mode == 0:
+        y = F.max_pool2d(x, kernel_size=kernel_size, stride=stride, padding=0)
+    elif mode == 1:
+        y = F.avg_pool2d(x, kernel_size=kernel_size, stride=stride, padding=0)
+    return y.squeeze(0) 
 
 def unpack_data_i(packed, width_in, IC):
     mask = (1 << width_in) - 1
@@ -75,9 +77,12 @@ def unpack_data_i(packed, width_in, IC):
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, WidthIn", 
-                         [("16", "16", "2", "1")])
-def test_width(test_name, simulator, LineWidthPx, LineCountPx, KernelWidth, WidthIn):
+@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, WidthIn, PoolMode", 
+                         [("16", "16", "2", "1", "0"),
+                          ("16", "16", "2", "2", "0"),
+                          ("16", "16", "4", "1", "0"),
+                          ("16", "16", "4", "2", "0")])
+def test_max(test_name, simulator, LineWidthPx, LineCountPx, KernelWidth, WidthIn, PoolMode):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
@@ -86,7 +91,27 @@ def test_width(test_name, simulator, LineWidthPx, LineCountPx, KernelWidth, Widt
     custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
     runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
 
-def test_all(simulator, LineWidthPx, LineCountPx, KernelWidth, WidthIn, WidthOut, OutChannels, Stride):
+@pytest.mark.parametrize("test_name", tests)
+@pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, WidthIn, PoolMode", 
+                         [("16", "16", "2", "1", "1"),
+                          ("16", "16", "2", "2", "1"),
+                          ("16", "16", "4", "1", "1"),
+                          ("16", "16", "4", "2", "1")])
+def test_avg(test_name, simulator, LineWidthPx, LineCountPx, KernelWidth, WidthIn, PoolMode):
+    # This line must be first
+    parameters = dict(locals())
+    del parameters['test_name']
+    del parameters['simulator']
+    param_str = f"WidthIn{WidthIn}_LineWidth{LineWidthPx}_LineCount{LineCountPx}_Kernel{KernelWidth}"
+    custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
+    runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
+
+@pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, WidthIn", 
+                         [("16", "16", "2", "1")])
+
+def test_all(simulator, LineWidthPx, LineCountPx, KernelWidth, WidthIn):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
@@ -124,6 +149,7 @@ class PoolLayerModel():
         self._InChannels  = int(dut.InChannels.value)
         self._OutChannels = int(dut.OutChannels.value)
         self._Stride = int(dut.Stride.value)
+        self._PoolMode = int(dut.PoolMode.value)
 
         self._output_activation = output_activation 
         self._r = 0
@@ -184,7 +210,10 @@ class PoolLayerModel():
 
         for ch in range(self._OutChannels):
             # Numpy computes the max of the entire KxK window for this channel
-            result[ch] = np.max(windows[ch])
+            if self._PoolMode == 0:
+                result[ch] = np.max(windows[ch])
+            else:
+                result[ch] = np.sum(windows[ch]) // windows[ch].size
 
         return result
 
@@ -226,18 +255,16 @@ class PoolLayerModel():
 
         # Write all channels at the SAME (r,c)
         for ch in range(self._OutChannels):
-            raw = (packed >> (ch * w)) & ((1 << w) - 1)   # ch0 in LSB slice assumption
-            got = sign_extend(raw, w)
+            got = (packed >> (ch * w)) & ((1 << w) - 1)   # ch0 in LSB slice assumption
             exp = int(expected[ch])
 
-            print(f"Output #{self._deqs} (r={self._r}, c={self._c}) ch{ch}: expected {exp}, got {got} (raw=0x{raw:x})")
+            print(f"Output #{self._deqs} (r={self._r}, c={self._c}) ch{ch}: expected {exp}, got {got}")
 
             if self._output_activation is not None:
                 self._output_activation[ch][self._r][self._c] = got
 
             assert got == exp, (
                 f"Mismatch at output #{self._deqs} (r={self._r}, c={self._c}) ch{ch}: expected {exp}, got {got} "
-                f"(raw=0x{raw:x})"
             )
 
         # Advance pixel position ONCE per output handshake/vector
@@ -635,6 +662,7 @@ async def rate_tests(dut, in_rate, out_rate):
     IC = int(dut.InChannels.value)
     OC = int(dut.OutChannels.value)
     S  = int(dut.Stride.value)
+    mode = int(dut.PoolMode.value)
 
     # Observe H rows of VALID outputs
     invalid = K - 1
@@ -685,6 +713,22 @@ async def rate_tests(dut, in_rate, out_rate):
     # Now wait for exactly l_out output handshakes
     try:
         await om.wait(timeout_ns)
+        for ic in range(IC):
+            print(f"\nInput Activation for IC{ic}")
+            for r in range(H):
+                print(" ".join(f"{input_activation[ic][r][c]:2d}" for c in range(W)))
+        for oc in range(OC):
+            print(f"\nOutput Activation (DUT) for OC{oc}")
+            for r in range(H_out):
+                print(" ".join(f"{output_activation[oc][r][c]:4d}" for c in range(W_out)))
+
+        ref = torch_pool_ref(input_activation, kernel_size=K, stride=S, mode=mode)
+        for oc in range(OC):
+            print(f"\nExpected (PyTorch) for OC{oc}")
+            for r in range(H_out):
+                print(" ".join(f"{int(ref[oc, r, c]):4d}" for c in range(W_out)))
+        assert np.allclose(output_activation, ref.int().numpy()), "Output activation does not match PyTorch reference"
+
     except SimTimeoutError:
         assert 0, (
             f"Timed out. Expected {l_out} output handshakes "

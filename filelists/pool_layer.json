@@ -8,6 +8,7 @@
     ,"rtl/lib/ram_1r1w_sync.sv"
     ,"rtl/lib/multi_delay_buffer.sv"
     ,"rtl/lib/max.sv"
+    ,"rtl/lib/avg.sv"
     ,"rtl/lib/window.sv"
     ]
 }
