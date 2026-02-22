@@ -13,6 +13,9 @@ lint/
 __pycache__/
 *.pyc
 .pytest_cache/
+*.pth
+*.csv
+*.png
 
 # FPGA / EDA outputs
 *.json
