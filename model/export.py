@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import pandas as pd
 import numpy as np
-from model import cnn_model, QuantConv2d # Import your specific architecture
+from .model import cnn_model, QuantConv2d # Import your specific architecture
 
 def fold_batchnorm_into_conv(conv_layer, bn_layer):
     """

@@ -12,8 +12,8 @@ from matplotlib import pyplot as plt
 from pathlib import Path
 import matplotlib.pyplot as plt
 
-from model import cnn_model, QuantConv2d
-from export import export_model_to_csv
+from .model import cnn_model, QuantConv2d
+from .export import export_model_to_csv
 
 IMG_H, IMG_W = 240, 320
 DATA_SPLIT = 0.8
@@ -110,8 +110,8 @@ model = cnn_model(in_ch=1, num_classes=len(dataset.classes)).to(device)
 # t_i, t_b8, t_b7, t_b6, t_b5, t_b4, t_b3, t_b2
 schedule = [LayerConfig(20, [15, 15, 15, 15, 15, 20, 30], 8, 2),
             LayerConfig(35, [15, 15, 15, 15, 15, 20, 30], 8, 2),
-            LayerConfig(50, [15, 15, 15, 15, 20, 30],     8, 3),
-            LayerConfig(65, [15, 15, 15, 15, 20, 30],     8, 3)]
+            LayerConfig(50, [15, 15, 15, 20, 25, 30, 35], 8, 2),
+            LayerConfig(65, [15, 15, 15, 20, 25, 30, 40], 8, 2)]
 
 model_layers = model.features.modules()
 assert len(schedule) == sum(1 for m in model_layers if isinstance(m, QuantConv2d)), "Schedule must have an entry for each QuantConv2d layer"
@@ -201,14 +201,42 @@ for epoch in range(EPOCHS):
     
     print(f"epoch {epoch:02d} train_acc={train_acc:.3f} test_acc={test_acc:.3f}")
 
-# Plot training and test accuracy over epochs
-plt.plot(train_acc_history, label="Train Accuracy")
-plt.plot(test_acc_history, label="Test Accuracy")
+# --------------------------------------- PLOTTING LOGIC ---------------------------------------
+plt.plot(train_acc_history, label="Train Accuracy", linewidth=2)
+plt.plot(test_acc_history, label="Test Accuracy", linewidth=2)
+
+colors = ['red', 'orange', 'green', 'blue']
+assert len(schedule) == len(colors), "Need a color for each layer in the schedule"
+
+# Find the lowest accuracy on the graph to anchor our text
+min_acc = min(min(train_acc_history), min(test_acc_history))
+
+for layer_idx, (cfg, color) in enumerate(zip(schedule, colors)):
+    # Offset text vertically so the 4 layers stack neatly instead of overlapping
+    y_offset = min_acc + (layer_idx * 0.05) 
+    
+    # Plot the starting point for this layer
+    plt.axvline(cfg._q_start, color=color, linestyle='-', alpha=0.6)
+    plt.text(cfg._q_start - 2, y_offset, f'L{layer_idx} Q-Start', rotation=90, color=color, fontsize=8)
+    
+    # Accumulate the epochs to step forward in time correctly
+    accumulated_epochs = cfg._q_start
+    for i, duration in enumerate(cfg._epochs_per_bit[:-1]): # Skip the final plateau duration for text labels
+        accumulated_epochs += duration
+        
+        # Calculate the bit-width the layer is dropping TO
+        next_bits = max(cfg._q_min_bits, cfg._q_max_bits - i - 1)
+        
+        # Plot the drop threshold
+        plt.axvline(accumulated_epochs, color=color, linestyle='--', alpha=0.3)
+        plt.text(accumulated_epochs + 1, y_offset, f'{next_bits}b', rotation=90, color=color, fontsize=8)
+
 plt.xlabel("Epoch")
 plt.ylabel("Accuracy")
-plt.title("Training and Test Accuracy over Epochs")
-plt.legend()
-plt.grid()
+plt.title("Training and Test Accuracy with Quantization Schedule")
+plt.legend(loc="lower right")
+plt.grid(True, alpha=0.3)
+plt.show()
 
 print("\n--- TRAINING COMPLETE ---")
 # 1. Save the raw PyTorch model just in case!

@@ -1,0 +1,15 @@
+cocotb==1.9.1
+cocotb_test==0.2.6
+cocotbext_axi==0.1.26
+cocotbext_spi==0.5.0
+cocotbext_uart==0.1.4
+GitPython==3.1.46
+kagglehub==1.0.0
+matplotlib==3.10.8
+numpy==2.4.2
+pandas==3.0.1
+Pillow==12.1.1
+pyserial==3.5
+pytest==7.4.4
+torch==2.10.0
+torchvision==0.25.0

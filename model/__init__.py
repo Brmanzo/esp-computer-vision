@@ -1,0 +1,1 @@
+from .model import cnn_model, QuantConv2d
