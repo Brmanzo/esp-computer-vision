@@ -81,15 +81,14 @@ def gen_kernels(WW: int, OC: int, IC: int, K: int, seed: int | None = None):
     rng = random.Random(seed)
     if WW < 2:
         raise ValueError("Weight width must be at least 2 to include negative values in test kernels.")
-    # If weight width of two, enforce ternary {-1, 0, 1} weights to test intended use of conv_layer
     elif WW == 2:
         rand_kernel_value = lambda: rng.choice([-1, 0, 1])
     else:
-        # For wider weight widths, we can use a larger range of values
         max_val = (1 << (WW - 1)) - 1
         min_val = -(1 << (WW - 1))
         rand_kernel_value = lambda: rng.randint(min_val, max_val)
 
+    # 1. Generate the 4D matrix
     kernels4 = [
         [
             [[rand_kernel_value() for _ in range(K)] for _ in range(K)]
@@ -98,15 +97,62 @@ def gen_kernels(WW: int, OC: int, IC: int, K: int, seed: int | None = None):
         for _ in range(OC)
     ]
 
-    kernels_flat = [
-        [
-            [kernels4[oc][ic][r][c] for r in range(K) for c in range(K)]
-            for ic in range(IC)
-        ]
-        for oc in range(OC)
-    ]
+    # 2. Pack the 4D matrix into a single integer for the Verilog Parameter
+    packed_weights = 0
+    bit_shift = 0
+    mask = (1 << WW) - 1
 
-    return kernels4, kernels_flat
+    # Iterate from LSB to MSB: cols -> rows -> InChannels -> OutChannels
+    for oc in range(OC):
+        for ic in range(IC):
+            for r in range(K):
+                for c in range(K):
+                    w = kernels4[oc][ic][r][c]
+                    
+                    # Convert negative values to two's complement representation
+                    w_bits = w if w >= 0 else (1 << WW) + w
+                    w_bits = w_bits & mask # Ensure it fits within WW bits
+                    
+                    # Shift and combine into the main bit vector
+                    packed_weights |= (w_bits << bit_shift)
+                    bit_shift += WW
+
+    # Return as an integer (cocotb-runner handles integer parameters well)
+    # We no longer need kernels_flat unless you use it elsewhere
+    return packed_weights
+
+def unpack_weights(packed_val: int, WW: int, OC: int, IC: int, K: int):
+    """Reconstructs the 4D weights matrix from the Verilog parameter integer."""
+    mask = (1 << WW) - 1
+    sign_bit = 1 << (WW - 1)
+    
+    kernels4 = []
+    bit_shift = 0
+    
+    # Must mirror the exact same LSB -> MSB iteration order used in packing
+    for oc in range(OC):
+        oc_list = []
+        for ic in range(IC):
+            ic_list = []
+            for r in range(K):
+                r_list = []
+                for c in range(K):
+                    # Extract the specific bits for this weight
+                    w_bits = (packed_val >> bit_shift) & mask
+                    
+                    # Convert from two's complement back to a signed Python integer
+                    if w_bits & sign_bit:
+                        w = w_bits - (1 << WW)
+                    else:
+                        w = w_bits
+                        
+                    r_list.append(w)
+                    bit_shift += WW
+                ic_list.append(r_list)
+            oc_list.append(ic_list)
+        kernels4.append(oc_list)
+        
+    return kernels4
 
 def pack_data_i(samples, width):
     """
@@ -143,52 +189,142 @@ def unpack_data_i(packed, width_in, IC):
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("WidthIn, WeightWidth, WidthOut", 
-                         [("1", "2", output_width(1, 2, 3)), # Intended Size
-                          ("2", "3", output_width(2, 3, 3)), # Unsigned data_i
-                          ("4", "5", output_width(4, 5, 3)),
-                          ("8", "8", output_width(8, 8, 3))])
-def test_width(test_name, simulator, WidthIn, WeightWidth, WidthOut):
-    # This line must be first
+@pytest.mark.parametrize("WidthIn, WeightWidth, WidthOut, KernelWidth, InChannels, OutChannels, Weights", 
+                         [(1, 2, output_width(1, 2, 3), 3, 1, 1, gen_kernels(2, 1, 1, 3, seed=1234)), # Intended Size
+                          (2, 3, output_width(2, 3, 3), 3, 1, 1, gen_kernels(3, 1, 1, 3, seed=1234)), # Unsigned data_i
+                          (4, 5, output_width(4, 5, 3), 3, 1, 1, gen_kernels(5, 1, 1, 3, seed=1234)),
+                          (8, 8, output_width(8, 8, 3), 3, 1, 1, gen_kernels(8, 1, 1, 3, seed=1234))])
+def test_width(test_name, simulator, WidthIn, WeightWidth, WidthOut, KernelWidth, InChannels, OutChannels, Weights):
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
+    
+    # 1. Remove Weights from the CLI parameters dict so cocotb-runner doesn't pass it
+    del parameters['Weights'] 
+    
     param_str = f"WidthIn_{WidthIn}_WeightWidth_{WeightWidth}_WidthOut_{WidthOut}"
     custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
-    runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
+    os.makedirs(custom_work_dir, exist_ok=True)
+    
+    # 2. Calculate total bits to format the Verilog hex string correctly
+    total_bits = OutChannels * InChannels * (KernelWidth**2) * WeightWidth
+    
+    # 3. Write the massive integer as a strictly sized hex literal to a header file
+    vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
+    with open(vh_path, "w") as f:
+        hex_width = (total_bits + 3) // 4
+        f.write(f"localparam logic signed [{total_bits-1}:0] INJECTED_WEIGHTS = {total_bits}'h{Weights:0{hex_width}x};\n")
 
+    # Pass the massive integer strictly through the OS environment to Cocotb
+    os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
+
+    # Define the wrapper path and pass the extra arguments to your runner
+    wrapper_path = os.path.join(tbpath, "tb_conv_layer.sv")
+
+    runner(
+        simulator=simulator, 
+        timescale=timescale, 
+        tbpath=tbpath, 
+        params=parameters, 
+        testname=test_name, 
+        work_dir=custom_work_dir,
+        includes=[custom_work_dir],          # Tells simulator where to find injected_weights.vh
+        toplevel_override="tb_conv_layer",   # Forces simulator to use the wrapper as top-level
+        extra_sources=[wrapper_path]         # Adds the wrapper file to the compilation list
+    )
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("WidthOut, KernelWidth, Stride, LineWidthPx, LineCountPx", 
-                         [(output_width(1, 2, 2), 2, 2, 16, 12),
-                          (output_width(1, 2, 4), 4, 4, 16, 12),
-                          (output_width(1, 2, 5), 5, 2, 17, 13)
+# Added 'Weights' to the tuple list, generating it with WW=2, OC=1, IC=1
+@pytest.mark.parametrize("WidthOut, KernelWidth, Stride, LineWidthPx, LineCountPx, Weights", 
+                         [(output_width(1, 2, 2), 2, 2, 16, 12, gen_kernels(2, 1, 1, 2, seed=1234)),
+                          (output_width(1, 2, 4), 4, 4, 16, 12, gen_kernels(2, 1, 1, 4, seed=1234)),
+                          (output_width(1, 2, 5), 5, 2, 17, 13, gen_kernels(2, 1, 1, 5, seed=1234))
                           ])
 
-def test_stride(test_name, simulator, WidthOut, KernelWidth, Stride, LineWidthPx, LineCountPx):
-    # This line must be first
+def test_stride(test_name, simulator, WidthOut, KernelWidth, Stride, LineWidthPx, LineCountPx, Weights):
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
+    
+    # Remove Weights from CLI
+    del parameters['Weights'] 
+    
     param_str = f"KernelWidth_{KernelWidth}_Stride_{Stride}_LineWidthPx_{LineWidthPx}_LineCountPx_{LineCountPx}"
     custom_work_dir = os.path.join(tbpath, "run", "stride", param_str, simulator)
-    runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
+    os.makedirs(custom_work_dir, exist_ok=True)
+
+    # Hardcode the DUT defaults since they aren't parametrized here
+    WW, IC, OC = 2, 1, 1
+    total_bits = OC * IC * (KernelWidth**2) * WW
+    
+    # Write the header file
+    vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
+    with open(vh_path, "w") as f:
+        hex_width = (total_bits + 3) // 4
+        f.write(f"localparam logic signed [{total_bits-1}:0] INJECTED_WEIGHTS = {total_bits}'h{Weights:0{hex_width}x};\n")
+
+    # Route weights via OS environment
+    os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
+    wrapper_path = os.path.join(tbpath, "tb_conv_layer.sv")
+
+    # Run with wrapper hooks
+    runner(
+        simulator=simulator, 
+        timescale=timescale, 
+        tbpath=tbpath, 
+        params=parameters, 
+        testname=test_name, 
+        work_dir=custom_work_dir,
+        includes=[custom_work_dir],
+        toplevel_override="tb_conv_layer",
+        extra_sources=[wrapper_path]
+    )
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("WidthOut, InChannels, OutChannels", 
-                         [(output_width(1, 2, 3), 1, 2),
-                          (output_width(2, 3, 3), 2, 3),
-                          (output_width(4, 5, 3), 4, 5),
-                          (output_width(8, 8, 3), 8, 8)])
-def test_channels(test_name, simulator, WidthOut, InChannels, OutChannels):
-    # This line must be first
+# Expanded to include WidthIn, WeightWidth, KernelWidth so the DUT scales with the Python math
+@pytest.mark.parametrize("WidthIn, WeightWidth, KernelWidth, WidthOut, InChannels, OutChannels, Weights", 
+                         [(1, 2, 3, output_width(1, 2, 3), 1, 2, gen_kernels(2, 2, 1, 3, seed=1234)),
+                          (2, 3, 3, output_width(2, 3, 3), 2, 3, gen_kernels(3, 3, 2, 3, seed=1234)),
+                          (4, 5, 3, output_width(4, 5, 3), 4, 5, gen_kernels(5, 5, 4, 3, seed=1234)),
+                          (8, 8, 3, output_width(8, 8, 3), 8, 8, gen_kernels(8, 8, 8, 3, seed=1234))
+                          ])
+
+def test_channels(test_name, simulator, WidthIn, WeightWidth, KernelWidth, WidthOut, InChannels, OutChannels, Weights):
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
+    del parameters['Weights'] 
+    
     param_str = f"WidthOut_{WidthOut}_InChannels_{InChannels}_OutChannels_{OutChannels}"
     custom_work_dir = os.path.join(tbpath, "run", "channels", param_str, simulator)
-    runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
+    os.makedirs(custom_work_dir, exist_ok=True)
+
+    # Calculate total bits using the explicit parameters
+    total_bits = OutChannels * InChannels * (KernelWidth**2) * WeightWidth
+    
+    # Write the header file
+    vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
+    with open(vh_path, "w") as f:
+        hex_width = (total_bits + 3) // 4
+        f.write(f"localparam logic signed [{total_bits-1}:0] INJECTED_WEIGHTS = {total_bits}'h{Weights:0{hex_width}x};\n")
+
+    # Route weights via OS environment
+    os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
+    wrapper_path = os.path.join(tbpath, "tb_conv_layer.sv")
+
+    # Run with wrapper hooks
+    runner(
+        simulator=simulator, 
+        timescale=timescale, 
+        tbpath=tbpath, 
+        params=parameters, 
+        testname=test_name, 
+        work_dir=custom_work_dir,
+        includes=[custom_work_dir],
+        toplevel_override="tb_conv_layer",
+        extra_sources=[wrapper_path]
+    )
 
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
@@ -690,11 +826,9 @@ async def single_test(dut):
 
     W  = int(dut.LineWidthPx.value)
     K  = int(dut.KernelWidth.value)
-    KA = K * K
     IC = int(dut.InChannels.value)
     OC = int(dut.OutChannels.value)
     WW = int(dut.WeightWidth.value)
-    S  = int(dut.Stride.value)
 
     # Number of accepted inputs until first valid output position (x=K-1, y=K-1)
     N_first = (K - 1) * W + (K - 1) + 1
@@ -704,7 +838,8 @@ async def single_test(dut):
 
     rate = 1
 
-    kernels_4d, kernels_flat = gen_kernels(WW, OC, IC, K, seed=1234)
+    packed_weights = int(os.environ["INJECTED_WEIGHTS_INT"])
+    kernels_4d = unpack_weights(packed_weights, WW, OC, IC, K)
     
     model = ConvLayerModel(dut, kernels_4d)
     m = ModelRunner(dut, model)
@@ -716,8 +851,6 @@ async def single_test(dut):
     dut.valid_i.value = 0
     dut.data_i.value = 0
 
-    dut.weights_i.value = pack_weights_in(kernels_flat, WW, KA, IC)
-
     await clock_start_sequence(dut.clk_i)
     await reset_sequence(dut.clk_i, dut.rst_i, 10)
     await FallingEdge(dut.clk_i)
@@ -726,8 +859,7 @@ async def single_test(dut):
     om.start()
     im.start()
 
-    # Wait until that single output is observed; timeout in ns but generous
-    # If your clk is 1ns, N_first cycles is ~N_first ns; add cushion
+    # Wait until that single output is observed
     tmo_ns = 4 * N_first + 50
 
     timed_out = False
@@ -748,7 +880,6 @@ async def rate_tests(dut, in_rate, out_rate):
     W  = int(dut.LineWidthPx.value)
     H  = int(dut.LineCountPx.value)
     K  = int(dut.KernelWidth.value)
-    KA = K * K
     IC = int(dut.InChannels.value)
     OC = int(dut.OutChannels.value)
     WW = int(dut.WeightWidth.value)
@@ -771,9 +902,8 @@ async def rate_tests(dut, in_rate, out_rate):
     first_out_wait_ns = int((2 * (K - 1) * W + 2 * (K - 1) + 200) / slow)
     timeout_ns        = int((H_out * N_in + 500) / slow)
 
-    kernels_4d, kernels_flat = gen_kernels(WW, OC, IC, K, seed=1234)
-
-    dut.weights_i.value = pack_weights_in(kernels_flat, WW, KA, IC)
+    packed_weights = int(os.environ["INJECTED_WEIGHTS_INT"])
+    kernels_4d = unpack_weights(packed_weights, WW, OC, IC, K)
 
     model = ConvLayerModel(dut, kernels_4d, output_activation)
     m = ModelRunner(dut, model)
@@ -827,7 +957,7 @@ async def rate_tests(dut, in_rate, out_rate):
             for r in range(H_out):
                 print(" ".join(f"{output_activation[oc][r][c]:4d}" for c in range(W_out)))
 
-        
+        # Verify against PyTorch reference convolution
         ref = torch_conv_ref(input_activation, kernels_4d, S)  # (OC,H_out,W_out)
 
         for oc in range(OC):

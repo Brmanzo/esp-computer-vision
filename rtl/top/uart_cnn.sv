@@ -93,35 +93,18 @@ module uart_cnn #(
 
   assign led_o[5:1] = 5'b0;
 
-  // Predefined Kernel weights for gx and gy gradients
-  typedef logic signed [WeightWidth-1:0] weight_t;
+  localparam logic signed
+    [OutChannels*KernelArea*WeightWidth-1:0] WeightsFlat = {
+      // gy (channel 1)
+      2'sd1,  2'sd1,  2'sd1,
+      2'sd0,  2'sd0,  2'sd0,
+      -2'sd1, -2'sd1, -2'sd1,
 
-  function automatic weight_t gx(input int unsigned i);
-    unique case (i)
-      0: gx = 2'sd1;  1: gx = 2'sd0;  2: gx = -2'sd1;
-      3: gx = 2'sd1;  4: gx = 2'sd0;  5: gx = -2'sd1;
-      6: gx = 2'sd1;  7: gx = 2'sd0;  8: gx = -2'sd1;
-      default: gx = '0;
-    endcase
-  endfunction
-
-  function automatic weight_t gy(input int unsigned i);
-    unique case (i)
-      0: gy =  2'sd1;  1: gy =  2'sd1;  2: gy =  2'sd1; 
-      3: gy =  2'sd0;  4: gy =  2'sd0;  5: gy =  2'sd0;
-      6: gy = -2'sd1;  7: gy = -2'sd1;  8: gy = -2'sd1;
-      default: gy = '0;
-    endcase
-  endfunction
-
-  logic signed [OutChannels-1:0][KernelArea-1:0][WeightWidth-1:0] weights;
-  genvar k;
-  generate
-    for (k = 0; k < KernelArea; k++) begin : gen_gy
-      assign weights[0][k] = gx(k);  // gx_w returns weight_t (signed [2:0])
-      assign weights[1][k] = gy(k);  // gy_w returns weight_t (signed [2:0])
-    end
-  endgenerate
+      // gx (channel 0)
+      2'sd1,  2'sd0, -2'sd1,
+      2'sd1,  2'sd0, -2'sd1,
+      2'sd1,  2'sd0, -2'sd1
+  };
 
   // UART head to convert UART serial data to AXIS data
   uart #(
@@ -196,6 +179,7 @@ module uart_cnn #(
     ,.InChannels  (InChannels)
     ,.OutChannels (OutChannels)
     ,.Stride      (Stride)
+    ,.Weights     (WeightsFlat)
   ) conv_layer_inst (
      .clk_i    (clk_i)
     ,.rst_i    (rst_i)
@@ -207,7 +191,6 @@ module uart_cnn #(
     ,.ready_i  (mag_ready)
     ,.valid_o  (conv_layer_valid)
     ,.data_o   (conv_layer_data)
-    ,.weights_i(weights)
   );
 
   // Magnitude calculated from Gx and Gy

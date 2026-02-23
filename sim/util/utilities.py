@@ -26,52 +26,54 @@ from cocotb.triggers import Timer, ClockCycles, RisingEdge, FallingEdge, with_ti
 from cocotb.types import LogicArray
 from cocotb.utils import get_sim_time
 
-def runner(simulator, timescale, tbpath, params, defs=[], testname=None, pymodule=None, jsonpath=None, jsonname="filelist.json", root=None, work_dir=None, sim_build=None):
+def runner(simulator, timescale, tbpath, params, defs=[], testname=None, pymodule=None, jsonpath=None, jsonname="filelist.json", root=None, work_dir=None, sim_build=None, includes=None, toplevel_override=None, extra_sources=None):
     """Run the simulator on test n, with parameters params, and defines
     defs. If n is none, it will run all tests"""
 
-    # if json path is none, assume that it is the same as tbpath
     if(jsonpath is None):
         jsonpath = tbpath
 
     assert (os.path.exists(jsonpath)), "jsonpath directory must exist"
-    top = get_top(jsonpath, jsonname)
+    
+    # Check for top-level override before falling back to JSON
+    if toplevel_override:
+        top = toplevel_override
+    else:
+        top = get_top(jsonpath, jsonname)
 
-    # if pymodule is none, assume that the python module name is test+<name of the top module>.
     if(pymodule is None):
-        pymodule = "test_" + top
+        # Default the python module to the original top name to avoid breaking things
+        pymodule = "test_" + get_top(jsonpath, jsonname) 
 
     if(testname is None):
         testdir = "all"
     else:
         testdir=testname
     
-    # Assume all paths in the json file are relative to the repository root.
     if(root is None):
         root = git.Repo(search_parent_directories=True).working_tree_dir
 
     assert (os.path.exists(root)), "root directory path must exist"
 
     sources = get_sources(root, tbpath)
+    
+    # Append any extra source files (like our wrapper)
+    if extra_sources:
+        sources.extend(extra_sources)
 
-    # Only calculate work_dir if the user didn't provide one
     if work_dir is None:
         work_dir = os.path.join(tbpath, "run", testdir, get_param_string(params), simulator)
 
-    # Only calculate build_dir if the user didn't provide one (sim_build)
     if sim_build is None:
-        # Default behavior
         build_dir = os.path.join(tbpath, "build", get_param_string(params))
         if simulator.startswith("icarus"):
             build_dir = work_dir
     else:
-        # User override behavior
         build_dir = sim_build
 
     if not os.path.exists(work_dir):
         os.makedirs(work_dir, exist_ok=True)
 
-    # Icarus doesn't build, it just runs.
     if simulator.startswith("icarus"):
         build_dir = work_dir
 
@@ -83,7 +85,12 @@ def runner(simulator, timescale, tbpath, params, defs=[], testname=None, pymodul
     else:
         compile_args=[]
         plus_args = []
+        
+    # Ensure includes is a list if not provided
+    if includes is None:
+        includes = []
 
+    # Pass the new arguments down to the underlying run() function
     run(verilog_sources=sources,
         simulator=simulator,
         toplevel=top,
@@ -94,6 +101,7 @@ def runner(simulator, timescale, tbpath, params, defs=[], testname=None, pymodul
         timescale=timescale,
         parameters=params,
         defines=defs + ["VM_TRACE_FST=1", "VM_TRACE=1"],
+        includes=includes, # <--- Added here
         work_dir=work_dir,
         waves=True,
         testcase=testname)

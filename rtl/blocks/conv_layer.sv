@@ -19,19 +19,21 @@ module conv_layer #(
 
   ,localparam int XWidth = (LineWidthPx <= 1) ? 1 : $clog2(LineWidthPx)
   ,localparam int YWidth = (LineCountPx <= 1) ? 1 : $clog2(LineCountPx)
+
+  ,localparam int unsigned WeightIndex = InChannels * KernelArea * WeightWidth
+  ,parameter logic signed [OutChannels*WeightIndex-1:0] Weights = '0
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
 
-  ,input  [0:0]         valid_i
-  ,output [0:0]         ready_o
+  ,input  [0:0] valid_i
+  ,output [0:0] ready_o
   ,input  [InChannels-1:0][WidthIn-1:0] data_i
 
   ,output [0:0] valid_o
   ,input  [0:0] ready_i
 
   ,output logic signed [OutChannels-1:0][WidthOut-1:0] data_o
-  ,input  logic signed [OutChannels-1:0][InChannels-1:0][KernelArea-1:0][WeightWidth-1:0] weights_i
 );
   // Helper function to compute the next phase in the stride cycle for strides greater than 1.
   // Rolls over when the current phase is the last in the cycle, otherwise returns the next phase.
@@ -168,7 +170,7 @@ module conv_layer #(
         ,.InChannels (InChannels)
       ) filter_inst (
          .windows_i  (windows)
-        ,.weights_i  (weights_i[ch])
+        ,.weights_i  (Weights[ch*WeightIndex +: WeightIndex])
         ,.data_o     (data_o[ch])
       );
     end
