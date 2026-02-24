@@ -106,10 +106,10 @@ module skid_buffer #(
 
   /* ------------------------------------ RAM Instantiation ------------------------------------ */
   // FIFO RAM
-  ram_1r1w_sync #(
+  icestorm_ram #(
     .Width(Width) // Width of FIFO specified by Width
    ,.Depth(Depth) // Depth of FIFO specified by Depth
-  ) ram_1r1w_sync_inst (
+  ) embedded_block_ram_inst (
      .clk_i(clk_i)
     ,.rst_i(rst_i)
 

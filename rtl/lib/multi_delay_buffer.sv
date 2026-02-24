@@ -74,10 +74,10 @@ module multi_delay_buffer #(
   end
 
   // Channel delay buffers vertically partitioned within shift register
-  ram_1r1w_sync #(
+  icestorm_ram #(
      .Width(RamWidth)
     ,.Depth(Delay)
-  ) ram_inst (
+  ) embedded_block_ram_inst (
      .clk_i     (clk_i)
     ,.rst_i     (rst_i)
     ,.wr_valid_i(in_fire)

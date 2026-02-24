@@ -5,7 +5,7 @@
     ,"rtl/lib/counter.sv"
     ,"rtl/lib/counter_roll.sv"
     ,"rtl/lib/elastic.sv"
-    ,"rtl/lib/ram_1r1w_sync.sv"
+    ,"rtl/lib/icestorm_ram.sv"
     ,"rtl/lib/multi_delay_buffer.sv"
     ,"rtl/lib/max.sv"
     ,"rtl/lib/avg.sv"
