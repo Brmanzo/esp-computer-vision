@@ -9,8 +9,8 @@ module fc_layer #(
   ,parameter int unsigned OutChannels  = 1
 
   ,localparam int unsigned WeightIndex = InChannels * WeightWidth
-  ,parameter logic signed [OutChannels*WeightIndex-1:0] weights = '0
-  ,parameter logic signed [OutChannels*WidthOut-1:0]   biases  = '0
+  ,parameter logic signed [OutChannels*WeightIndex-1:0] Weights = '0
+  ,parameter logic signed [OutChannels*WidthOut-1:0]    Biases  = '0
 )  (
    input [0:0] clk_i
   ,input [0:0] rst_i
@@ -23,6 +23,7 @@ module fc_layer #(
   ,input  [0:0] ready_i
   ,output signed [OutChannels-1:0][WidthOut-1:0] data_o
 );
+
 
   /* ------------------------------------ Elastic Handshaking Logic ------------------------------------ */
   // Provided Elastic State Machine Logic
@@ -39,12 +40,12 @@ module fc_layer #(
   /* --------------------------------------- Output Channel Logic --------------------------------------- */
   // Each output channel is a neuron with the same input data but different weights and biases
 
-  logic [OutChannels-1:0][WidthOut-1:0] activation_d, activation_q;
+  logic [InChannels-1:0][WidthIn-1:0] data_q;
   logic [0:0] in_fire = valid_i && ready_o;
 
   always_ff @(posedge clk_i) begin
-    if (rst_i) activation_q <= '0;
-    else if (in_fire) activation_q <= activation_d;
+    if (rst_i) data_q <= '0;
+    else if (in_fire) data_q <= data_i;
   end
 
   generate
@@ -55,15 +56,13 @@ module fc_layer #(
         ,.WeightWidth (WeightWidth)
         ,.InChannels  (InChannels)
 
-        ,.Weights     (weights[ch*WeightIndex +: WeightIndex])
-        ,.Bias        (biases[ch*WidthOut +: WidthOut])
+        ,.Weights     (Weights[ch*WeightIndex +: WeightIndex])
+        ,.Bias        (Biases[ch*WidthOut +: WidthOut])
       ) neuron_inst (
-         .data_i      (data_i)
-        ,.activation_o(activation_d[ch])
+         .data_i      (data_q)
+        ,.activation_o(data_o[ch])
       );
     end
   endgenerate
-
-  assign data_o = activation_q;
 
 endmodule

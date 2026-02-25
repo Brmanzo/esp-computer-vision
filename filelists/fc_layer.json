@@ -1,0 +1,7 @@
+{
+    "top": "fc_layer",
+    "files":
+    ["rtl/blocks/fc_layer.sv"
+    ,"rtl/lib/neuron.sv"
+    ]
+}

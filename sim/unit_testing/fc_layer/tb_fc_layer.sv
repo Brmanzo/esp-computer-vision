@@ -1,19 +1,14 @@
-// tb_conv_layer.sv
+// tb_fc_layer.sv
 // Bradley Manzo, 2026
   
 /* verilator lint_off PINCONNECTEMPTY */
 `timescale 1ns / 1ps
-module tb_conv_layer #(
-   parameter int unsigned LineWidthPx  = 16
-  ,parameter int unsigned LineCountPx  = 12
-  ,parameter int unsigned WidthIn      = 1
+module tb_fc_layer #(
+   parameter int unsigned WidthIn      = 1
   ,parameter int unsigned WidthOut     = 32
-  ,parameter int unsigned KernelWidth  = 3
   ,parameter int unsigned WeightWidth  = 2
   ,parameter int unsigned InChannels   = 1
   ,parameter int unsigned OutChannels  = 1
-  ,parameter int unsigned Stride       = 1
-
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -29,18 +24,16 @@ module tb_conv_layer #(
 );
 
 `include "injected_weights.vh"
+`include "injected_biases.vh"
 
-conv_layer #(
-     .LineWidthPx (LineWidthPx)
-    ,.LineCountPx (LineCountPx)
-    ,.WidthIn     (WidthIn)
+fc_layer #(
+     .WidthIn     (WidthIn)
     ,.WidthOut    (WidthOut)
-    ,.KernelWidth (KernelWidth)
     ,.WeightWidth (WeightWidth)
     ,.InChannels  (InChannels)
     ,.OutChannels (OutChannels)
-    ,.Stride      (Stride)
     ,.Weights     (INJECTED_WEIGHTS)
+    ,.Biases      (INJECTED_BIASES)
   ) dut (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)

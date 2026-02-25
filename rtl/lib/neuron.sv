@@ -3,7 +3,7 @@
 
 module neuron#(
    parameter int unsigned WidthIn     = 1
-  ,parameter int unsigned WidthOut    = 1
+  ,parameter int unsigned WidthOut    = 2
   ,parameter int unsigned WeightWidth = 2
   ,parameter int unsigned InChannels  = 1
 
@@ -13,14 +13,14 @@ module neuron#(
    input  [InChannels-1:0][WidthIn-1:0] data_i
   ,output signed [WidthOut-1:0]         activation_o
 );
-logic signed [WidthOut-1:0] acc_d;
+  logic signed [WidthOut-1:0] acc_d;
 
-always_comb begin
-  acc_d = '0;
-  for (int ch = 0; ch < InChannels; ch++) begin
-    acc_d += data_i[ch]*Weights[ch*WeightWidth +: WeightWidth];
+  always_comb begin : neuron_compute
+    acc_d = Bias;
+    for (int ch = 0; ch < InChannels; ch++) begin
+      acc_d = acc_d + WidthOut'(data_i[ch]*Weights[ch*WeightWidth +: WeightWidth]);
+    end
   end
-  activation_o = acc_d + Bias;
-end
+  assign activation_o = acc_d;
 
 endmodule
