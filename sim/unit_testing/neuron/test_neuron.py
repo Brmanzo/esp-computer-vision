@@ -4,11 +4,11 @@ import git
 import queue
 import math
 import numpy as np
-from typing import List, Optional
-from functools import reduce
+from typing import List
 from decimal import Decimal
 import torch
-import torch.nn.functional as F
+import torch.nn as nn
+import shutil
 
 _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
 assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
@@ -23,8 +23,7 @@ import pytest
 
 import cocotb
 
-from cocotb.triggers import Timer, FallingEdge, ReadOnly, ReadWrite
-from cocotb.result import SimTimeoutError
+from cocotb.triggers import Timer
 
 from cocotb_test.simulator import run
    
@@ -141,23 +140,19 @@ def twos_complement(val: int, bits: int) -> int:
     mask = (1 << bits) - 1
     return val & mask
 
-def to_torch_input(input_activation):
-    # input_activation: [IC][H][W]
-    x = torch.tensor(input_activation, dtype=torch.int32)   # (IC,H,W)
-    x = x.unsqueeze(0).to(torch.int32)                      # (1,IC,H,W)
-    return x
+def fc_reference(weights_1d, bias, InChannels):
+    # One output channel instantiates a single neuron
+    fc = nn.Linear(in_features=InChannels, out_features=1, bias=True)
 
-def to_torch_weights(kernels4):
-    # kernels4: [OC][IC][K][K]
-    w = torch.tensor(kernels4, dtype=torch.int32)           # (OC,IC,K,K)
-    return w
+    # Disable gradient tracking
+    fc.weight.requires_grad = False
+    fc.bias.requires_grad = False
 
-def torch_conv_ref(input_activation, kernels4, stride):
-    x = to_torch_input(input_activation).to(torch.float32)
-    w = to_torch_weights(kernels4).to(torch.float32)
-    y = F.conv2d(x, w, stride=stride, padding=0)            # (1,OC,H_out,W_out)
-    return y.squeeze(0)
+    # Convert to float32 for deterministic conv math
+    fc.weight.data = torch.tensor([weights_1d], dtype=torch.float32)
+    fc.bias.data   = torch.tensor([bias], dtype=torch.float32)
 
+    return fc
 def unpack_data_i(packed, width_in, IC):
     mask = (1 << width_in) - 1
     return [ (packed >> (ic * width_in)) & mask for ic in range(IC) ]
@@ -184,6 +179,8 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut,
 
     param_str = f"WidthIn_{WidthIn}_WeightWidth_{WeightWidth}_WidthOut_{WidthOut}_test_{test_name}"
     custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
+    if simulator.startswith("icarus") and os.path.exists(custom_work_dir):
+        shutil.rmtree(custom_work_dir)
     os.makedirs(custom_work_dir, exist_ok=True)
 
     # ---- Emit injected_weights.vh ----
@@ -247,6 +244,8 @@ def test_channels(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthO
 
     param_str = f"InChannels_{InChannels}_test_{test_name}"
     custom_work_dir = os.path.join(tbpath, "run", "channels", param_str, simulator)
+    if simulator.startswith("icarus") and os.path.exists(custom_work_dir):
+        shutil.rmtree(custom_work_dir)
     os.makedirs(custom_work_dir, exist_ok=True)
 
     # ---- Emit injected_weights.vh ----
@@ -307,7 +306,7 @@ def test_style(simulator, WidthIn, WeightWidth, InChannels, WidthOut, Weights, B
     lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"])
 
 class NeuronModel():
-    def __init__(self, dut, weights: List[int], bias: int, output_activation: int = 0):
+    def __init__(self, dut, weights: List[int], bias: int):
         self._dut = dut
         self._data_o = dut.data_o
         self._data_i = dut.data_i
@@ -319,8 +318,6 @@ class NeuronModel():
         self._InChannels  = int(dut.InChannels.value)
         self._WeightWidth = int(dut.WeightWidth.value)
         self._BiasWidth   = int(dut.BiasWidth.value)
-
-        self._output_activation = output_activation 
 
         self.w = np.array(weights, dtype=int)
 
@@ -339,7 +336,7 @@ class NeuronModel():
 
         return acc
 
-    def produce(self, expected):
+    def produce(self, expected, ref=None):
         assert_resolvable(self._data_o)
 
         w   = int(self._dut.WidthOut.value)
@@ -349,8 +346,12 @@ class NeuronModel():
         assert got == exp, (
             f"Mismatch. Expected {exp}, got {got}, Weights: {self.w}, Bias: {self.b}"
         )
+        print(f"got: {got}, expected: {exp}, Pytorch Ref: {ref}")
+        assert ref is None or math.isclose(got, ref, rel_tol=1e-5), (
+            f"Mismatch with Pytorch. Expected {ref}, got {got}, Weights: {self.w}, Bias: {self.b}"
+        )
     
-async def comb_step(dut, model, din_list):
+async def comb_step(dut, model, din_list, ref):
     # Drive packed input
     w = int(dut.WidthIn.value)
     dut.data_i.value = pack_data_i(din_list, w)
@@ -360,7 +361,7 @@ async def comb_step(dut, model, din_list):
     expected = model.consume()
 
     # Check output using your existing produce()
-    model.produce(expected)
+    model.produce(expected, ref)
 
 @cocotb.test
 async def single_test(dut):
@@ -372,11 +373,16 @@ async def single_test(dut):
     weights_1d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_INT"]), WW, IC)
     bias = int(os.environ["INJECTED_BIAS_INT"])
 
+    # Instantiate PyTorch Reference Model
+    fc = fc_reference(weights_1d, bias, IC)
     print(f"Testing with Weights: {weights_1d}, Bias: {bias}")
     model = NeuronModel(dut, weights_1d, bias)
 
     din = [random.randint(0, (1 << int(dut.WidthIn.value)) - 1) for _ in range(IC)]
-    await comb_step(dut, model, din)
+    # Convert data_i to tensor and compute Pytorch Reference Activation
+    tensor = torch.tensor([din], dtype=torch.float32)
+    ref = fc(tensor).item()
+    await comb_step(dut, model, din, ref)
 
 @cocotb.test
 async def full_bw_test(dut):
@@ -388,8 +394,13 @@ async def full_bw_test(dut):
     weights_1d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_INT"]), WW, IC)
     bias = int(os.environ["INJECTED_BIAS_INT"])
 
+    # Instantiate PyTorch Reference Model
+    fc = fc_reference(weights_1d, bias, IC)
     model = NeuronModel(dut, weights_1d, bias)
 
     for _ in range(500):
         din = [random.randint(0, (1 << int(dut.WidthIn.value)) - 1) for _ in range(IC)]
-        await comb_step(dut, model, din)
+        # Convert data_i to tensor and compute Pytorch Reference Activation
+        tensor = torch.tensor([din], dtype=torch.float32)
+        ref = fc(tensor).item()
+        await comb_step(dut, model, din, ref)

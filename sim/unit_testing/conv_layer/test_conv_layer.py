@@ -202,7 +202,7 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, WidthOut, KernelWidth
     # 1. Remove Weights from the CLI parameters dict so cocotb-runner doesn't pass it
     del parameters['Weights'] 
     
-    param_str = f"WidthIn_{WidthIn}_WeightWidth_{WeightWidth}_WidthOut_{WidthOut}"
+    param_str = f"WidthIn_{WidthIn}_WeightWidth_{WeightWidth}_WidthOut_{WidthOut}_test_{test_name}"
     custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
     os.makedirs(custom_work_dir, exist_ok=True)
     
@@ -249,7 +249,7 @@ def test_stride(test_name, simulator, WidthOut, KernelWidth, Stride, LineWidthPx
     # Remove Weights from CLI
     del parameters['Weights'] 
     
-    param_str = f"KernelWidth_{KernelWidth}_Stride_{Stride}_LineWidthPx_{LineWidthPx}_LineCountPx_{LineCountPx}"
+    param_str = f"KernelWidth_{KernelWidth}_Stride_{Stride}_LineWidthPx_{LineWidthPx}_LineCountPx_{LineCountPx}_test_{test_name}"
     custom_work_dir = os.path.join(tbpath, "run", "stride", param_str, simulator)
     os.makedirs(custom_work_dir, exist_ok=True)
 
@@ -296,7 +296,7 @@ def test_channels(test_name, simulator, WidthIn, WeightWidth, KernelWidth, Width
     del parameters['simulator']
     del parameters['Weights'] 
     
-    param_str = f"WidthOut_{WidthOut}_InChannels_{InChannels}_OutChannels_{OutChannels}"
+    param_str = f"InChannels_{InChannels}_OutChannels_{OutChannels}_test_{test_name}"
     custom_work_dir = os.path.join(tbpath, "run", "channels", param_str, simulator)
     os.makedirs(custom_work_dir, exist_ok=True)
 
