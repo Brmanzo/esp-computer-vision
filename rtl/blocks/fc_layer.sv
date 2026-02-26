@@ -60,7 +60,7 @@ module fc_layer #(
         ,.Bias        (Biases[ch*WidthOut +: WidthOut])
       ) neuron_inst (
          .data_i      (data_q)
-        ,.activation_o(data_o[ch])
+        ,.data_o(data_o[ch])
       );
     end
   endgenerate

@@ -1,0 +1,6 @@
+{
+    "top": "neuron",
+    "files":
+    ["rtl/lib/neuron.sv"
+    ]
+}

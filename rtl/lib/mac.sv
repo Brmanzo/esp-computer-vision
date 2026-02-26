@@ -14,16 +14,16 @@ module mac #(
 
   ,output logic signed [WidthOut-1:0] data_o
 );
-  logic signed [WidthOut-1:0]    acc;
+  logic signed [WidthOut-1:0]    acc_d;
   logic signed [WeightWidth-1:0] weight;
 
   always_comb begin
-    acc = '0;
+    acc_d = '0;
     for (int i = 0; i < KernelArea; i++) begin
       weight = weights_i[i];
-      acc += (WidthOut'(weight) * $signed({1'b0, window[i]}));
+      acc_d += (WidthOut'(weight) * $signed({1'b0, window[i]}));
     end
   end
-  assign data_o = acc;
+  assign data_o = acc_d;
 
 endmodule

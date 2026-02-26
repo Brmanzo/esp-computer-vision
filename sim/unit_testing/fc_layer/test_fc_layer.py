@@ -44,8 +44,8 @@ def output_width(width_in: int, weight_width: int, in_channels: int=1) -> str:
     '''Calculates proper output width for given input width amount of accumulations.'''
     terms = in_channels
 
-    max_val    = (1 << width_in) - 1       # Unsigned``
-    max_weight = (1 << (weight_width - 1)) - 1
+    max_val    = (1 << width_in) - 1       # Unsigned
+    max_weight = (1 << (weight_width - 1))
 
     max_sum = terms * max_val * max_weight
     abs_bits = max_sum.bit_length()
