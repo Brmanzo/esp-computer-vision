@@ -23,6 +23,9 @@ module packer #(
 );
 
   /*  ------------------------------------ Flush Logic ------------------------------------ */
+  logic [CountWidth-1:0] counter_q, counter_d;
+  wire  [CountWidth-1:0] max_count = CountWidth'(PackedNum - 1);
+  
   wire  [0:0] elastic_ready;
   wire  [0:0] last       = (counter_q == max_count);
   wire  [0:0] partial    = (counter_q != '0);
@@ -42,8 +45,6 @@ module packer #(
                         (flush_partial && elastic_ready);
 
   /* ------------------------------------ Counter Logic ------------------------------------ */
-  logic [CountWidth-1:0] counter_q, counter_d;
-  wire  [CountWidth-1:0] max_count = CountWidth'(PackedNum - 1);
 
   always_ff @(posedge clk_i) begin
     if (rst_i) counter_q <= '0;

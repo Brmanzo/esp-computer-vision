@@ -61,6 +61,9 @@ module framer #(
   end
 
   /* ------------------------------------------- FSM Logic ------------------------------------------- */
+  logic [PackedWidth-1:0] data_q,  data_d;
+  logic [0:0]             valid_q, valid_d;
+  
   wire  [0:0] last_input = in_fire && counter_max;
   logic [0:0] flushing;
 
@@ -116,10 +119,8 @@ module framer #(
   end
 
   // Data output is either packed data or footer bytes
-  logic [PackedWidth-1:0] data_q,  data_d;
   assign data_o  = rst_i ? '0 : data_d;
   // Valid output unless packer is not valid in forward state
-  logic [0:0]             valid_q, valid_d;
   assign valid_o = (!rst_i) && valid_d;
   // Forward data from packer until footer state, then send tail bytes
   // Only ready to accept new input data in forward state and not complete

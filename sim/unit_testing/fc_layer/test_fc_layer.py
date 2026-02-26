@@ -68,10 +68,10 @@ def gen_weights(WW: int, OC: int, IC: int, seed: int | None = None):
         min_val = -(1 << (WW - 1))
         rand_weight_value = lambda: rng.randint(min_val, max_val)
 
-    # 1. Generate the 4D matrix
+    # Generate the 2D matrix
     weights2 = [[rand_weight_value() for _ in range(IC)] for _ in range(OC)]
 
-    # 2. Pack the 4D matrix into a single integer for the Verilog Parameter
+    # Pack the 2D matrix into a single integer for the Verilog Parameter
     packed_weights = 0
     bit_shift = 0
     mask = (1 << WW) - 1
@@ -88,8 +88,6 @@ def gen_weights(WW: int, OC: int, IC: int, seed: int | None = None):
             packed_weights |= (w_bits << bit_shift)
             bit_shift += WW
 
-    # Return as an integer (cocotb-runner handles integer parameters well)
-    # We no longer need kernels_flat unless you use it elsewhere
     return packed_weights
 
 def gen_biases(BW: int, OC: int, seed: int | None = None):
@@ -99,11 +97,11 @@ def gen_biases(BW: int, OC: int, seed: int | None = None):
     min_val = -(1 << (BW - 1))
     rand_bias_value = lambda: rng.randint(min_val, max_val)
 
-    # 1. Generate the 4D matrix
+    # Generate the 2D matrix
     biases1 = [rand_bias_value()  for _ in range(OC)]
 
-    # 2. Pack the 4D matrix into a single integer for the Verilog Parameter
-    packed_weights = 0
+    # Pack the 2D matrix into a single integer for the Verilog Parameter
+    packed_biases = 0
     bit_shift = 0
     mask = (1 << BW) - 1
 
@@ -115,12 +113,10 @@ def gen_biases(BW: int, OC: int, seed: int | None = None):
         w_bits = w_bits & mask # Ensure it fits within BW bits
         
         # Shift and combine into the main bit vector
-        packed_weights |= (w_bits << bit_shift)
+        packed_biases |= (w_bits << bit_shift)
         bit_shift += BW
 
-    # Return as an integer (cocotb-runner handles integer parameters well)
-    # We no longer need kernels_flat unless you use it elsewhere
-    return packed_weights
+    return packed_biases
 
 def unpack_weights(packed_val: int, WW: int, OC: int, IC: int):
     """Reconstructs the 4D weights matrix from the Verilog parameter integer."""
@@ -208,8 +204,8 @@ def unpack_data_i(packed, width_in, IC):
 @pytest.mark.parametrize(
     "WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights, BiasWidth, Biases",
     [
-        (1, 2, 1, output_width(1, 2, 1), 1, gen_weights(2, 1, 1, seed=1234), 2, gen_biases(2, 1)),  # Intended Size
-        (2, 3, 1, output_width(2, 3, 1), 1, gen_weights(3, 1, 1, seed=1234), 3, gen_biases(3, 1)),  # Unsigned data_i
+        (1, 2, 1, output_width(1, 2, 1), 1, gen_weights(2, 1, 1, seed=1234), 2, gen_biases(2, 1)),
+        (2, 3, 1, output_width(2, 3, 1), 1, gen_weights(3, 1, 1, seed=1234), 3, gen_biases(3, 1)),
         (4, 5, 1, output_width(4, 5, 1), 1, gen_weights(5, 1, 1, seed=1234), 5 ,gen_biases(5 ,1)),
         (8, 8 ,1 ,output_width(8 ,8 ,1) ,1 ,gen_weights(8 ,1 ,1 ,seed=1234) ,8 ,gen_biases(8 ,1)),
     ],
@@ -271,10 +267,10 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut,
 @pytest.mark.parametrize(
     "WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights, BiasWidth, Biases",
     [
-        (1, 2,  1, output_width(1, 2, 1),    1, gen_weights(2, 1, 1, seed=1234), 2, gen_biases(2, 1)),  # Intended Size
-        (2, 3,  2, output_width(2, 3, 2),    2, gen_weights(3, 1, 1, seed=1234), 3, gen_biases(3, 2)),  # Unsigned data_i
-        (4, 5,  4, output_width(4, 5, 4),    4, gen_weights(5, 1, 1, seed=1234), 5, gen_biases(5, 4)),
-        (8, 8, 32, output_width(8, 8, 32),  32, gen_weights(8, 1, 1, seed=1234), 8, gen_biases(8, 32)),
+        (1, 2,  1, output_width(1, 2, 1),    1, gen_weights(2,  1,  1, seed=1234), 2, gen_biases(2, 1)),
+        (2, 3,  2, output_width(2, 3, 2),    2, gen_weights(3,  2,  2, seed=1234), 3, gen_biases(3, 2)),
+        (4, 5,  4, output_width(4, 5, 4),    4, gen_weights(5,  4,  4, seed=1234), 5, gen_biases(5, 4)),
+        (8, 8, 32, output_width(8, 8, 32),  32, gen_weights(8, 32, 32, seed=1234), 8, gen_biases(8, 32)),
     ],
 )
 def test_channels(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights, BiasWidth, Biases):
@@ -333,7 +329,6 @@ def test_channels(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthO
 @pytest.mark.parametrize("WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, BiasWidth", 
                          [(1, 2, 1, output_width(1, 2, 1), 1, 2)])
 def test_lint(simulator, WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, BiasWidth):
-    # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters)
@@ -342,7 +337,6 @@ def test_lint(simulator, WidthIn, WeightWidth, InChannels, WidthOut, OutChannels
 @pytest.mark.parametrize("WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, BiasWidth", 
                          [(1, 2, 1, output_width(1, 2, 1), 1, 2)])
 def test_style(simulator, WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, BiasWidth):
-    # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"])
@@ -360,17 +354,16 @@ class FCLayerModel():
         self._InChannels  = int(dut.InChannels.value)
         self._OutChannels = int(dut.OutChannels.value)
 
-        # We're going to initialize _buf with NaN so that we can
-        # detect when the output should be not an X in simulation
         # Buffer for all input channels, storing the most recent data_i values for each channel
         self._buf = [0 for _ in range(self._InChannels)]
         self._deqs = 0
         self._enqs = 0
 
-        # kernel 4D array storing all kernels in each filter: [OC][IC][K][K]
+        # 2D array storing all weights in each filter: [OC][IC]
         self.w = np.array(weights, dtype=int)
         assert self.w.shape == (self._OutChannels, self._InChannels)
 
+        # 1D array storing bias for each output channel: [OC]
         self.b = np.array(biases, dtype=int)
 
         # If  scalar bias for OC=1, normalize to shape (1,)
@@ -402,7 +395,7 @@ class FCLayerModel():
             self._buf[ic] = inp
         self._enqs += 1
 
-        # compute expected NOW, while _buf matches this accepted input position
+        # compute expected this cycle, while _buf matches this accepted input position
         expected = [0 for _ in range(self._OutChannels)]
         for oc in range(self._OutChannels):
             acc = self.b[oc]
@@ -636,8 +629,6 @@ class InputModel():
         valid_i = self._dut.valid_i
         data_i  = self._dut.data_i
 
-        # Geometry + channel count
-        IC = int(self._dut.InChannels.value)
         w  = int(self._dut.WidthIn.value)
 
         valid_i.value = 0
@@ -704,7 +695,7 @@ class ModelRunner():
     async def _run_input(self):
         while True:
             await self._rv_in.handshake(None)
-            exp = self._model.consume()     # exp is None or int
+            exp = self._model.consume()
             if exp is not None:
                 self._events.put(exp)
 
@@ -842,10 +833,8 @@ async def rate_tests(dut, in_rate: float, out_rate: float, N_vec: int = 200):
 
     # --- Timeout sizing: scale by bottleneck rate ---
     slow = min(max(in_rate, 1e-3), max(out_rate, 1e-3))
-    slow = max(min(slow, 1.0), 0.02)  # avoid insane values
+    slow = max(min(slow, 1.0), 0.02)
 
-    # If your DUT has pipeline latency L, you can add it here.
-    # Otherwise just give enough time for N_out handshakes under slow rate.
     timeout_ns = int((N_out * 50 + 500) / slow)
 
     try:

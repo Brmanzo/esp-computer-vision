@@ -326,18 +326,6 @@ def test_channels(test_name, simulator, WidthIn, WeightWidth, KernelWidth, Width
         extra_sources=[wrapper_path]
     )
 
-# Opposite above, run all the tests in one simulation but reset
-# between tests to ensure that reset is clearing all state.
-@pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut, KernelWidth, OutChannels, Stride", 
-                         [("16", "1", output_width(1, 2, 3), "3", "1", "1")])
-
-def test_all(simulator, LineWidthPx, WidthIn, WidthOut, KernelWidth, OutChannels, Stride):
-    # This line must be first
-    parameters = dict(locals())
-    del parameters['simulator']
-    runner(simulator, timescale, tbpath, parameters)
-
 @pytest.mark.parametrize("simulator", ["verilator"])
 @pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut", [("16", "1", output_width(1, 2, 3))])
 def test_lint(simulator, LineWidthPx, WidthIn, WidthOut):

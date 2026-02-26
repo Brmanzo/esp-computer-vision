@@ -61,6 +61,8 @@ module deframer #(
   /* ------------------------------------------- FSM Logic ------------------------------------------- */
   wire  [0:0] last_output = (state_q == Forward) && out_fire && unpack_done && counter_max;
   logic [0:0] last_output_q;
+  logic [UnpackedWidth-1:0] unpacked_q, unpacked_d;
+  logic [0:0] valid_q, valid_d;
   // Current state logic
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
@@ -104,10 +106,6 @@ module deframer #(
       default: state_d = Header0;
     endcase
   end
-
-  // Data Logic
-  logic [UnpackedWidth-1:0] unpacked_q, unpacked_d;
-  logic [0:0] valid_q, valid_d;
 
   // Output data after header bytes have been received
   always_comb begin

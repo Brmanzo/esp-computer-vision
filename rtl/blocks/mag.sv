@@ -21,6 +21,8 @@ module mag #(
   wire [0:0] elastic_ready;
   assign ready_o = elastic_ready;
 
+  logic [WidthIn-1:0] gx, gy;
+
   elastic
   #(.Width((WidthIn)*2)
    ,.DatapathGate(1'b1)
@@ -37,7 +39,6 @@ module mag #(
    ,.ready_i(ready_i)
   );
 
-  logic [WidthIn-1:0]  gx,    gy;
   logic [WidthOut-1:0] mag_d, mag_q; // One extra bit to avoid overflow on shift and add
   assign mag_o = mag_d;
 

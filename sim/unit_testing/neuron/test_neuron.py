@@ -62,10 +62,10 @@ def gen_weights(WW: int, IC: int, seed: int | None = None):
         min_val = -(1 << (WW - 1))
         rand_weight_value = lambda: rng.randint(min_val, max_val)
 
-    # 1. Generate the 4D matrix
+    # Generate the 4D matrix
     weights1 = [rand_weight_value() for _ in range(IC)]
 
-    # 2. Pack the 4D matrix into a single integer for the Verilog Parameter
+    # Pack the 2D weights into a single integer for the Verilog Parameter
     packed_weights = 0
     bit_shift = 0
     mask = (1 << WW) - 1
@@ -75,14 +75,12 @@ def gen_weights(WW: int, IC: int, seed: int | None = None):
         w = weights1[ic]
 
         w_bits = w if w >= 0 else (1 << WW) + w
-        w_bits = w_bits & mask # Ensure it fits within WW bits
+        w_bits = w_bits & mask
         
         # Shift and combine into the main bit vector
         packed_weights |= (w_bits << bit_shift)
         bit_shift += WW
 
-    # Return as an integer (cocotb-runner handles integer parameters well)
-    # We no longer need kernels_flat unless you use it elsewhere
     return packed_weights
 
 def gen_bias(BW: int, seed: int | None = None):
@@ -92,12 +90,7 @@ def gen_bias(BW: int, seed: int | None = None):
     min_val = -(1 << (BW - 1))
     rand_bias_value = lambda: rng.randint(min_val, max_val)
 
-    # 1. Generate the 4D matrix
-    bias = rand_bias_value()
-
-    # Return as an integer (cocotb-runner handles integer parameters well)
-    # We no longer need kernels_flat unless you use it elsewhere
-    return bias
+    return rand_bias_value()
 
 def unpack_weights(packed_val: int, WW: int, IC: int):
     """Reconstructs the 4D weights matrix from the Verilog parameter integer."""
@@ -162,8 +155,8 @@ def unpack_data_i(packed, width_in, IC):
 @pytest.mark.parametrize(
     "WidthIn, WeightWidth, InChannels, WidthOut, Weights, BiasWidth, Bias",
     [
-        (1, 2, 1, output_width(1, 2, 1), gen_weights(2, 1, seed=1234), 2, gen_bias(2)),  # Intended Size
-        (2, 3, 1, output_width(2, 3, 1), gen_weights(3, 1, seed=1234), 3, gen_bias(3)),  # Unsigned data_i
+        (1, 2, 1, output_width(1, 2, 1), gen_weights(2, 1, seed=1234), 2, gen_bias(2)),
+        (2, 3, 1, output_width(2, 3, 1), gen_weights(3, 1, seed=1234), 3, gen_bias(3)),
         (4, 5, 1, output_width(4, 5, 1), gen_weights(5, 1, seed=1234), 5, gen_bias(5)),
         (8, 8, 1, output_width(8, 8, 1), gen_weights(8, 1, seed=1234), 8, gen_bias(8)),
     ],
@@ -227,8 +220,8 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut,
 @pytest.mark.parametrize(
     "WidthIn, WeightWidth, InChannels, WidthOut, Weights, BiasWidth, Bias",
     [
-        (1, 2, 1,  output_width(1, 2, 1),  gen_weights(2, 1, seed=1234),  8, gen_bias(8)),  # Intended Size
-        (1, 2, 2,  output_width(1, 2, 2),  gen_weights(2, 2, seed=1234),  8, gen_bias(8)),  # Unsigned data_i
+        (1, 2, 1,  output_width(1, 2, 1),  gen_weights(2, 1, seed=1234),  8, gen_bias(8)),
+        (1, 2, 2,  output_width(1, 2, 2),  gen_weights(2, 2, seed=1234),  8, gen_bias(8)),
         (1, 2, 4,  output_width(1, 2, 4),  gen_weights(2, 4, seed=1234),  8, gen_bias(8)),
         (1, 2, 32, output_width(1, 2, 32), gen_weights(2, 32, seed=1234), 8, gen_bias(8)),
     ],

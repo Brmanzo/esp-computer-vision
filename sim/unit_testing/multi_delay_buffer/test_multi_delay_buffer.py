@@ -527,7 +527,7 @@ class ModelRunner():
 
                     # unpack DUT RAM taps
                     for d in range(self._model._Delay):
-                        rowvec = safe_int_from_value(self._model._dut.ram_inst.mem[d].value, x_as=0)
+                        rowvec = safe_int_from_value(self._model._dut.embedded_block_ram_inst.mem[d].value, x_as=0)
                         word_idx = r + ch * self._model._BufferRows
                         dut_word = (rowvec >> (word_idx * bw)) & mask
                         ram_unpack[d] = dut_word
