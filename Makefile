@@ -5,25 +5,20 @@ PCF_PATH = $(REPO_ROOT)/boards/icebreakerV1_1a/icebreaker.pcf
 -include $(REPO_ROOT)/sim/frag/synth.mk
 -include $(REPO_ROOT)/sim/frag/fpga.mk
 
-UNIT_TEST_DIRS := $(wildcard $(REPO_ROOT)/sim/unit_testing/*/Makefile)
+UNIT_TEST_DIRS := $(sort $(dir $(wildcard $(REPO_ROOT)/sim/unit_testing/*/Makefile)))
 
 .PHONY: clean-all
-
 clean-all: clean
-	@for d in $(UNIT_TEST_DIRS); do \
-	  if [ -f $$d/Makefile ]; then \
-	    echo "Cleaning $${d#$(REPO_ROOT)/}"; \
-	    $(MAKE) -C $$d clean; \
-	  fi; \
+	@set -e; \
+	for d in $(UNIT_TEST_DIRS); do \
+	  echo "Cleaning $${d#$(REPO_ROOT)/}"; \
+	  $(MAKE) -C "$$d" clean; \
 	done
 
 .PHONY: test-all
-
 test-all:
 	@set -e; \
 	for d in $(UNIT_TEST_DIRS); do \
-	  if [ -f $$d/Makefile ]; then \
-	    echo "Testing $${d#$(REPO_ROOT)/}"; \
-	    $(MAKE) -C $$d test; \
-	  fi; \
+	  echo "Testing $${d#$(REPO_ROOT)/}"; \
+	  $(MAKE) -C "$$d" test; \
 	done

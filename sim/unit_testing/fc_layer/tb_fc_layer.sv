@@ -7,6 +7,7 @@ module tb_fc_layer #(
    parameter int unsigned WidthIn      = 1
   ,parameter int unsigned WidthOut     = 32
   ,parameter int unsigned WeightWidth  = 2
+  ,parameter int unsigned BiasWidth    = 8
   ,parameter int unsigned InChannels   = 1
   ,parameter int unsigned OutChannels  = 1
 )  (
@@ -30,6 +31,7 @@ fc_layer #(
      .WidthIn     (WidthIn)
     ,.WidthOut    (WidthOut)
     ,.WeightWidth (WeightWidth)
+    ,.BiasWidth   (BiasWidth)
     ,.InChannels  (InChannels)
     ,.OutChannels (OutChannels)
     ,.Weights     (INJECTED_WEIGHTS)

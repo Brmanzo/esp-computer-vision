@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 import git
 import queue
@@ -7,6 +8,7 @@ import numpy as np
 from typing import List, Optional
 from functools import reduce
 import torch
+from torch import nn
 import torch.nn.functional as F
 
 _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
@@ -147,6 +149,30 @@ def unpack_weights(packed_val: int, WW: int, OC: int, IC: int):
         
     return weights2
 
+def unpack_biases(packed_val: int, BW: int, OC: int):
+    """Reconstructs the 4D weights matrix from the Verilog parameter integer."""
+    mask = (1 << BW) - 1
+    sign_bit = 1 << (BW - 1)
+    
+    biases1 = []
+    bit_shift = 0
+    
+    # Must mirror the exact same LSB -> MSB iteration order used in packing
+    for _ in range(OC):
+        # Extract the specific bits for this weight
+        w_bits = (packed_val >> bit_shift) & mask
+        
+        # Convert from two's complement back to a signed Python integer
+        if w_bits & sign_bit:
+            w = w_bits - (1 << BW)
+        else:
+            w = w_bits
+            
+        biases1.append(w)
+        bit_shift += BW
+        
+    return biases1
+
 def pack_data_i(samples, width):
     """
     samples: list[int] length = InChannels
@@ -159,22 +185,19 @@ def pack_data_i(samples, width):
         out |= (int(v) & mask) << (ic * width)
     return out
 
-def to_torch_input(input_activation):
-    # input_activation: [IC][H][W]
-    x = torch.tensor(input_activation, dtype=torch.int32)   # (IC,H,W)
-    x = x.unsqueeze(0).to(torch.int32)                      # (1,IC,H,W)
-    return x
+def fc_reference(weights_2d, biases_1d, InChannels, OutChannels):
+    # One output channel instantiates a single neuron
+    fc = nn.Linear(in_features=InChannels, out_features=OutChannels, bias=True)
 
-def to_torch_weights(kernels4):
-    # kernels4: [OC][IC][K][K]
-    w = torch.tensor(kernels4, dtype=torch.int32)           # (OC,IC,K,K)
-    return w
+    # Disable gradient tracking
+    fc.weight.requires_grad = False
+    fc.bias.requires_grad = False
 
-def torch_conv_ref(input_activation, kernels4, stride):
-    x = to_torch_input(input_activation).to(torch.float32)
-    w = to_torch_weights(kernels4).to(torch.float32)
-    y = F.conv2d(x, w, stride=stride, padding=0)            # (1,OC,H_out,W_out)
-    return y.squeeze(0)
+    # Convert to float32 for deterministic conv math
+    fc.weight.data = torch.tensor(weights_2d, dtype=torch.float32)
+    fc.bias.data   = torch.tensor(biases_1d, dtype=torch.float32)
+
+    return fc
 
 def unpack_data_i(packed, width_in, IC):
     mask = (1 << width_in) - 1
@@ -183,32 +206,27 @@ def unpack_data_i(packed, width_in, IC):
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize(
-    "WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights",
+    "WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights, BiasWidth, Biases",
     [
-        (1, 2, 1, output_width(1, 2, 1), 1, gen_weights(2, 1, 1, seed=1234)),  # Intended Size
-        (2, 3, 1, output_width(2, 3, 1), 1, gen_weights(3, 1, 1, seed=1234)),  # Unsigned data_i
-        (4, 5, 1, output_width(4, 5, 1), 1, gen_weights(5, 1, 1, seed=1234)),
-        (8, 8, 1, output_width(8, 8, 1), 1, gen_weights(8, 1, 1, seed=1234)),
+        (1, 2, 1, output_width(1, 2, 1), 1, gen_weights(2, 1, 1, seed=1234), 2, gen_biases(2, 1)),  # Intended Size
+        (2, 3, 1, output_width(2, 3, 1), 1, gen_weights(3, 1, 1, seed=1234), 3, gen_biases(3, 1)),  # Unsigned data_i
+        (4, 5, 1, output_width(4, 5, 1), 1, gen_weights(5, 1, 1, seed=1234), 5 ,gen_biases(5 ,1)),
+        (8, 8 ,1 ,output_width(8 ,8 ,1) ,1 ,gen_weights(8 ,1 ,1 ,seed=1234) ,8 ,gen_biases(8 ,1)),
     ],
 )
-def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights):
+def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights, BiasWidth, Biases):
     parameters = dict(locals())
     del parameters["test_name"]
     del parameters["simulator"]
 
     # Remove injected params so cocotb-runner doesn't pass them on CLI
     del parameters["Weights"]
+    del parameters["Biases"]
 
-    # ---- Generate Biases here (BW = WidthOut by your convention) ----
-    BW = int(WidthOut)  # WidthOut is a string in your setup
-    Biases = gen_biases(BW, int(OutChannels), seed=1234)
-
-    # Optional: also remove Biases if you add it to parameters later
-    # (we're not adding it to `parameters`, we inject via env var)
-    # ---------------------------------------------------------------
-
-    param_str = f"WidthIn_{WidthIn}_WeightWidth_{WeightWidth}_WidthOut_{WidthOut}"
+    param_str = f"WidthIn_{WidthIn}_WeightWidth_{WeightWidth}_WidthOut_{WidthOut}_BiasWidth_{BiasWidth}_test_{test_name}"
     custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
+    if simulator.startswith("icarus") and os.path.exists(custom_work_dir):
+        shutil.rmtree(custom_work_dir)
     os.makedirs(custom_work_dir, exist_ok=True)
 
     # ---- Emit injected_weights.vh ----
@@ -221,8 +239,7 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut,
             f"{total_bits_w}'h{Weights:0{hex_width}x};\n"
         )
 
-    # (Optional but recommended) Emit injected_biases.vh too, if your tb_fc_layer.sv includes it
-    total_bits_b = int(OutChannels) * BW
+    total_bits_b = int(OutChannels) * int(BiasWidth)
     vhb_path = os.path.join(custom_work_dir, "injected_biases.vh")
     with open(vhb_path, "w") as f:
         hex_width = (total_bits_b + 3) // 4
@@ -249,37 +266,89 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut,
         extra_sources=[wrapper_path],
     )
 
-# Opposite above, run all the tests in one simulation but reset
-# between tests to ensure that reset is clearing all state.
+@pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights", 
-                         [(1, 2, 1, output_width(1, 2, 1), 1, gen_weights(2, 1, 1, seed=1234))])
-
-def test_all(simulator, WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights):
-    # This line must be first
+@pytest.mark.parametrize(
+    "WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights, BiasWidth, Biases",
+    [
+        (1, 2,  1, output_width(1, 2, 1),    1, gen_weights(2, 1, 1, seed=1234), 2, gen_biases(2, 1)),  # Intended Size
+        (2, 3,  2, output_width(2, 3, 2),    2, gen_weights(3, 1, 1, seed=1234), 3, gen_biases(3, 2)),  # Unsigned data_i
+        (4, 5,  4, output_width(4, 5, 4),    4, gen_weights(5, 1, 1, seed=1234), 5, gen_biases(5, 4)),
+        (8, 8, 32, output_width(8, 8, 32),  32, gen_weights(8, 1, 1, seed=1234), 8, gen_biases(8, 32)),
+    ],
+)
+def test_channels(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights, BiasWidth, Biases):
     parameters = dict(locals())
-    del parameters['simulator']
-    runner(simulator, timescale, tbpath, parameters)
+    del parameters["test_name"]
+    del parameters["simulator"]
+
+    # Remove injected params so cocotb-runner doesn't pass them on CLI
+    del parameters["Weights"]
+    del parameters["Biases"]
+
+    param_str = f"InChannels_{InChannels}_OutChannels_{OutChannels}_test_{test_name}"
+    custom_work_dir = os.path.join(tbpath, "run", "channels", param_str, simulator)
+    if simulator.startswith("icarus") and os.path.exists(custom_work_dir):
+        shutil.rmtree(custom_work_dir)
+    os.makedirs(custom_work_dir, exist_ok=True)
+
+    # ---- Emit injected_weights.vh ----
+    total_bits_w = int(OutChannels) * int(InChannels) * int(WeightWidth)
+    vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
+    with open(vh_path, "w") as f:
+        hex_width = (total_bits_w + 3) // 4
+        f.write(
+            f"localparam logic signed [{total_bits_w-1}:0] INJECTED_WEIGHTS = "
+            f"{total_bits_w}'h{Weights:0{hex_width}x};\n"
+        )
+
+    total_bits_b = int(OutChannels) * int(BiasWidth)
+    vhb_path = os.path.join(custom_work_dir, "injected_biases.vh")
+    with open(vhb_path, "w") as f:
+        hex_width = (total_bits_b + 3) // 4
+        f.write(
+            f"localparam logic signed [{total_bits_b-1}:0] INJECTED_BIASES = "
+            f"{total_bits_b}'h{Biases:0{hex_width}x};\n"
+        )
+
+    # ---- Pass big ints via env vars for cocotb ----
+    os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
+    os.environ["INJECTED_BIASES_INT"]  = str(Biases)
+
+    wrapper_path = os.path.join(tbpath, "tb_fc_layer.sv")
+
+    runner(
+        simulator=simulator,
+        timescale=timescale,
+        tbpath=tbpath,
+        params=parameters,
+        testname=test_name,
+        work_dir=custom_work_dir,
+        includes=[custom_work_dir],        # so injected_*.vh can be `included
+        toplevel_override="tb_fc_layer",
+        extra_sources=[wrapper_path],
+    )
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights", 
-                         [(1, 2, 1, output_width(1, 2, 1), 1, gen_weights(2, 1, 1, seed=1234))])
-def test_lint(simulator, WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights):
+@pytest.mark.parametrize("WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, BiasWidth", 
+                         [(1, 2, 1, output_width(1, 2, 1), 1, 2)])
+def test_lint(simulator, WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, BiasWidth):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights", [(1, 2, 1, output_width(1, 2, 1), 1, gen_weights(2, 1, 1, seed=1234))])
-def test_style(simulator, WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights):
+@pytest.mark.parametrize("WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, BiasWidth", 
+                         [(1, 2, 1, output_width(1, 2, 1), 1, 2)])
+def test_style(simulator, WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, BiasWidth):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"])
 
 class FCLayerModel():
-    def __init__(self, dut, weights: List[List[int]], biases: List[int], output_activation: Optional[List[List[int]]] = None):
+    def __init__(self, dut, weights: List[List[int]], biases: List[int], torch_ref=None):
         self._dut = dut
         self._data_o = dut.data_o
         self._data_i = dut.data_i
@@ -290,8 +359,6 @@ class FCLayerModel():
         self._WidthOut    = int(dut.WidthOut.value)
         self._InChannels  = int(dut.InChannels.value)
         self._OutChannels = int(dut.OutChannels.value)
-
-        self._output_activation = output_activation 
 
         # We're going to initialize _buf with NaN so that we can
         # detect when the output should be not an X in simulation
@@ -315,7 +382,9 @@ class FCLayerModel():
             f"biases={biases!r}"
         )
 
-        self._in_idx = 0
+        self._torch_ref = torch_ref
+        self._W = torch.tensor(weights, dtype=torch.int64)   # [OC, IC]
+        self._b = torch.tensor(biases, dtype=torch.int64)    # [OC]
 
     def consume(self):
         """Called on each INPUT handshake.
@@ -331,7 +400,6 @@ class FCLayerModel():
         # load data_i into buffer for all channels
         for ic, inp in enumerate(packed_data_i):
             self._buf[ic] = inp
-            
         self._enqs += 1
 
         # compute expected NOW, while _buf matches this accepted input position
@@ -342,6 +410,14 @@ class FCLayerModel():
                 acc += self.w[oc][ic] * self._buf[ic]
             expected[oc] = acc
 
+        data_i_ref = torch.tensor(packed_data_i, dtype=torch.int64)
+        data_o_ref = (self._W @ data_i_ref) + self._b
+        mask = (1 << self._WidthOut) - 1
+
+        exp_wrapped = [sign_extend(int(v) & mask, self._WidthOut) for v in expected]
+        ref_wrapped = [sign_extend(int(data_o_ref[oc].item()) & mask, self._WidthOut) for oc in range(self._OutChannels)]
+        # Check that Pytorch is equal to our reference python model
+        assert exp_wrapped == ref_wrapped, f"Expected {exp_wrapped}, got {ref_wrapped}"
         return expected
 
     def produce(self, expected):
@@ -356,9 +432,6 @@ class FCLayerModel():
             exp = int(expected[ch])
 
             print(f"Output #{self._deqs} ch{ch}: expected {exp}, got {got} (raw=0x{raw:x})")
-
-            if self._output_activation is not None:
-                self._output_activation[ch][self._deqs] = got
 
             assert got == exp, (
                 f"Mismatch at output #{self._deqs} ch{ch}: expected {exp}, got {got} (raw=0x{raw:x})"
@@ -517,7 +590,7 @@ class OutputModel():
         return self._nout
 
 class InputModel():
-    def __init__(self, dut, data, rate, l, input_activation=None):
+    def __init__(self, dut, data, rate, l):
         self._clk_i = dut.clk_i
         self._rst_i = dut.rst_i
         self._dut = dut
@@ -528,7 +601,6 @@ class InputModel():
         self._rate = rate
         self._data = data
         self._length = l
-        self._input_activation = input_activation
 
         self._coro = None
 
@@ -596,14 +668,6 @@ class InputModel():
                 success = bool(valid_i.value) and bool(ready_o.value)
 
                 if success:
-                    # Record ONLY on accepted input
-                    if self._input_activation is not None:
-                        # Optional safety checks
-                        assert len(din) == IC, f"din has {len(din)} chans, expected {IC}"
-
-                        for ic in range(IC):
-                            self._input_activation[ic][self._nin] = int(din[ic])
-
                     # Next sample
                     din = self._data.generate()
                     self._nin += 1
@@ -679,8 +743,7 @@ async def single_test(dut):
     IC = int(dut.InChannels.value)
     OC = int(dut.OutChannels.value)
     WW = int(dut.WeightWidth.value)
-    WI = int(dut.WidthIn.value)
-    WO = int(dut.WidthOut.value)
+    BW = int(dut.BiasWidth.value)
 
     # One accepted input -> one produced output (FC vector-per-handshake assumption)
     N_in  = 1
@@ -688,29 +751,14 @@ async def single_test(dut):
     rate  = 1.0
 
     # ---- Unpack injected weights (and biases) ----
-    packed_weights = int(os.environ["INJECTED_WEIGHTS_INT"])
-    weights_2d = unpack_weights(packed_weights, WW, OC, IC)
+    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_INT"]), WW, OC, IC)
+    biases_1d = unpack_biases(int(os.environ["INJECTED_BIASES_INT"]), BW, OC)
+    
+    # Instantiate PyTorch reference model
+    fc = fc_reference(weights_2d, biases_1d, IC, OC)
+    fc.eval()
 
-    # Biases are passed as a normal cocotb-runner parameter (Biases) unless you inject them too.
-    # In that case, set INJECTED_BIASES_INT similarly and unpack here.
-    if "INJECTED_BIASES_INT" in os.environ:
-        packed_biases = int(os.environ["INJECTED_BIASES_INT"])
-    else:
-        # If your RTL has Biases as a parameter, it will be visible on dut as a parameter value
-        # only in some simulators. Prefer env var injection; fall back to 0 bias.
-        packed_biases = 0
-
-    # Unpack biases (OC elements, BW = WO by convention)
-    BW = WO
-    biases = []
-    mask = (1 << BW) - 1
-    sign_bit = 1 << (BW - 1)
-    for oc in range(OC):
-        b_bits = (packed_biases >> (oc * BW)) & mask
-        b = b_bits - (1 << BW) if (b_bits & sign_bit) else b_bits
-        biases.append(int(b))
-
-    model = FCLayerModel(dut, weights_2d, biases)
+    model = FCLayerModel(dut, weights_2d, biases_1d)
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, RateGenerator(dut, 1.0), N_out)
@@ -738,7 +786,7 @@ async def single_test(dut):
         await om.wait(tmo_ns)
     except SimTimeoutError:
         timed_out = True
-
+    
     assert not timed_out, (
         f"Timed out waiting for the single FC output handshake. "
         f"Produced={om.nproduced()} Expected={N_out}"
@@ -758,42 +806,26 @@ async def rate_tests(dut, in_rate: float, out_rate: float, N_vec: int = 200):
     IC = int(dut.InChannels.value)
     OC = int(dut.OutChannels.value)
     WW = int(dut.WeightWidth.value)
-    WO = int(dut.WidthOut.value)
+    BW = int(dut.BiasWidth.value)
 
     N_in  = int(N_vec)
     N_out = int(N_vec)
 
-    # --- Optional: record activations (channel-major, vector index second) ---
-    # input_activation[ic][n], output_activation[oc][n]
-    input_activation  = [[0 for _ in range(N_in)] for _ in range(IC)]
-    output_activation = [[0 for _ in range(N_out)] for _ in range(OC)]
-
     # --- Unpack injected weights ---
-    packed_weights = int(os.environ["INJECTED_WEIGHTS_INT"])
-    weights_2d = unpack_weights(packed_weights, WW, OC, IC)
+    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_INT"]), WW, OC, IC)
+    biases_1d  = unpack_biases(int(os.environ["INJECTED_BIASES_INT"]), BW, OC)
 
-    # --- Unpack biases (preferred: inject via env var, else default 0) ---
-    if "INJECTED_BIASES_INT" in os.environ:
-        packed_biases = int(os.environ["INJECTED_BIASES_INT"])
-    else:
-        packed_biases = 0
-
-    BW = WO  # typical: bias width equals accumulator/output width
-    mask = (1 << BW) - 1
-    sign_bit = 1 << (BW - 1)
-    biases = []
-    for oc in range(OC):
-        b_bits = (packed_biases >> (oc * BW)) & mask
-        b = b_bits - (1 << BW) if (b_bits & sign_bit) else b_bits
-        biases.append(int(b))
+    # Instantiate PyTorch reference model
+    fc = fc_reference(weights_2d, biases_1d, IC, OC)
+    fc.eval()
 
     # --- Model + runner ---
-    model = FCLayerModel(dut, weights_2d, biases, output_activation=output_activation)
+    model = FCLayerModel(dut, weights_2d, biases_1d, fc)
     m = ModelRunner(dut, model)
 
     # --- Producer/consumer with fuzzed rates ---
     om = OutputModel(dut, RateGenerator(dut, out_rate), N_out)
-    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, in_rate), N_in, input_activation)
+    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, in_rate), N_in)
 
     # --- Reset/bringup ---
     dut.ready_i.value = 0
@@ -818,15 +850,13 @@ async def rate_tests(dut, in_rate: float, out_rate: float, N_vec: int = 200):
 
     try:
         await om.wait(timeout_ns)
+
     except SimTimeoutError:
         assert 0, (
             f"Timed out in FC rate test. "
             f"Expected {N_out} output handshakes, got {om.nproduced()} "
             f"in {timeout_ns} ns (in_rate={in_rate}, out_rate={out_rate})."
         )
-
-    # Optional: you can now compare against a torch reference if you want.
-    # (But your ModelRunner already checked cycle-by-cycle correctness.)
 
 @cocotb.test
 async def out_fuzz_test(dut):

@@ -206,7 +206,7 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut,
 
     # ---- Pass big ints via env vars for cocotb ----
     os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
-    os.environ["INJECTED_BIAS_INT"]  = str(Bias)
+    os.environ["INJECTED_BIAS_INT"]    = str(Bias)
 
     wrapper_path = os.path.join(tbpath, "tb_neuron.sv")
 
