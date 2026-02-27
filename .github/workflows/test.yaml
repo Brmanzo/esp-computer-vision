@@ -2,24 +2,16 @@
   on: [push, workflow_dispatch]
   jobs:
     test:
-      runs-on: ubuntu-24.04.3
+      runs-on: ubuntu-24.04
       steps:
         - name: Checkout repo
           uses: actions/checkout@v4
           with:
             submodules: recursive
 
-        - name: Install Icarus 12.0 from source
-          run: |
-            sudo apt-get update
-            sudo apt-get install -y autoconf gperf flex bison
-            git clone https://github.com/steveicarus/iverilog.git
-            cd iverilog
-            git checkout v12_0
-            autoconf
-            ./configure
-            make -j$(nproc)
-            sudo make install
+        - name: Install Icarus
+          shell: bash
+          run: sudo apt-get update && sudo apt-get install -y iverilog
 
         - name: Install Verilator
           run: |
