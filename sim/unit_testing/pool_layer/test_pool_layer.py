@@ -3,10 +3,8 @@ import os
 import sys
 import git
 import queue
-import math
 import numpy as np
 from typing import List, Optional
-from functools import reduce
 import torch
 import torch.nn.functional as F
 

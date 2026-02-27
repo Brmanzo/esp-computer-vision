@@ -3,13 +3,11 @@ import shutil
 import sys
 import git
 import queue
-import math
 import numpy as np
-from typing import List, Optional
-from functools import reduce
+from typing import List
 import torch
 from torch import nn
-import torch.nn.functional as F
+
 
 _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
 assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"

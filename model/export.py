@@ -36,14 +36,14 @@ def fold_batchnorm_into_conv(conv_layer, bn_layer):
 
     return folded_weights, folded_bias
 
-def export_model_to_csv(model_path, output_csv="hardware_weights.csv"):
+def export_model_to_csv(model_path, num_classes, output_csv="hardware_weights.csv"):
     device = "cpu" # Hardware export should happen on CPU
     
     # Load your trained model structure (match the wider architecture!)
-    model = cnn_model(in_ch=1, num_classes=5).to(device) # Make sure num_classes matches Kaggle!
+    model = cnn_model(in_ch=1, num_classes=num_classes).to(device) # Make sure num_classes matches Kaggle!
     
-    # Load the trained parameters
-    # model.load_state_dict(torch.load(model_path, map_location=device))
+    state = torch.load(model_path, map_location=device)
+    model.load_state_dict(state, strict=True)
     model.eval()
 
     all_hardware_data = []

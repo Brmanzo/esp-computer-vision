@@ -4,10 +4,7 @@ import git
 import os
 import sys
 import git
-import math
-import numpy as np
 import queue
-from functools import reduce
 from itertools import product
 
 # I don't like this, but it's convenient.

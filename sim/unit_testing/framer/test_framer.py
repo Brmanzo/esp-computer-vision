@@ -1,14 +1,9 @@
 # test_framer.py
-from unittest import case
 import git
 import os
 import sys
 import git
-import math
-import numpy as np
 import queue
-from functools import reduce
-from itertools import product
 
 _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
 assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
@@ -21,16 +16,12 @@ import pytest
 
 import cocotb
 
-from cocotb.clock import Clock
-from cocotb.regression import TestFactory
 from cocotb.utils import get_sim_time
-from cocotb.triggers import Timer, ClockCycles, RisingEdge, FallingEdge, with_timeout
+from cocotb.triggers import Timer, RisingEdge, FallingEdge, with_timeout
 from decimal import Decimal
-from cocotb.types import LogicArray, Range
 
 from cocotb_test.simulator import run
 
-from cocotbext.axi import AxiLiteBus, AxiLiteMaster, AxiStreamSink, AxiStreamMonitor, AxiStreamBus
    
 import random
 random.seed(42)

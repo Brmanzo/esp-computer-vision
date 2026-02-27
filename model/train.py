@@ -102,16 +102,17 @@ test_loader  = DataLoader(test_ds, batch_size=32, shuffle=False,
 device = "cuda" if torch.cuda.is_available() else "cpu"
 torch.backends.cudnn.benchmark = True
 
+num_classes = len(dataset.classes)
 # Import CNN Model and set the optimizer, loss function, and scheduler for training
-model = cnn_model(in_ch=1, num_classes=len(dataset.classes)).to(device)
+model = cnn_model(in_ch=1, num_classes=num_classes).to(device)
 
 # Establish schedule for progressive quantization of each layer
 
 # t_i, t_b8, t_b7, t_b6, t_b5, t_b4, t_b3, t_b2
-schedule = [LayerConfig(20, [15, 15, 15, 15, 15, 20, 30], 8, 2),
-            LayerConfig(35, [15, 15, 15, 15, 15, 20, 30], 8, 2),
-            LayerConfig(50, [15, 15, 15, 20, 25, 30, 35], 8, 2),
-            LayerConfig(65, [15, 15, 15, 20, 25, 30, 40], 8, 2)]
+schedule = [LayerConfig(20, [10, 10, 10, 10, 10, 20, 30], 8, 2),
+            LayerConfig(30, [10, 10, 10, 10, 10, 20, 30], 8, 2),
+            LayerConfig(40, [10, 10, 10, 10, 10, 30], 8, 3),
+            LayerConfig(50, [10, 10, 10, 10, 10, 30], 8, 3)]
 
 model_layers = model.features.modules()
 assert len(schedule) == sum(1 for m in model_layers if isinstance(m, QuantConv2d)), "Schedule must have an entry for each QuantConv2d layer"
@@ -245,7 +246,7 @@ torch.save(model.state_dict(), model_save_path)
 print(f"Raw PyTorch model saved to: {model_save_path}")
 
 # 2. Extract the folded hardware parameters to CSV
-export_model_to_csv(model_save_path, output_csv="hardware_weights.csv")
+export_model_to_csv(model_save_path, num_classes, output_csv="hardware_weights.csv")
 
 # 3. Show the graph (Script will pause here until you close the window)
 plt.show()

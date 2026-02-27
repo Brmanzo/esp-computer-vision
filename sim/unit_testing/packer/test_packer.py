@@ -1,13 +1,9 @@
 # test_packer.py
-from unittest import case
 import git
 import os
 import sys
 import git
-import math
-import numpy as np
 import queue
-from functools import reduce
 from itertools import product
 
 _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
@@ -21,16 +17,8 @@ import pytest
 
 import cocotb
 
-from cocotb.clock import Clock
-from cocotb.regression import TestFactory
-from cocotb.utils import get_sim_time
-from cocotb.triggers import Timer, ClockCycles, RisingEdge, FallingEdge, with_timeout
+from cocotb.triggers import Timer, RisingEdge, FallingEdge, with_timeout
 from decimal import Decimal
-from cocotb.types import LogicArray, Range
-
-from cocotb_test.simulator import run
-
-from cocotbext.axi import AxiLiteBus, AxiLiteMaster, AxiStreamSink, AxiStreamMonitor, AxiStreamBus
    
 import random
 random.seed(42)
@@ -451,7 +439,7 @@ class ModelRunner():
             await self._rv_out.handshake(None)
 
             assert self._completed_packs > 0, (
-                    f"Output fired with n_inputs={n} (<{self._num_packed_p}) "
+                    f"Output fired with n_inputs={self._completed_packs} (<{self._num_packed_p}) "
                     f"but flush was not asserted (flush={int(self._flush_i.value)})."
                 )
             self._completed_packs -= 1

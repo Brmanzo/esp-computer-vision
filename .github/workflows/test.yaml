@@ -1,0 +1,41 @@
+  name: test
+  on: [push, workflow_dispatch]
+  jobs:
+    test:
+      runs-on: ubuntu-24.04.3
+      steps:
+        - name: Checkout repo
+          uses: actions/checkout@v4
+          with:
+            submodules: recursive
+
+        - name: Install Icarus 12.0 from source
+          run: |
+            sudo apt-get update
+            sudo apt-get install -y autoconf gperf flex bison
+            git clone https://github.com/steveicarus/iverilog.git
+            cd iverilog
+            git checkout v12_0
+            autoconf
+            ./configure
+            make -j$(nproc)
+            sudo make install
+
+        - name: Install Verilator
+          run: |
+            sudo apt-get install -y verilator
+
+        # Set Python up and install cocotb
+        - name: Setup python
+          uses: actions/setup-python@v5
+          with:
+            python-version: '3.12.3'
+
+        - name: Install Python packages
+          shell: bash
+          run: pip install -r requirements.txt
+
+        - name: Run tests
+          run: |
+            make clean-all
+            make test-all

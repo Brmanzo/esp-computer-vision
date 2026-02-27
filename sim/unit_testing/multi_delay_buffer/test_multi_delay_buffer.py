@@ -3,10 +3,6 @@ import os
 import sys
 import git
 import queue
-import math
-import numpy as np
-from typing import List, Optional
-from functools import reduce
 from collections import deque
 
 _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
