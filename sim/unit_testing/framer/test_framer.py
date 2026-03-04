@@ -18,6 +18,7 @@ import cocotb
 
 from cocotb.utils import get_sim_time
 from cocotb.triggers import Timer, RisingEdge, FallingEdge, with_timeout
+from cocotb.result import SimTimeoutError
 from decimal import Decimal
 
 from cocotb_test.simulator import run
@@ -28,7 +29,12 @@ random.seed(42)
 
 timescale = "1ps/1ps"
 
-tests = ['reset_test', 'init_test', 'single_test', 'full_bw_test', 'fuzz_random_test']
+tests = ['reset_test'
+        ,'single_test'
+        ,'inout_fuzz_test'
+        ,'in_fuzz_test'
+        ,'out_fuzz_test'
+        ,'full_bw_test']
 
 def fxp_to_float(signal, frac):
     """Convert an unsigned fixed-point cocotb signal to a float."""
@@ -373,6 +379,7 @@ class InputModel():
             if(fire_in):
                 self._nin += 1
                 data = get_data()
+                print(f"Input Model produced data: 0x{int(unpacked_i.value):02X} (total produced: {self._nin})")
 
             await FallingEdge(clk_i)
             
@@ -517,85 +524,61 @@ async def single_test(dut):
     dut.valid_i.value = 0
     dut.ready_i.value = 0
 
+async def rate_tests(dut, in_rate, out_rate):
+    eg = RandomDataGenerator(dut)
+    P = int(dut.PacketLenElems)
+    K = int(dut.PackedNum)
+    l_in, l_out = framer_lengths(K, P, num_packets=4)
+
+    m = ModelRunner(dut, FramerModel(dut))
+    om = OutputModel(dut, RateGenerator(dut, in_rate), l_out)
+    im = InputModel(dut, eg, RateGenerator(dut, out_rate), l_in)
+
+    clk_i = dut.clk_i
+    rst_i = dut.rst_i
+
+    ready_i = dut.ready_i
+    valid_i = dut.valid_i
+
+    ready_i.value = 0
+    valid_i.value = 0
+
+    await clock_start_sequence(clk_i)
+    await reset_sequence(clk_i, rst_i, 10)
+
+    await FallingEdge(dut.clk_i)
+
+    m.start()
+    om.start()
+    im.start()
+
+    await RisingEdge(dut.ready_i)
+    await RisingEdge(dut.clk_i)
+
+    slow = min(in_rate, out_rate)
+    slow = max(slow, 0.05) 
+    timeout_ns        = int((l_in + 500) / slow)
+    
+    try:
+        await om.wait(timeout_ns)
+    except SimTimeoutError:
+        assert 0, (
+            f"Timed out. Expected {l_out} output handshakes "
+            f"(N={l_out}). Got {om.nproduced()} in {timeout_ns} ns. "
+        )
+
+@cocotb.test
+async def out_fuzz_test(dut):
+    await rate_tests(dut, in_rate=1.0, out_rate=0.5)
+
+@cocotb.test
+async def in_fuzz_test(dut):
+    await rate_tests(dut, in_rate=0.5, out_rate=1.0)
+
+@cocotb.test
+async def inout_fuzz_test(dut):
+    await rate_tests(dut, in_rate=0.5, out_rate=0.5)
 
 @cocotb.test
 async def full_bw_test(dut):
-    """Input random data elements at 100% line rate"""
-
-    eg = RandomDataGenerator(dut)
-    P = int(dut.PacketLenElems)
-    K = int(dut.PackedNum)
-    l_in, l_out = framer_lengths(K, P, num_packets=4)
-    rate = 1
-
-    m = ModelRunner(dut, FramerModel(dut))
-    om = OutputModel(dut, RateGenerator(dut, rate), l_out)
-    im = InputModel(dut, eg, RateGenerator(dut, rate), l_in)
-
-    clk_i = dut.clk_i
-    rst_i = dut.rst_i
-
-    ready_i = dut.ready_i
-    valid_i = dut.valid_i
-
-    ready_i.value = 0
-    valid_i.value = 0
-
-    await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, rst_i, 10)
-
-    await FallingEdge(dut.clk_i)
-
-    m.start()
-    om.start()
-    im.start()
-
-    await RisingEdge(dut.ready_i)
-    await RisingEdge(dut.clk_i)
-
-    CLK_NS = 10
-    timeout_cycles = int((l_in + l_out) * (1/rate) * dut.PackedNum.value) + 50
-    timeout_ns = timeout_cycles * CLK_NS
-    await om.wait(timeout_ns)
-
-@cocotb.test
-async def fuzz_random_test(dut):
-    """Add random data elements at 50% line rate"""
-
-    eg = RandomDataGenerator(dut)
-    l_out = 50
-
-    P = int(dut.PacketLenElems)
-    K = int(dut.PackedNum)
-    l_in, l_out = framer_lengths(K, P, num_packets=4)
-    rate = 0.5
-
-    m = ModelRunner(dut, FramerModel(dut))
-    om = OutputModel(dut, RateGenerator(dut, rate), l_out)
-    im = InputModel(dut, eg, RateGenerator(dut, rate), l_in)
-
-    clk_i = dut.clk_i
-    rst_i = dut.rst_i
-
-    ready_i = dut.ready_i
-    valid_i = dut.valid_i
-
-    ready_i.value = 0
-    valid_i.value = 0
-
-    await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, rst_i, 10)
-
-    await FallingEdge(dut.clk_i)
-
-    m.start()
-    om.start()
-    im.start()
-
-    await RisingEdge(dut.ready_i)
-    await RisingEdge(dut.clk_i)
-
-    CLK_NS = 10
-    timeout_cycles = int((l_in + l_out) * (1/rate) * dut.PackedNum.value) + 50
-    timeout_ns = timeout_cycles * CLK_NS
-    await om.wait(timeout_ns)
+    await rate_tests(dut, in_rate=1.0, out_rate=1.0)

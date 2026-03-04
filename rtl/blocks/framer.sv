@@ -38,6 +38,8 @@ module framer #(
   wire  [0:0] out_fire = valid_o && ready_i;
 
   /* ---------------------------------------- Counter Logic ---------------------------------------- */
+  // Tracks completed packet elements and drives flush logic for when packet doesn't divide evenly into packed elements.
+  // Counter saturates at max count and is reset on next packet.
   logic [CountWidth-1:0]               counter_q, counter_d;
   wire  [CountWidth-1:0] max_count   = CountWidth'(PacketLenElems - 1);
   wire  [0:0]            counter_max = (counter_q == max_count);
@@ -60,21 +62,35 @@ module framer #(
     end
   end
 
+  /* ------------------------------------------ Flush Logic ------------------------------------------ */
+  // Flush logic for when packet doesn't divide evenly into packed elements. 
+  logic [0:0] rx_complete;
+  
+  wire  [0:0] pack_out_fire = pack_valid && ((state_q == Forward) && ready_i); // Flush just fired
+  wire  [0:0] clr_flush_req = pack_out_fire && rx_complete; // Clear flush request when packer fires after receiving last input
+
+  logic [0:0] flush_req_d, flush_req_q;
+  logic [0:0] flushing;
+
+  wire  [0:0] last_input = in_fire && counter_max;
+
+  // Flushing logic to flush packer when receiving last input
+  always_ff @(posedge clk_i) begin
+    if (rst_i) flush_req_q <= 1'b0;
+    else       flush_req_q <= flush_req_d;
+  end
+
+  always_comb begin
+    flush_req_d = flush_req_q;
+    if (last_input)    flush_req_d = 1'b1; // Set flush on last input
+    if (clr_flush_req) flush_req_d = 1'b0; // Clear flush on output in forward state
+  end
+
   /* ------------------------------------------- FSM Logic ------------------------------------------- */
   logic [PackedWidth-1:0] data_q,  data_d;
   logic [0:0]             valid_q, valid_d;
   
-  wire  [0:0] last_input = in_fire && counter_max;
-  logic [0:0] flushing;
-
-  logic [0:0] rx_complete;
   wire  [0:0] tx_complete = rx_complete && out_fire;
-
-    // Flushing logic to flush packer when receiving last input
-  always_ff @(posedge clk_i) begin
-    if (rst_i) flushing <= 1'b0;
-    else       flushing <= last_input;
-  end
 
   // RX Complete logic to track when a full packet has been received
   always_ff @(posedge clk_i) begin
@@ -149,8 +165,8 @@ module framer #(
     ,.rst_i(rst_i)
 
     ,.unpacked_i(unpacked_i)
-    ,.flush_i   (flushing)
-    ,.valid_i   (valid_i && !rx_complete)
+    ,.flush_i   (flush_req_q)
+    ,.valid_i   (in_fire)
     ,.ready_o   (pack_ready)
 
     ,.packed_o  (packed_data)
