@@ -14,30 +14,25 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Determine if RTL block tests should run
+      - name: Determine which unit tests should run
         id: changes
         shell: bash
         run: |
           set -euo pipefail
 
-          # Always available locally after checkout
           if git rev-parse HEAD^ >/dev/null 2>&1; then
             CHANGED="$(git diff --name-only HEAD^ HEAD)"
           else
-            # First commit in repo
             CHANGED="$(git show --name-only --pretty='' HEAD)"
           fi
 
           echo "$CHANGED"
 
-          mapfile -t FILES < <(echo "$CHANGED" | grep -E '^rtl/blocks/.*\.(sv|py)$' || true)
-          if (( ${#FILES[@]} == 0 )); then
-            echo "run_tests=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
           declare -A SEEN=()
-          for f in "${FILES[@]}"; do
+
+          # 1) If RTL blocks changed, map block -> unit test dir
+          mapfile -t RTL < <(echo "$CHANGED" | grep -E '^rtl/blocks/.*\.(sv|py)$' || true)
+          for f in "${RTL[@]}"; do
             base="$(basename "$f")"
             base="${base%.*}"
             dir="sim/unit_testing/${base}"
@@ -45,9 +40,24 @@ jobs:
             SEEN["$dir"]=1
           done
 
+          # 2) If unit testbenches changed, run those unit test dirs directly
+          mapfile -t UTFILES < <(echo "$CHANGED" | grep -E '^sim/unit_testing/[^/]+/.*(\.py|Makefile)$' || true)
+          for f in "${UTFILES[@]}"; do
+            # f like sim/unit_testing/framer/test_framer.py
+            dir="$(echo "$f" | cut -d/ -f1-3)"   # sim/unit_testing/framer
+            [[ -d "$dir" ]] || { echo "Bad unit test path (dir not found): $dir"; exit 1; }
+            SEEN["$dir"]=1
+          done
+
+          if (( ${#SEEN[@]} == 0 )); then
+            echo "run_tests=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           DIRS="$(printf "%s\n" "${!SEEN[@]}" | sort | tr '\n' ' ' | sed 's/ *$//')"
           echo "dirs=$DIRS" >> "$GITHUB_OUTPUT"
           echo "run_tests=true" >> "$GITHUB_OUTPUT"
+          echo "Will run: $DIRS"
 
       - name: Install Icarus + Verilator
         if: steps.changes.outputs.run_tests == 'true'

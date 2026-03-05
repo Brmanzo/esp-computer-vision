@@ -8,7 +8,7 @@ _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
 assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
 assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
 sys.path.append(os.path.join(_REPO_ROOT, "util"))
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence
+from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, ReadyValidInterface
 tbpath = os.path.dirname(os.path.realpath(__file__))
 
 import pytest
@@ -30,9 +30,9 @@ tests = ['reset_test'
          ,'inout_fuzz_test'
          ,'in_fuzz_test'
          ,'out_fuzz_test'
+         ,'full_bw_test'
          ,'fill_test'
          ,'fill_empty_test'
-         ,'full_bw_test'
          ]
 
 @pytest.mark.parametrize("test_name", tests)
@@ -114,46 +114,6 @@ class SkidBufModel():
         assert got == expected, f"Error! Value on deque iteration {self._deqs} does not match expected. Expected: {expected}. Got: {got}"
         self._deqs += 1
         
-        
-class ReadyValidInterface():
-    def __init__(self, clk, reset, ready, valid):
-        self._clk_i = clk
-        self._rst_i = reset
-        self._ready = ready
-        self._valid = valid
-
-    def is_in_reset(self):
-        if (not self._rst_i.value.is_resolvable or self._rst_i.value  == 1):
-            return True
-        return int(self._rst_i.value) == 1
-        
-    def assert_resolvable(self):
-        if(not self.is_in_reset()):
-            assert_resolvable(self._valid)
-            assert_resolvable(self._ready)
-
-    def is_handshake(self):
-        return (int(self._valid.value) == 1) and (int(self._ready.value) == 1)
-
-    async def _handshake(self):
-        while True:
-            await RisingEdge(self._clk_i)
-            if (not self.is_in_reset()):
-                self.assert_resolvable()
-                if(self.is_handshake()):
-                    break
-
-    async def handshake(self, ns):
-        """Wait for a handshake, raising an exception if it hasn't
-        happened after ns nanoseconds of simulation time"""
-
-        # If ns is none, wait indefinitely
-        if(ns):
-            await with_timeout(self._handshake(), ns, 'ns')
-        else:
-            await self._handshake()           
-
-
 class RandomDataGenerator():
     def __init__(self, dut):
         self._dut = dut
@@ -171,20 +131,6 @@ class RateGenerator():
             return False
         else:
             return (random.randint(1,int(1/self._rate)) == 1)
-
-class CountingGenerator():
-    def __init__(self, dut, r):
-        self._rate = int(1/r)
-        self._init = 0
-
-    def generate(self):
-        if(self._rate == 0):
-            return False
-        else:
-            retval = (self._init == 1)
-            self._init = (self._init + 1) % self._rate
-            return retval
-
 
 class OutputModel():
     def __init__(self, dut, g, l):
@@ -630,183 +576,58 @@ async def fill_empty_test(dut):
     if(not success):
         assert nproduced != Depth, f"Error! Could not empty fifo with {Depth} elements in {Depth} cycles. Fifo produced {nproduced} elements."
 
-@cocotb.test
-async def out_fuzz_test(dut):
-    """Transmit 4 * Depth random data elements at 50% line rate (Output/Consumer is fuzzed)"""
+async def rate_tests(dut, in_rate, out_rate):
+    l_in = int(dut.Depth.value) * 4
+    l_out = l_in
 
-    l = dut.Depth.value * 4
-    rate = .5
+    m  = ModelRunner(dut, SkidBufModel(dut))
+    om = OutputModel(dut, RateGenerator(dut, out_rate), l_out)
+    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, in_rate), l_in)
 
-    timeout = 2 * l * int(1/rate)
-
-    m = ModelRunner(dut, SkidBufModel(dut))
-    om = OutputModel(dut, CountingGenerator(dut, rate), l)
-    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, 1), l)
-
-    clk_i = dut.clk_i
-    rst_i = dut.rst_i
-    ready_i = dut.ready_i
-    valid_i = dut.valid_i
-    ready_o = dut.ready_o
-    valid_o = dut.valid_o
-
-    ready_i.value = 0
-    valid_i.value = 0    
-    await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, rst_i, 10)
-
-    # Wait one cycle for reset to start
+    dut.ready_i.value = 0
+    dut.valid_i.value = 0
+    await clock_start_sequence(dut.clk_i)
+    await reset_sequence(dut.clk_i, dut.rst_i, 10)
     await FallingEdge(dut.clk_i)
 
-    m.start()
-    om.start()
-    im.start()
+    m.start(); om.start(); im.start()
 
-    # Wait for the first piece of data to arrive at the output.
+    # Wait up to 20 cycles for valid_o (cycle-based, not ns-based)
+    for _ in range(20):
+        await RisingEdge(dut.clk_i)
+        if dut.valid_o.value.is_resolvable and int(dut.valid_o.value) == 1:
+            break
+    else:
+        assert 0, "valid_o never went high within 20 cycles"
+
+    # Timeout scaled by rates (similar to your old math) + slack
+    timeout_cycles = int(2 * l_in * (1/in_rate) * (1/out_rate)) + 50
+
+    # Convert cycles->ns using your clock (if it really is 10ns)
+    CLK_NS = 10
+    timeout_ns = timeout_cycles * CLK_NS
+
     try:
-        await with_timeout(RisingEdge(dut.valid_o), 20, 'ns')
+        await om.wait(timeout_ns)
     except SimTimeoutError:
-        assert 0, f"Test timed out. Testbench is waiting for valid_o, but valid_o never went high in 20 clock cycles after reset."
+        assert 0, (
+            f"Timed out: out={om.nproduced()}/{l_out}, "
+            f"in={im.nconsumed()}/{l_in}, "
+            f"budget={timeout_cycles} cycles"
+        )
 
-    #await RisingEdge(dut.valid_o)
-    try:
-        await om.wait(timeout + .5)
-    except SimTimeoutError:
-        assert 0, f"Test timed out. Could not transmit {l} elements in {timeout} ns, with output rate {rate}. Only transmitted: {om._nout}"
-
+@cocotb.test
+async def out_fuzz_test(dut):
+    await rate_tests(dut, in_rate=1.0, out_rate=0.5)
 
 @cocotb.test
 async def in_fuzz_test(dut):
-    """Transmit 4 * Depth random data elements at 50% line rate (Input/Producer is fuzzed)"""
-
-    l = dut.Depth.value * 4
-    rate = .5
-
-    timeout = 2 * l * int(1/rate)
-
-    m = ModelRunner(dut, SkidBufModel(dut))
-    om = OutputModel(dut, RateGenerator(dut, 1), l)
-    im = InputModel(dut, RandomDataGenerator(dut), CountingGenerator(dut, rate), l)
-
-    clk_i = dut.clk_i
-    rst_i = dut.rst_i
-    ready_i = dut.ready_i
-    valid_i = dut.valid_i
-    ready_o = dut.ready_o
-    valid_o = dut.valid_o
-
-    ready_i.value = 0
-    valid_i.value = 0    
-    await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, rst_i, 10)
-
-    # Wait one cycle for reset to start
-    await FallingEdge(dut.clk_i)
-
-    m.start()
-    om.start()
-    im.start()
-
-    # Wait for the first piece of data to arrive at the output.
-    try:
-        await with_timeout(RisingEdge(dut.valid_o), 20, 'ns')
-    except SimTimeoutError:
-        assert 0, f"Test timed out. Testbench is waiting for valid_o, but valid_o never went high in 20 clock cycles after reset."
-    #await RisingEdge(dut.valid_o)
-
-    try:
-        await om.wait(timeout + .5)
-    except SimTimeoutError:
-        assert 0, f"Test timed out. Could not transmit {l} elements in {timeout} ns, with output rate {rate}. Only transmitted: {om._nout}"
+    await rate_tests(dut, in_rate=0.5, out_rate=1.0)
 
 @cocotb.test
 async def inout_fuzz_test(dut):
-    """Transmit 4 * Depth random data elements at ~25% line rate (Both are fuzzed)"""
+    await rate_tests(dut, in_rate=0.5, out_rate=0.5)
 
-    l = dut.Depth.value * 4
-    rate = .5
-
-    timeout = 2 * l * int(1/rate) * int(1/rate) 
-
-    m = ModelRunner(dut, SkidBufModel(dut))
-    om = OutputModel(dut, RateGenerator(dut, rate), l)
-    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), l)
-
-    clk_i = dut.clk_i
-    rst_i = dut.rst_i
-    ready_i = dut.ready_i
-    valid_i = dut.valid_i
-    ready_o = dut.ready_o
-    valid_o = dut.valid_o
-
-    ready_i.value = 0
-    valid_i.value = 0    
-    await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, rst_i, 10)
-
-    # Wait one cycle for reset to start
-    await FallingEdge(dut.clk_i)
-
-    m.start()
-    om.start()
-    im.start()
-
-    # Wait for the first piece of data to arrive at the output.
-    try:
-        await with_timeout(RisingEdge(dut.valid_o), 20, 'ns')
-    except SimTimeoutError:
-        assert 0, f"Test timed out. Testbench is waiting for valid_o, but valid_o never went high in 20 clock cycles after reset."
-
-    #await RisingEdge(dut.valid_o)
-    try:
-        await om.wait(timeout + .5)
-    except SimTimeoutError:
-        assert 0, f"Test timed out. Could not transmit {l} elements in {timeout} ns, with output rate {rate}. Only transmitted: {om._nout}"
-        
 @cocotb.test
 async def full_bw_test(dut):
-    """Transmit 8 * Depth random data elements at 100% line rate"""
-
-    # This is the InputModel
-    l = dut.Depth.value * 8
-    rate = 1
-
-    timeout = l + 1
-
-    m = ModelRunner(dut, SkidBufModel(dut))
-    om = OutputModel(dut, RateGenerator(dut, rate), l)
-    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), l)
-
-    clk_i = dut.clk_i
-    rst_i = dut.rst_i
-    ready_i = dut.ready_i
-    valid_i = dut.valid_i
-    ready_o = dut.ready_o
-    valid_o = dut.valid_o
-
-    ready_i.value = 0
-    valid_i.value = 0    
-    await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, rst_i, 10)
-
-    await FallingEdge(dut.clk_i)
-
-    m.start()
-    om.start()
-    im.start()
-
-    # We're doing a throughput test. We only care about the output
-    # throughput.  We can wait for the rising edge of valid_o because
-    # it (should, if the circuit is implemented correctly) occur at,
-    # or just after the clock edge.
-    try:
-        await with_timeout(RisingEdge(dut.valid_o), 20, 'ns')
-    except SimTimeoutError:
-        assert 0, f"Test timed out. Testbench is waiting for valid_o, but valid_o never went high in 20 clock cycles after reset."
-
-    #await RisingEdge(dut.valid_o)
-    try:
-        await om.wait(timeout + .5)
-    except SimTimeoutError:
-        assert 0, f"Test timed out. Could not transmit {l} elements in {timeout} ns"
-        
+    await rate_tests(dut, in_rate=1.0, out_rate=1.0)

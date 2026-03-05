@@ -251,3 +251,40 @@ async def delay_cycles(dut, ncyc, polarity):
 
 def assert_passerror(s):
     assert s.value.is_resolvable, f"Testbench pass/fail output ({s._path}) is set to x or z, but must be explicitly set to 0 at start of simulation.."
+
+class ReadyValidInterface():
+    def __init__(self, clk, reset, valid, ready):
+        self._clk_i = clk
+        self._rst_i = reset
+        self._ready = ready
+        self._valid = valid
+
+    def is_in_reset(self):
+        if((not self._rst_i.value.is_resolvable) or self._rst_i.value  == 1):
+            return True
+        
+    def assert_resolvable(self):
+        if(not self.is_in_reset()):
+            assert_resolvable(self._valid)
+            assert_resolvable(self._ready)
+
+    def is_handshake(self):
+        return (int(self._valid.value) == 1) and (int(self._ready.value) == 1)
+
+    async def _handshake(self):
+        while True:
+            await RisingEdge(self._clk_i)
+            if (not self.is_in_reset()):
+                self.assert_resolvable()
+                if(self.is_handshake()):
+                    break
+
+    async def handshake(self, ns):
+        """Wait for a handshake, raising an exception if it hasn't
+        happened after ns nanoseconds of simulation time"""
+
+        # If ns is none, wait indefinitely
+        if(ns):
+            await with_timeout(self._handshake(), ns, 'ns')
+        else:
+            await self._handshake()

@@ -9,7 +9,7 @@ _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
 assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
 assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
 sys.path.append(os.path.join(_REPO_ROOT, "util"))
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
+from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface
 tbpath = os.path.dirname(os.path.realpath(__file__))
 
 import pytest
@@ -35,14 +35,6 @@ tests = ['reset_test'
         ,'in_fuzz_test'
         ,'out_fuzz_test'
         ,'full_bw_test']
-
-def fxp_to_float(signal, frac):
-    """Convert an unsigned fixed-point cocotb signal to a float."""
-    return int(signal.value) / float(1 << frac)
-
-def float_to_fxp(value, frac):
-    """Convert a float to an unsigned fixed-point integer."""
-    return int(round(value * (1 << frac)))
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
@@ -170,44 +162,6 @@ class FramerModel():
         assert got == expected, (
             f"Mismatch on output #{self._deqs}: expected 0x{expected:02X}, got 0x{got:02X}"
         )
-
-class ReadyValidInterface():
-    def __init__(self, clk, reset, valid, ready):
-        self._clk_i = clk
-        self._reset_i = reset
-        self._ready = ready
-        self._valid = valid
-
-    def is_in_reset(self):
-        if((not self._reset_i.value.is_resolvable) or self._reset_i.value  == 1):
-            return True
-        return False
-        
-    def assert_resolvable(self):
-        if(not self.is_in_reset()):
-            assert_resolvable(self._valid)
-            assert_resolvable(self._ready)
-
-    def is_handshake(self):
-        return (int(self._valid.value) == 1) and (int(self._ready.value) == 1)
-
-    async def _handshake(self):
-        while True:
-            await RisingEdge(self._clk_i)
-            if (not self.is_in_reset()):
-                self.assert_resolvable()
-                if(self.is_handshake()):
-                    break
-
-    async def handshake(self, ns):
-        """Wait for a handshake, raising an exception if it hasn't
-        happened after ns nanoseconds of simulation time"""
-
-        # If ns is none, wait indefinitely
-        if(ns):
-            await with_timeout(self._handshake(), ns, 'ns')
-        else:
-            await self._handshake()
 
 class RandomDataGenerator():
     def __init__(self, dut):

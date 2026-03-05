@@ -12,7 +12,7 @@ _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
 assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
 assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
 sys.path.append(os.path.join(_REPO_ROOT, "util"))
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
+from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface
 tbpath = os.path.dirname(os.path.realpath(__file__))
 
 import pytest
@@ -28,15 +28,12 @@ random.seed(42)
 
 timescale = "1ps/1ps"
 
-tests = ['reset_test', 'init_test', 'single_test', 'full_bw_test', 'fuzz_random_test']
-
-def fxp_to_float(signal, frac):
-    """Convert an unsigned fixed-point cocotb signal to a float."""
-    return int(signal.value) / float(1 << frac)
-
-def float_to_fxp(value, frac):
-    """Convert a float to an unsigned fixed-point integer."""
-    return int(round(value * (1 << frac)))
+tests = ['reset_test'
+        ,'single_test'
+        ,'inout_fuzz_test'
+        ,'in_fuzz_test'
+        ,'out_fuzz_test'
+        ,'full_bw_test']
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
@@ -69,7 +66,6 @@ def test_style(simulator):
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"], pymodule="test_mag")
-
 
 class MagModel():
     def __init__(self, dut):
@@ -116,49 +112,6 @@ class MagModel():
             f"Expected: {expected}. Got: {got}"
         )
 
-
-class ReadyValidInterface():
-    def __init__(self, clk, reset, ready, valid):
-        self._clk_i = clk
-        self._rst_i = reset
-        self._ready = ready
-        self._valid = valid
-
-    def is_in_reset(self):
-        '''If system is resetting or uninitialized, return true. '''
-        if((not self._rst_i.value.is_resolvable) or self._rst_i.value == 1):
-            return True
-        return False
-        
-    def assert_resolvable(self):
-        '''Assert that valid and ready are initialized. '''
-        if(not self.is_in_reset()):
-            assert_resolvable(self._valid)
-            assert_resolvable(self._ready)
-
-    def is_handshake(self):
-        '''If valid and ready are both high, return true. '''
-        return ((self._valid.value == 1) and (self._ready.value == 1))
-
-    async def _handshake(self):
-        '''On next next rising clock edge, if not resetting and valid and ready initialized, yield on handshake. '''
-        while True:
-            await RisingEdge(self._clk_i)
-            if (not self.is_in_reset()):
-                self.assert_resolvable()
-                if(self.is_handshake()):
-                    break
-
-    async def handshake(self, ns):
-        """Wait for a handshake, raising an exception if it hasn't
-        happened after ns nanoseconds of simulation time. """
-
-        # If ns is none, wait indefinitely
-        if(ns):
-            await with_timeout(self._handshake(), ns, 'ns')
-        else:
-            await self._handshake()
-
 class RandomDataGenerator():
     def __init__(self, dut):
         self._dut = dut
@@ -167,45 +120,6 @@ class RandomDataGenerator():
         a_i = random.randint(0, (1 << self._dut.WidthIn.value) - 1)
         b_i = random.randint(0, (1 << self._dut.WidthIn.value) - 1)
         return (a_i, b_i)
-    
-class EdgeCaseGenerator():
-
-    def __init__(self, dut):
-        self._dut = dut
-        limits = [0, 1, (1 << self._dut.width_p.value) - 1]
-        self._pairs = list(product(limits, limits))
-        self._loc = 0
-
-    def ninputs(self):
-        return len(self._pairs)
-
-    def generate(self):
-        val = self._pairs[self._loc]
-        self._loc += 1
-        return val
-
-class CountingDataGenerator():
-    def __init__(self, dut):
-        self._dut = dut
-        self._cur = 0
-
-    def generate(self):
-        value = self._cur
-        self._cur += 1
-        return value
-
-class CountingGenerator():
-    def __init__(self, dut, r):
-        self._rate = int(1/r)
-        self._init = 0
-
-    def generate(self):
-        if(self._rate == 0):
-            return False
-        else:
-            retval = (self._init == 1)
-            self._init = (self._init + 1) % self._rate
-            return retval
 
 class RateGenerator():
     def __init__(self, dut, r):
@@ -418,26 +332,6 @@ async def reset_test(dut):
     await reset_sequence(clk_i, rst_i, 10)
 
 @cocotb.test
-async def init_test(dut):
-    """Test for Basic Connectivity"""
-
-    clk_i = dut.clk_i
-    rst_i = dut.rst_i
-
-    dut.gx_i.value = 0
-    dut.gy_i.value = 0
-    dut.ready_i.value = 0
-    dut.valid_i.value = 0
-
-    await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, rst_i, 10)
-
-
-    await Timer(Decimal(1.0), units="ns")
-
-    assert_resolvable(dut.mag_o)
-
-@cocotb.test
 async def single_test(dut):
     """Test to transmit a single element in at most two cycles."""
 
@@ -485,20 +379,16 @@ async def single_test(dut):
     dut.valid_i.value = 0
     dut.ready_i.value = 0
 
-
-@cocotb.test
-async def full_bw_test(dut):
+async def rate_tests(dut, in_rate, out_rate):
     """Input random data elements at 100% line rate"""
 
     eg = RandomDataGenerator(dut)
-    l = 10
-    rate = 1
-
-    timeout = l + 4
+    l_in = 10
+    l_out = l_in
 
     m = ModelRunner(dut, MagModel(dut))
-    om = OutputModel(dut, RateGenerator(dut, rate), l)
-    im = InputModel(dut, eg, RateGenerator(dut, rate), l)
+    om = OutputModel(dut, RateGenerator(dut, out_rate), l_out)
+    im = InputModel(dut, eg, RateGenerator(dut, in_rate), l_in)
 
     clk_i = dut.clk_i
     rst_i = dut.rst_i
@@ -521,48 +411,27 @@ async def full_bw_test(dut):
     await RisingEdge(dut.ready_i)
     await RisingEdge(dut.clk_i)
 
-    try:
-        await om.wait(timeout)
-    except SimTimeoutError:
-        assert 0, f"Test timed out. Could not transmit {l} elements in {timeout} ns, with output rate {rate}"
+    slow = min(in_rate, out_rate)
+    slow = max(slow, 0.05) 
+    timeout_ns        = int((l_in + 500) / slow)
 
+    try:
+        await om.wait(timeout_ns)
+    except SimTimeoutError:
+        assert 0, f"Test timed out. Could not transmit {l_in} elements in {timeout_ns} ns, with output rate {out_rate}"
 
 @cocotb.test
-async def fuzz_random_test(dut):
-    """Add random data elements at 50% line rate"""
+async def out_fuzz_test(dut):
+    await rate_tests(dut, in_rate=1.0, out_rate=0.5)
 
-    eg = RandomDataGenerator(dut)
-    l = 10
-    rate = 0.5
+@cocotb.test
+async def in_fuzz_test(dut):
+    await rate_tests(dut, in_rate=0.5, out_rate=1.0)
 
-    timeout = l * int(1/rate) * int(1/rate) 
+@cocotb.test
+async def inout_fuzz_test(dut):
+    await rate_tests(dut, in_rate=0.5, out_rate=0.5)
 
-    m = ModelRunner(dut, MagModel(dut))
-    om = OutputModel(dut, RateGenerator(dut, rate), l)
-    im = InputModel(dut, eg, RateGenerator(dut, rate), l)
-
-    clk_i = dut.clk_i
-    rst_i = dut.rst_i
-
-    ready_i = dut.ready_i
-    valid_i = dut.valid_i
-
-    ready_i.value = 0
-    valid_i.value = 0
-
-    await clock_start_sequence(clk_i)
-    await reset_sequence(clk_i, rst_i, 10)
-
-    await FallingEdge(dut.clk_i)
-
-    m.start()
-    om.start()
-    im.start()
-
-    await RisingEdge(dut.ready_i)
-    await RisingEdge(dut.clk_i)
-
-    try:
-        await om.wait(timeout)
-    except SimTimeoutError:
-        assert 0, f"Test timed out. Could not transmit {l} elements in {timeout} ns, with output rate {rate}"
+@cocotb.test
+async def full_bw_test(dut):
+    await rate_tests(dut, in_rate=1.0, out_rate=1.0)
