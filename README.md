@@ -1,3 +1,5 @@
+[![test](https://github.com/Brmanzo/esp-computer-vision/actions/workflows/test.yaml/badge.svg?branch=main)](https://github.com/Brmanzo/esp-computer-vision/actions/workflows/test.yaml)
+
 # ESP Computer Vision
 
 Interfacing the ESP32c3 RUST board with an Arducam 2MP camera for image processing and computer vision.
@@ -39,7 +41,7 @@ My goal for this project is to implement a dynamic system that captures live dat
   - UART RTS line to ensure data integrity
   - Kernel-stationary sliding-window convolution architecture
   - Parameterized kernel size, stride, input and weight widths for model flexibility
-  - Convolution layer supporting N Input and M Output Channels with single RAM buffer
+  - Fully-Connected conv2d, linear, and pool modules verified with Pytorch
 - Unit Testing of all hardware components using CocoTB
 - Dynamic HTML viewing of image over ESP32 Wi-Fi
 

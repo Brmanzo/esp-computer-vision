@@ -1,33 +1,82 @@
-  name: test
-  on: [push, workflow_dispatch]
-  jobs:
-    test:
-      runs-on: ubuntu-24.04
-      steps:
-        - name: Checkout repo
-          uses: actions/checkout@v4
-          with:
-            submodules: recursive
+name: Suite Verified
 
-        - name: Install Icarus
-          shell: bash
-          run: sudo apt-get update && sudo apt-get install -y iverilog
+on:
+  push:
+  workflow_dispatch:
 
-        - name: Install Verilator
-          run: |
-            sudo apt-get install -y verilator
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
 
-        # Set Python up and install cocotb
-        - name: Setup python
-          uses: actions/setup-python@v5
-          with:
-            python-version: '3.12.3'
+      - name: Determine if RTL block tests should run
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
 
-        - name: Install Python packages
-          shell: bash
-          run: pip install -r requirements.txt
+          # Always available locally after checkout
+          if git rev-parse HEAD^ >/dev/null 2>&1; then
+            CHANGED="$(git diff --name-only HEAD^ HEAD)"
+          else
+            # First commit in repo
+            CHANGED="$(git show --name-only --pretty='' HEAD)"
+          fi
 
-        - name: Run tests
-          run: |
-            make clean-all
-            make test-all
+          echo "$CHANGED"
+
+          mapfile -t FILES < <(echo "$CHANGED" | grep -E '^rtl/blocks/.*\.(sv|py)$' || true)
+          if (( ${#FILES[@]} == 0 )); then
+            echo "run_tests=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          declare -A SEEN=()
+          for f in "${FILES[@]}"; do
+            base="$(basename "$f")"
+            base="${base%.*}"
+            dir="sim/unit_testing/${base}"
+            [[ -d "$dir" ]] || { echo "No unit test directory for $f -> expected $dir"; exit 1; }
+            SEEN["$dir"]=1
+          done
+
+          DIRS="$(printf "%s\n" "${!SEEN[@]}" | sort | tr '\n' ' ' | sed 's/ *$//')"
+          echo "dirs=$DIRS" >> "$GITHUB_OUTPUT"
+          echo "run_tests=true" >> "$GITHUB_OUTPUT"
+
+      - name: Install Icarus + Verilator
+        if: steps.changes.outputs.run_tests == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iverilog verilator
+
+      - name: Setup python
+        if: steps.changes.outputs.run_tests == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.3'
+
+      - name: Install Python packages
+        if: steps.changes.outputs.run_tests == 'true'
+        run: pip install -r requirements.txt
+
+      - name: Run affected unit tests
+        if: steps.changes.outputs.run_tests == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          make clean-all
+
+          for dir in ${{ steps.changes.outputs.dirs }}; do
+            echo "Testing $dir"
+            make -C "$dir" test
+          done
+
+      - name: Skipped (no RTL block changes)
+        if: steps.changes.outputs.run_tests != 'true'
+        run: echo "No rtl/blocks/*.sv or *.py changes; skipping heavy tests."

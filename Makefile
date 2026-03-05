@@ -22,3 +22,12 @@ test-all:
 	  echo "Testing $${d#$(REPO_ROOT)/}"; \
 	  $(MAKE) -C "$$d" test; \
 	done
+
+.PHONY: test-one
+test-one:
+	@if [ -z "$(DIR)" ]; then \
+	  echo "Usage: make test-one DIR=sim/unit_testing/<name>"; \
+	  exit 2; \
+	fi
+	@echo "Testing $(DIR)"; \
+	$(MAKE) -C "$(DIR)" test
