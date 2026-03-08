@@ -20,6 +20,10 @@ DATA_SPLIT = 0.8
 BEGIN_Q_EPOCHS = 20
 EPOCHS_PER_LAYER = 15
 
+# Hyperparameters
+LEARNING_RATE = 5e-4
+WEIGHT_DECAY  = 1e-5
+
 train_acc_history = []
 test_acc_history = []
 
@@ -107,25 +111,27 @@ num_classes = len(dataset.classes)
 model = cnn_model(in_ch=1, num_classes=num_classes).to(device)
 
 # Establish schedule for progressive quantization of each layer
+schedule = [LayerConfig(20,  [5, 5, 5, 5,  5, 10, 20], 8, 2),
+            LayerConfig(30, [5, 5, 5, 5,  5, 10, 20], 8, 2),
+            LayerConfig(40, [5, 5, 5, 5,  5, 10, 20], 8, 2),
+            LayerConfig(50, [5, 5, 5, 5, 30, 30], 8, 3),
+            LayerConfig(50, [10], 8, 8)]
 
-# t_i, t_b8, t_b7, t_b6, t_b5, t_b4, t_b3, t_b2
-schedule = [LayerConfig(20, [10, 10, 10, 10, 10, 20, 30], 8, 2),
-            LayerConfig(30, [10, 10, 10, 10, 10, 20, 30], 8, 2),
-            LayerConfig(40, [10, 10, 10, 10, 10, 30], 8, 3),
-            LayerConfig(50, [10, 10, 10, 10, 10, 30], 8, 3)]
-
-model_layers = model.features.modules()
+model_layers = model.modules()
 assert len(schedule) == sum(1 for m in model_layers if isinstance(m, QuantConv2d)), "Schedule must have an entry for each QuantConv2d layer"
 
 EPOCHS = max(cfg.total_epochs() for cfg in schedule) 
 BEGIN_Q_EPOCHS = schedule[0]._q_start
 
-opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+opt = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
 loss_fn = torch.nn.CrossEntropyLoss()
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=EPOCHS - BEGIN_Q_EPOCHS)
 
 print(f"Training on {device} for {EPOCHS} epochs with progressive quantization starting at epoch {BEGIN_Q_EPOCHS}")
 print("\n--- STARTING FULL-PRECISION TRAINING ---")
+
+best_test_acc = 0.0
+model_save_path = "gesture_net_quantized.pth"
 
 for epoch in range(EPOCHS):
     if epoch == BEGIN_Q_EPOCHS:
@@ -133,7 +139,8 @@ for epoch in range(EPOCHS):
         
     # --------------------------------------- SCHEDULING LOGIC ---------------------------------------
     quant_layer_idx = 0
-    for module in model.features.modules(): # Safely iterate directly
+    bits_changed_this_epoch = False
+    for module in model.modules(): # Safely iterate directly
         if isinstance(module, QuantConv2d):
             # Fetch the target bits directly from your shiny new data structure
             target_bits = schedule[quant_layer_idx].get_target_bits(epoch)
@@ -143,15 +150,19 @@ for epoch in range(EPOCHS):
                 if not getattr(module, '_quantize', False): 
                     module._quantize = True
                     module._bits = target_bits
+                    bits_changed_this_epoch = True
                     print(f"Epoch {epoch:02d}: Layer {quant_layer_idx} quantization ON -> {target_bits}-bit")
                     
                 # Dropping to a lower bit-width
                 elif getattr(module, '_bits', None) != target_bits:
                     module._bits = target_bits
+                    bits_changed_this_epoch = True
                     print(f"Epoch {epoch:02d}: Layer {quant_layer_idx} dropping bits -> {target_bits}-bit")
                     
             quant_layer_idx += 1
-
+    # Rezero the best test accuracy if any bits changed this epoch, so we record the most accurate model at the current quantization
+    if bits_changed_this_epoch:
+        best_test_acc = 0.0
     # --------------------------------------- TRAINING LOGIC ---------------------------------------
     model.train()
     for x, y in train_loader:
@@ -199,14 +210,19 @@ for epoch in range(EPOCHS):
     
     # Increment epoch
     scheduler.step()
-    
-    print(f"epoch {epoch:02d} train_acc={train_acc:.3f} test_acc={test_acc:.3f}")
+    print(f"epoch {epoch:02d} train_acc={train_acc:.3f} test_acc={test_acc:.3f}", end="")
+    if test_acc > best_test_acc:
+        best_test_acc = test_acc
+        torch.save(model.state_dict(), model_save_path)
+        print(f"  --> New best model saved! (Acc: {best_test_acc:.3f})")
+    else:
+        print("")
 
 # --------------------------------------- PLOTTING LOGIC ---------------------------------------
 plt.plot(train_acc_history, label="Train Accuracy", linewidth=2)
 plt.plot(test_acc_history, label="Test Accuracy", linewidth=2)
 
-colors = ['red', 'orange', 'green', 'blue']
+colors = ['red', 'orange', 'green', 'blue', 'purple']
 assert len(schedule) == len(colors), "Need a color for each layer in the schedule"
 
 # Find the lowest accuracy on the graph to anchor our text
@@ -237,16 +253,12 @@ plt.ylabel("Accuracy")
 plt.title("Training and Test Accuracy with Quantization Schedule")
 plt.legend(loc="lower right")
 plt.grid(True, alpha=0.3)
-plt.show()
 
 print("\n--- TRAINING COMPLETE ---")
-# 1. Save the raw PyTorch model just in case!
-model_save_path = "gesture_net_quantized.pth"
-torch.save(model.state_dict(), model_save_path)
-print(f"Raw PyTorch model saved to: {model_save_path}")
 
-# 2. Extract the folded hardware parameters to CSV
+# 2. Extract from the best model the folded hardware parameters to CSV
 export_model_to_csv(model_save_path, num_classes, output_csv="hardware_weights.csv")
 
 # 3. Show the graph (Script will pause here until you close the window)
+plt.savefig("training_accuracy.png")  # Save the figure to a file
 plt.show()

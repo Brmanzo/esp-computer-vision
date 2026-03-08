@@ -19,6 +19,7 @@ RTL designed and tested on icebreaker V1.1a FPGA for hardware acceleration.
   - [Hardware Installation](#hardware-installation)
     - [Synthesizing for Icebreaker Board](#synthesizing-for-icebreaker-board)
     - [Unit Testing](#unit-testing)
+  - [Model Training](#model-training)
   - [Credits](#credits)
   - [License](#license)
 
@@ -143,6 +144,11 @@ iceprog ice40.bin
 ```bash
 # within sim/unit_testing/ open the module you'd like to test, then run
 make test
+```
+
+## Model Training
+```bash
+python3 -m model.train
 ```
 
 ## Credits

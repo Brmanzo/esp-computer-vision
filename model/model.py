@@ -12,15 +12,19 @@ class QuantizeBit(torch.autograd.Function):
     '''Quantizes weights to a specified number of bits with symmetric quantization.'''
     @staticmethod
     def forward(ctx, w: torch.Tensor, bits: int = 4):
-        # Enforce symmetry around zero
-        qmin = -2**(bits-1) + 1
-        qmax = 2**(bits-1) - 1
+        if bits == 2:
+            qmin, qmax = -1, 1
+        else:
+            qmin = -2**(bits-1)
+            qmax = 2**(bits-1) - 1
 
         # Compute symmetric scale from max abs weight
         max_abs = w.abs().max()
         scale = max_abs / qmax if max_abs > 0 else 1.0
 
-        q = torch.round(w / scale).clamp(qmin, qmax)
+        # Q(x;s=scale,b=bits) = s * clip(round(x/s), (-2^b), (2^b)-1)
+        q = torch.round(w / scale)
+        q = torch.clip(q, qmin, qmax)
         w_q = q * scale
 
         return w_q
@@ -47,51 +51,73 @@ class QuantConv2d(nn.Conv2d):
             return self._conv_forward(x, w_q, self.bias)
         else:
             return self._conv_forward(x, self.weight, self.bias)
+        
+class BinaryActivationSTE(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x):
+        ctx.save_for_backward(x)
+        return torch.where(x > 0, 1.0, -1.0)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        x, = ctx.saved_tensors
+        grad = grad_output.clone()
+        grad[x.abs() > 1] = 0
+        return grad
+    
+class BinaryActivation(nn.Module):
+    def forward(self, x):
+        return BinaryActivationSTE.apply(x)
 
 class cnn_model(nn.Module):
     def __init__(self, in_ch=1, num_classes=5):
         super().__init__()
 
-        self._in_ch = [16, 32, 64, 128]
+        self._in_ch = [8, 16, 32, 32]
 
         self.features = nn.Sequential(
             # Block 0
-            QuantConv2d(in_ch, self._in_ch[0], kernel_size=5, padding=2, bias=False),
+            QuantConv2d(in_ch, self._in_ch[0], kernel_size=3, padding=2, bias=True),
             nn.BatchNorm2d(self._in_ch[0]),
-            nn.ReLU(),
+            BinaryActivation(),
             nn.MaxPool2d(2),
 
             # Block 1
-            QuantConv2d(self._in_ch[0], self._in_ch[1], kernel_size=3, padding=1, bias=False),
+            QuantConv2d(self._in_ch[0], self._in_ch[1], kernel_size=3, padding=1, bias=True),
             nn.BatchNorm2d(self._in_ch[1]),
-            nn.ReLU(),
-            nn.AvgPool2d(2),
+            BinaryActivation(),
+            nn.MaxPool2d(2),
 
             # Block 2
-            QuantConv2d(self._in_ch[1], self._in_ch[2], kernel_size=3, padding=1, bias=False),
+            QuantConv2d(self._in_ch[1], self._in_ch[2], kernel_size=3, padding=1, bias=True),
             nn.BatchNorm2d(self._in_ch[2]),
-            nn.ReLU(),
+            BinaryActivation(),
             nn.MaxPool2d(2),
 
             # Block 3
-            QuantConv2d(self._in_ch[2], self._in_ch[3], kernel_size=3, padding=1, bias=False),
+            QuantConv2d(self._in_ch[2], self._in_ch[3], kernel_size=3, padding=1, bias=True),
             nn.BatchNorm2d(self._in_ch[3]),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
         )
 
         # Classifier Block
         self.classifier = nn.Sequential(
             nn.Dropout2d(p=0.1),
-            QuantConv2d(self._in_ch[3], num_classes, kernel_size=1, bias=False, bits=8),
+            QuantConv2d(self._in_ch[3], num_classes, kernel_size=1, bias=True),
             nn.BatchNorm2d(num_classes)
         )
 
     def forward(self, x):
         x = self.features(x)           
+        
+        # Global Max
+        # Reduces (Batch, Channels, H, W) -> (Batch, Channels, 1, 1)
+        x = torch.amax(x, dim=(2, 3), keepdim=True) 
+        
+        # Classifier
+        # Now the 1x1 Conv acts exactly like your SystemVerilog FC layer
         x = self.classifier(x)         
         
-        # Global MAX pool
-        x = torch.amax(x, dim=(2, 3))
+        # 3. Flatten the final output to (Batch, Num_Classes)
+        x = torch.flatten(x, 1)
         
         return x
