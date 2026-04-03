@@ -4,20 +4,20 @@
 
 module window #(
    parameter  int unsigned KernelWidth  = 3
-  ,parameter  int unsigned WidthIn      = 1
+  ,parameter  int unsigned InBits       = 1
   ,localparam int unsigned KernelArea   = KernelWidth * KernelWidth
 )  (
    input [0:0] clk_i
   ,input [0:0] rst_i
 
   ,input [0:0] in_fire_i
-  ,input [KernelWidth-1:0][WidthIn-1:0] row_buffers_i 
+  ,input [KernelWidth-1:0][InBits-1:0] row_buffers_i 
 
-  ,output logic [KernelArea-1:0][WidthIn-1:0] window_o
+  ,output logic [KernelArea-1:0][InBits-1:0] window_o
 );
   /* ------------------------------------ Window Register Logic ------------------------------------ */
   // Row major Order(window[row][col])
-  logic [KernelArea-1:0][WidthIn-1:0] window_r; // Packed 1D array to hold the kernel window pixels for MAC input
+  logic [KernelArea-1:0][InBits-1:0] window_r; // Packed 1D array to hold the kernel window pixels for MAC input
 
   always_ff @(posedge clk_i) begin
     if (rst_i) begin

@@ -6,10 +6,10 @@
 module tb_conv_layer #(
    parameter int unsigned LineWidthPx  = 16
   ,parameter int unsigned LineCountPx  = 12
-  ,parameter int unsigned WidthIn      = 1
-  ,parameter int unsigned WidthOut     = 32
+  ,parameter int unsigned InBits       = 1
+  ,parameter int unsigned OutBits      = 32
   ,parameter int unsigned KernelWidth  = 3
-  ,parameter int unsigned WeightWidth  = 2
+  ,parameter int unsigned WeightBits   = 2
   ,parameter int unsigned InChannels   = 1
   ,parameter int unsigned OutChannels  = 1
   ,parameter int unsigned Stride       = 1
@@ -20,12 +20,12 @@ module tb_conv_layer #(
 
   ,input  [0:0] valid_i
   ,output [0:0] ready_o
-  ,input  [InChannels-1:0][WidthIn-1:0] data_i
+  ,input  [InChannels-1:0][InBits-1:0] data_i
 
   ,output [0:0] valid_o
   ,input  [0:0] ready_i
 
-  ,output logic signed [OutChannels-1:0][WidthOut-1:0] data_o
+  ,output logic signed [OutChannels-1:0][OutBits-1:0] data_o
 );
 
 `include "injected_weights.vh"
@@ -33,10 +33,10 @@ module tb_conv_layer #(
 conv_layer #(
      .LineWidthPx (LineWidthPx)
     ,.LineCountPx (LineCountPx)
-    ,.WidthIn     (WidthIn)
-    ,.WidthOut    (WidthOut)
+    ,.InBits      (InBits)
+    ,.OutBits     (OutBits)
     ,.KernelWidth (KernelWidth)
-    ,.WeightWidth (WeightWidth)
+    ,.WeightBits  (WeightBits)
     ,.InChannels  (InChannels)
     ,.OutChannels (OutChannels)
     ,.Stride      (Stride)

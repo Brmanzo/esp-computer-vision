@@ -155,7 +155,7 @@ def unpack_weights(packed_val: int, WW: int, OC: int, IC: int, K: int):
 def pack_data_i(samples, width):
     """
     samples: list[int] length = InChannels
-    width: WidthIn
+    width: InBits
     Returns packed int: sum(samples[ic] << (ic*width))
     """
     mask = (1 << width) - 1
@@ -175,11 +175,20 @@ def to_torch_weights(kernels4):
     w = torch.tensor(kernels4, dtype=torch.int32)           # (OC,IC,K,K)
     return w
 
-def torch_conv_ref(input_activation, kernels4, stride):
+def torch_conv_ref(input_activation, kernels4, stride, out_bits=1):
     x = to_torch_input(input_activation).to(torch.float32)
     w = to_torch_weights(kernels4).to(torch.float32)
-    y = F.conv2d(x, w, stride=stride, padding=0)            # (1,OC,H_out,W_out)
-    return y.squeeze(0)
+
+    if out_bits == 1:
+        # Match MAC input encoding: 0 -> -1, 1 -> +1
+        x = x * 2.0 - 1.0
+
+    y = F.conv2d(x, w, stride=stride, padding=0).squeeze(0)
+
+    if out_bits == 1:
+        y = (y > 0).to(torch.int32)
+
+    return y
 
 def unpack_data_i(packed, width_in, IC):
     mask = (1 << width_in) - 1
@@ -187,12 +196,13 @@ def unpack_data_i(packed, width_in, IC):
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("WidthIn, WeightWidth, WidthOut, KernelWidth, InChannels, OutChannels, Weights", 
-                         [(1, 2, output_width(1, 2, 3), 3, 1, 1, gen_kernels(2, 1, 1, 3, seed=1234)), # Intended Size
+@pytest.mark.parametrize("InBits, WeightBits, OutBits, KernelWidth, InChannels, OutChannels, Weights", 
+                         [(1, 2,                     1, 3, 1, 1, gen_kernels(2, 1, 1, 3, seed=1234)),
                           (2, 3, output_width(2, 3, 3), 3, 1, 1, gen_kernels(3, 1, 1, 3, seed=1234)), # Unsigned data_i
                           (4, 5, output_width(4, 5, 3), 3, 1, 1, gen_kernels(5, 1, 1, 3, seed=1234)),
-                          (8, 8, output_width(8, 8, 3), 3, 1, 1, gen_kernels(8, 1, 1, 3, seed=1234))])
-def test_width(test_name, simulator, WidthIn, WeightWidth, WidthOut, KernelWidth, InChannels, OutChannels, Weights):
+                          (8, 8, output_width(8, 8, 3), 3, 1, 1, gen_kernels(8, 1, 1, 3, seed=1234)),
+                          ])
+def test_width(test_name, simulator, InBits, WeightBits, OutBits, KernelWidth, InChannels, OutChannels, Weights):
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
@@ -200,12 +210,12 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, WidthOut, KernelWidth
     # 1. Remove Weights from the CLI parameters dict so cocotb-runner doesn't pass it
     del parameters['Weights'] 
     
-    param_str = f"WidthIn_{WidthIn}_WeightWidth_{WeightWidth}_WidthOut_{WidthOut}_test_{test_name}"
+    param_str = f"InBits_{InBits}_WeightBits_{WeightBits}_OutBits_{OutBits}_test_{test_name}"
     custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
     os.makedirs(custom_work_dir, exist_ok=True)
     
     # 2. Calculate total bits to format the Verilog hex string correctly
-    total_bits = OutChannels * InChannels * (KernelWidth**2) * WeightWidth
+    total_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
     
     # 3. Write the massive integer as a strictly sized hex literal to a header file
     vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
@@ -233,13 +243,13 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, WidthOut, KernelWidth
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 # Added 'Weights' to the tuple list, generating it with WW=2, OC=1, IC=1
-@pytest.mark.parametrize("WidthOut, KernelWidth, Stride, LineWidthPx, LineCountPx, Weights", 
+@pytest.mark.parametrize("OutBits, KernelWidth, Stride, LineWidthPx, LineCountPx, Weights", 
                          [(output_width(1, 2, 2), 2, 2, 16, 12, gen_kernels(2, 1, 1, 2, seed=1234)),
                           (output_width(1, 2, 4), 4, 4, 16, 12, gen_kernels(2, 1, 1, 4, seed=1234)),
                           (output_width(1, 2, 5), 5, 2, 17, 13, gen_kernels(2, 1, 1, 5, seed=1234))
                           ])
 
-def test_stride(test_name, simulator, WidthOut, KernelWidth, Stride, LineWidthPx, LineCountPx, Weights):
+def test_stride(test_name, simulator, OutBits, KernelWidth, Stride, LineWidthPx, LineCountPx, Weights):
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
@@ -280,15 +290,15 @@ def test_stride(test_name, simulator, WidthOut, KernelWidth, Stride, LineWidthPx
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-# Expanded to include WidthIn, WeightWidth, KernelWidth so the DUT scales with the Python math
-@pytest.mark.parametrize("WidthIn, WeightWidth, KernelWidth, WidthOut, InChannels, OutChannels, Weights", 
+# Expanded to include InBits, WeightBits, KernelWidth so the DUT scales with the Python math
+@pytest.mark.parametrize("InBits, WeightBits, KernelWidth, OutBits, InChannels, OutChannels, Weights", 
                          [(1, 2, 3, output_width(1, 2, 3), 1, 2, gen_kernels(2, 2, 1, 3, seed=1234)),
                           (2, 3, 3, output_width(2, 3, 3), 2, 3, gen_kernels(3, 3, 2, 3, seed=1234)),
                           (4, 5, 3, output_width(4, 5, 3), 4, 5, gen_kernels(5, 5, 4, 3, seed=1234)),
                           (8, 8, 3, output_width(8, 8, 3), 8, 8, gen_kernels(8, 8, 8, 3, seed=1234))
                           ])
 
-def test_channels(test_name, simulator, WidthIn, WeightWidth, KernelWidth, WidthOut, InChannels, OutChannels, Weights):
+def test_channels(test_name, simulator, InBits, WeightBits, KernelWidth, OutBits, InChannels, OutChannels, Weights):
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
@@ -299,7 +309,7 @@ def test_channels(test_name, simulator, WidthIn, WeightWidth, KernelWidth, Width
     os.makedirs(custom_work_dir, exist_ok=True)
 
     # Calculate total bits using the explicit parameters
-    total_bits = OutChannels * InChannels * (KernelWidth**2) * WeightWidth
+    total_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
     
     # Write the header file
     vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
@@ -325,16 +335,16 @@ def test_channels(test_name, simulator, WidthIn, WeightWidth, KernelWidth, Width
     )
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut", [("16", "1", output_width(1, 2, 3))])
-def test_lint(simulator, LineWidthPx, WidthIn, WidthOut):
+@pytest.mark.parametrize("LineWidthPx, InBits, OutBits", [("16", "1", output_width(1, 2, 3))])
+def test_lint(simulator, LineWidthPx, InBits, OutBits):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("LineWidthPx, WidthIn, WidthOut", [("16", "1", output_width(1, 2))])
-def test_style(simulator, LineWidthPx, WidthIn, WidthOut):
+@pytest.mark.parametrize("LineWidthPx, InBits, OutBits", [("16", "1", output_width(1, 2))])
+def test_style(simulator, LineWidthPx, InBits, OutBits):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
@@ -352,7 +362,7 @@ class ConvLayerModel():
 
         self._input_width = int(dut.LineWidthPx.value)
         self._input_height = int(dut.LineCountPx.value)
-        self._WidthOut = int(dut.WidthOut.value)
+        self._OutBits = int(dut.OutBits.value)
         self._InChannels  = int(dut.InChannels.value)
         self._OutChannels = int(dut.OutChannels.value)
         self._Stride = int(dut.Stride.value)
@@ -416,12 +426,24 @@ class ConvLayerModel():
 
         windows = [b[:, -self._kernel_width:].astype(int, copy=False) for b in bufs]
 
-        result = np.zeros(self._OutChannels, dtype=int)
         for oc in range(self._OutChannels):
             acc = 0
             for ic in range(self._InChannels):
-                acc += int((self.k[oc, ic] * windows[ic]).sum())
-            result[oc] = acc
+                win = windows[ic]
+
+                if self._OutBits == 1:
+                    # Binary input encoding used by RTL MAC
+                    win_enc = np.where(win == 1, 1, -1)
+                else:
+                    win_enc = win
+
+                acc += int((self.k[oc, ic] * win_enc).sum())
+
+            if self._OutBits == 1:
+                result[oc] = 1 if acc > 0 else 0
+            else:
+                result[oc] = acc
+
         return result
 
     def consume(self):
@@ -433,7 +455,7 @@ class ConvLayerModel():
         assert_resolvable(self._data_i)
         packed_data_i = []
         packed = int(self._data_i.value.integer)
-        packed_data_i = unpack_data_i(packed, int(self._dut.WidthIn.value), self._InChannels)
+        packed_data_i = unpack_data_i(packed, int(self._dut.InBits.value), self._InChannels)
 
         # advance windows on EVERY accepted input
         for ic, inp in enumerate(packed_data_i):
@@ -457,13 +479,16 @@ class ConvLayerModel():
     def produce(self, expected):
         assert_resolvable(self._data_o)
 
-        w = int(self._dut.WidthOut.value)
+        w = int(self._dut.OutBits.value)
         packed = int(self._data_o.value.integer)
 
         # Write all channels at the SAME (r,c)
         for ch in range(self._OutChannels):
-            raw = (packed >> (ch * w)) & ((1 << w) - 1)   # ch0 in LSB slice assumption
-            got = sign_extend(raw, w)
+            raw = (packed >> (ch * w)) & ((1 << w) - 1)
+            if w == 1:
+                got = raw
+            else:
+                got = sign_extend(raw, w)
             exp = int(expected[ch])
 
             print(f"Output #{self._deqs} (r={self._r}, c={self._c}) ch{ch}: expected {exp}, got {got} (raw=0x{raw:x})")
@@ -533,7 +558,7 @@ class CountingDataGenerator():
     
 class RandomDataGenerator:
     def __init__(self, dut):
-        self._width_p = int(dut.WidthIn.value)
+        self._width_p = int(dut.InBits.value)
         self._InChannels = int(dut.InChannels.value)
 
     def generate(self):
@@ -687,7 +712,7 @@ class InputModel():
         W  = int(self._dut.LineWidthPx.value)
         H  = int(self._dut.LineCountPx.value)
         IC = int(self._dut.InChannels.value)
-        w  = int(self._dut.WidthIn.value)
+        w  = int(self._dut.InBits.value)
 
         # Cursor for activation matrix (y,x)
         y = 0
@@ -814,7 +839,7 @@ async def single_test(dut):
     K  = int(dut.KernelWidth.value)
     IC = int(dut.InChannels.value)
     OC = int(dut.OutChannels.value)
-    WW = int(dut.WeightWidth.value)
+    WW = int(dut.WeightBits.value)
 
     # Number of accepted inputs until first valid output position (x=K-1, y=K-1)
     N_first = (K - 1) * W + (K - 1) + 1
@@ -868,7 +893,7 @@ async def rate_tests(dut, in_rate, out_rate):
     K  = int(dut.KernelWidth.value)
     IC = int(dut.InChannels.value)
     OC = int(dut.OutChannels.value)
-    WW = int(dut.WeightWidth.value)
+    WW = int(dut.WeightBits.value)
     S  = int(dut.Stride.value)
 
     # Observe H rows of VALID outputs
@@ -944,7 +969,7 @@ async def rate_tests(dut, in_rate, out_rate):
                 print(" ".join(f"{output_activation[oc][r][c]:4d}" for c in range(W_out)))
 
         # Verify against PyTorch reference convolution
-        ref = torch_conv_ref(input_activation, kernels_4d, S)  # (OC,H_out,W_out)
+        ref = torch_conv_ref(input_activation, kernels_4d, S, int(dut.OutBits.value))  # (OC,H_out,W_out)
 
         for oc in range(OC):
             print(f"\nExpected (PyTorch) for OC{oc}")
