@@ -6,59 +6,63 @@
 module pool_layer #(
    parameter  int unsigned LineWidthPx  = 16
   ,parameter  int unsigned LineCountPx  = 12
-  ,parameter  int unsigned WidthIn      = 1
-  ,parameter  int unsigned KernelWidth  = 3
+  ,parameter  int unsigned InBits       = 1
+  ,parameter  int unsigned KernelWidth  = 2
 
   ,parameter  int unsigned InChannels   = 1
   ,parameter  int unsigned PoolMode     = 0 // 0 for max pooling, 1 for average pooling
-  ,localparam int unsigned WidthOut     = WidthIn
+  ,localparam int unsigned OutBits     = InBits
   ,localparam int unsigned OutChannels  = InChannels
   ,localparam int unsigned KernelArea   = KernelWidth * KernelWidth
+
+  ,localparam int unsigned TargetRamBits  = (LineWidthPx <= 255) ? 16 : 8
+  ,localparam int unsigned ChannelsPerRam = TargetRamBits / ((KernelWidth - 1) * InBits)
+  ,localparam int unsigned BufferCount    = (InChannels + ChannelsPerRam - 1) / ChannelsPerRam
 
   // Pooling layer kernel should have a stride equal to kernel width,
   // But strides greater than 1 can stride farther if necessary
   ,parameter  int unsigned Stride       = KernelWidth
-  ,localparam int unsigned StrideWidth  = (Stride <= 1) ? 1 : $clog2(Stride)
+  ,localparam int unsigned StrideBits  = (Stride <= 1) ? 1 : $clog2(Stride)
 
-  ,localparam int XWidth = (LineWidthPx <= 1) ? 1 : $clog2(LineWidthPx)
-  ,localparam int YWidth = (LineCountPx <= 1) ? 1 : $clog2(LineCountPx)
+  ,localparam int XBits = (LineWidthPx <= 1) ? 1 : $clog2(LineWidthPx)
+  ,localparam int YBits = (LineCountPx <= 1) ? 1 : $clog2(LineCountPx)
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
 
   ,input  [0:0] valid_i
   ,output [0:0] ready_o
-  ,input  [InChannels-1:0][WidthIn-1:0] data_i
+  ,input  [InChannels-1:0][InBits-1:0] data_i
 
   ,output [0:0] valid_o
   ,input  [0:0] ready_i
-  ,output [OutChannels-1:0][WidthOut-1:0] data_o
+  ,output [OutChannels-1:0][OutBits-1:0] data_o
 );
   // Helper function to compute the next phase in the stride cycle for strides greater than 1.
   // Rolls over when the current phase is the last in the cycle, otherwise returns the next phase.
-  function automatic logic [StrideWidth-1:0] inc_stride(input logic [StrideWidth-1:0] value);
+  function automatic logic [StrideBits-1:0] inc_stride(input logic [StrideBits-1:0] value);
     begin
       if (Stride <= 1) inc_stride = '0;
-      else if (value == StrideWidth'(Stride - 1)) inc_stride = '0;
-      else inc_stride = value + StrideWidth'(1);
+      else if (value == StrideBits'(Stride - 1)) inc_stride = '0;
+      else inc_stride = value + StrideBits'(1);
     end
   endfunction
   /* ---------------------------------------- Kernel Validation ---------------------------------------- */
   wire [0:0] in_fire = valid_i & ready_o;
 
   // Position counters track the current x and y pixel positions within the input image.
-  logic [XWidth-1:0] x_pos;
-  logic [YWidth-1:0] y_pos;
+  logic [XBits-1:0] x_pos;
+  logic [YBits-1:0] y_pos;
 
-  wire [0:0] valid_x_pos = (x_pos >= (XWidth'(KernelWidth - 1)));
-  wire [0:0] valid_y_pos = (y_pos >= (YWidth'(KernelWidth - 1)));
+  wire [0:0] valid_x_pos = (x_pos >= (XBits'(KernelWidth - 1)));
+  wire [0:0] valid_y_pos = (y_pos >= (YBits'(KernelWidth - 1)));
 
-  wire [0:0] last_col = (x_pos == XWidth'(LineWidthPx - 1));
-  wire [0:0] last_row = (y_pos == YWidth'(LineCountPx - 1));
+  wire [0:0] last_col = (x_pos == XBits'(LineWidthPx - 1));
+  wire [0:0] last_row = (y_pos == YBits'(LineCountPx - 1));
 
   // Stride phase counters track the current position within the stride cycle for x and y dimensions.
-  logic [StrideWidth-1:0] x_phase;
-  logic [StrideWidth-1:0] y_phase;
+  logic [StrideBits-1:0] x_phase;
+  logic [StrideBits-1:0] y_phase;
 
   wire [0:0] valid_x_stride = (Stride <= 1) ? 1'b1 : (x_phase == '0);
   wire [0:0] valid_y_stride = (Stride <= 1) ? 1'b1 : (y_phase == '0);
@@ -111,8 +115,8 @@ module pool_layer #(
   
   /* --------------------------------------- Input Channel Logic --------------------------------------- */
   // Vertically partition channels and row buffers for each channel within RAM
-  logic [InChannels-1:0][KernelWidth-1:0][WidthIn-1:0] row_buffers;
-  logic [InChannels-1:0][KernelWidth-1:1][WidthIn-1:0] row_buffer_taps;
+  logic [InChannels-1:0][KernelWidth-1:0][InBits-1:0] row_buffers;
+  logic [InChannels-1:0][KernelWidth-1:1][InBits-1:0] row_buffer_taps;
   generate
     for (genvar ch = 0; ch < InChannels; ch++) begin : gen_data_input
       assign row_buffers[ch][0] = data_i[ch]; // Row buffer 0 is current data input
@@ -120,33 +124,32 @@ module pool_layer #(
     end
   endgenerate
 
-  multi_delay_buffer #(
-     .BufferWidth(WidthIn)
-    ,.Delay      (LineWidthPx - 1)
-    ,.BufferRows (KernelWidth - 1)
-    ,.InputChannels(InChannels)
-  ) multi_delay_buffer_inst (
-    .clk_i   (clk_i)
-    ,.rst_i  (rst_i)
+  multi_delay_ram #(
+     .BufferCount    (BufferCount)
+    ,.ChannelsPerRam (ChannelsPerRam)
+    ,.InBits         (InBits)
+    ,.InChannels     (InChannels)
+    ,.KernelWidth    (KernelWidth)
+    ,.LineWidthPx    (LineWidthPx)
+  ) multi_delay_ram_inst (
+     .clk_i   (clk_i)
+    ,.rst_i   (rst_i)
 
-    ,.data_i (data_i)
-    ,.valid_i(in_fire)
-    ,.ready_o()
+    ,.in_fire (in_fire)
+    ,.data_i  (data_i)
 
-    ,.data_o (row_buffer_taps) // Row buffers >= 1 read from delay buffer
-    ,.valid_o()
-    ,.ready_i(1'b1)
+    ,.data_o  (row_buffer_taps) // Row buffers >= 1 read from delay buffer
   );
 
   /* ------------------------------------ Window Generation Logic ------------------------------------ */
   // Every input channel is represented within its own matrix and passed to every filter
   // Which each have input channel number of kernels 
-  logic [InChannels-1:0][KernelArea-1:0][WidthIn-1:0] windows;
+  logic [InChannels-1:0][KernelArea-1:0][InBits-1:0] windows;
   generate
     for (genvar ch = 0; ch < InChannels; ch++) begin : gen_windows
       window #(
          .KernelWidth(KernelWidth)
-        ,.WidthIn    (WidthIn)
+        ,.InBits    (InBits)
       ) win_i (
          .clk_i   (clk_i)
         ,.rst_i   (rst_i)
@@ -156,18 +159,18 @@ module pool_layer #(
         ,.window_o     (windows[ch])
       );
       // Depending on mode, take max (0) or average (1)
-      if (PoolMode == 0) begin
+      if (PoolMode == 0) begin : gen_max_pool
         max #(
           .KernelWidth(KernelWidth)
-          ,.WidthIn   (WidthIn)
+          ,.InBits   (InBits)
         ) max_i (
           .window(windows[ch])
           ,.data_o(data_o[ch])
         );
-      end else if (PoolMode == 1) begin
+      end else if (PoolMode == 1) begin : gen_avg_pool
         avg #(
           .KernelWidth(KernelWidth)
-          ,.WidthIn   (WidthIn)
+          ,.InBits   (InBits)
         ) avg_i (
           .window(windows[ch])
           ,.data_o(data_o[ch])

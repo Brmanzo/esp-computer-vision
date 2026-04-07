@@ -46,7 +46,7 @@ def sign_extend(val: int, bits: int) -> int:
 def pack_data_i(samples, width):
     """
     samples: list[int] length = InChannels
-    width: WidthIn
+    width: InBits
     Returns packed int: sum(samples[ic] << (ic*width))
     """
     mask = (1 << width) - 1
@@ -75,57 +75,53 @@ def unpack_data_i(packed, width_in, IC):
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, WidthIn, PoolMode", 
-                         [("16", "16", "2", "1", "0"),
-                          ("16", "16", "2", "2", "0"),
-                          ("16", "16", "4", "1", "0"),
-                          ("16", "16", "4", "2", "0")])
-def test_max(test_name, simulator, LineWidthPx, LineCountPx, KernelWidth, WidthIn, PoolMode):
+@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, InBits, InChannels, PoolMode", 
+                         [("16", "16", "2", "1", "8","0"),
+                          ("16", "16", "4", "1", "9","0")])
+def test_max(test_name, simulator, LineWidthPx, LineCountPx, KernelWidth, InBits, InChannels, PoolMode):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
-    param_str = f"WidthIn{WidthIn}_LineWidth{LineWidthPx}_LineCount{LineCountPx}_Kernel{KernelWidth}"
+    param_str = f"InBits{InBits}_Channels{InChannels}_LineWidth{LineWidthPx}_LineCount{LineCountPx}_Kernel{KernelWidth}"
     custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
     runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, WidthIn, PoolMode", 
-                         [("16", "16", "2", "1", "1"),
-                          ("16", "16", "2", "2", "1"),
-                          ("16", "16", "4", "1", "1"),
-                          ("16", "16", "4", "2", "1")])
-def test_avg(test_name, simulator, LineWidthPx, LineCountPx, KernelWidth, WidthIn, PoolMode):
+@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, InBits, InChannels, PoolMode", 
+                         [("16", "16", "2", "1", "8", "1"),
+                          ("16", "16", "4", "1", "9", "1")])
+def test_avg(test_name, simulator, LineWidthPx, LineCountPx, KernelWidth, InBits, InChannels, PoolMode):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
-    param_str = f"WidthIn{WidthIn}_LineWidth{LineWidthPx}_LineCount{LineCountPx}_Kernel{KernelWidth}"
+    param_str = f"InBits{InBits}_Channels{InChannels}_LineWidth{LineWidthPx}_LineCount{LineCountPx}_Kernel{KernelWidth}"
     custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
     runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
 
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, WidthIn", 
+@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, InBits", 
                          [("16", "16", "2", "1")])
 
-def test_all(simulator, LineWidthPx, LineCountPx, KernelWidth, WidthIn):
+def test_all(simulator, LineWidthPx, LineCountPx, KernelWidth, InBits):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
     runner(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, WidthIn", [("16", "16", "2", "1")])
-def test_lint(simulator, LineWidthPx, LineCountPx, KernelWidth, WidthIn):
+@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, InBits", [("16", "16", "2", "1")])
+def test_lint(simulator, LineWidthPx, LineCountPx, KernelWidth, InBits):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, WidthIn", [("16", "16", "2", "1")])
-def test_style(simulator, LineWidthPx, LineCountPx, KernelWidth, WidthIn):
+@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, InBits", [("16", "16", "2", "1")])
+def test_style(simulator, LineWidthPx, LineCountPx, KernelWidth, InBits):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
@@ -143,7 +139,7 @@ class PoolLayerModel():
 
         self._input_width = int(dut.LineWidthPx.value)
         self._input_height = int(dut.LineCountPx.value)
-        self._WidthOut = int(dut.WidthOut.value)
+        self._OutBits = int(dut.OutBits.value)
         self._InChannels  = int(dut.InChannels.value)
         self._OutChannels = int(dut.OutChannels.value)
         self._Stride = int(dut.Stride.value)
@@ -224,7 +220,7 @@ class PoolLayerModel():
         assert_resolvable(self._data_i)
         packed_data_i = []
         packed = int(self._data_i.value.integer)
-        packed_data_i = unpack_data_i(packed, int(self._dut.WidthIn.value), self._InChannels)
+        packed_data_i = unpack_data_i(packed, int(self._dut.InBits.value), self._InChannels)
 
         # advance windows on EVERY accepted input
         for ic, inp in enumerate(packed_data_i):
@@ -248,7 +244,7 @@ class PoolLayerModel():
     def produce(self, expected):
         assert_resolvable(self._data_o)
 
-        w = int(self._dut.WidthOut.value)
+        w = int(self._dut.OutBits.value)
         packed = int(self._data_o.value.integer)
 
         # Write all channels at the SAME (r,c)
@@ -322,7 +318,7 @@ class CountingDataGenerator():
     
 class RandomDataGenerator:
     def __init__(self, dut):
-        self._width_p = int(dut.WidthIn.value)
+        self._width_p = int(dut.InBits.value)
         self._InChannels = int(dut.InChannels.value)
 
     def generate(self):
@@ -476,7 +472,7 @@ class InputModel():
         W  = int(self._dut.LineWidthPx.value)
         H  = int(self._dut.LineCountPx.value)
         IC = int(self._dut.InChannels.value)
-        w  = int(self._dut.WidthIn.value)
+        w  = int(self._dut.InBits.value)
 
         # Cursor for activation matrix (y,x)
         y = 0

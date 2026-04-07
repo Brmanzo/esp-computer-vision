@@ -7,6 +7,7 @@
     ,"rtl/lib/elastic.sv"
     ,"rtl/lib/icestorm_ram.sv"
     ,"rtl/lib/multi_delay_buffer.sv"
+    ,"rtl/lib/multi_delay_ram.sv"
     ,"rtl/lib/max.sv"
     ,"rtl/lib/avg.sv"
     ,"rtl/lib/window.sv"

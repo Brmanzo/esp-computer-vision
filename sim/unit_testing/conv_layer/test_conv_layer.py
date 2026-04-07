@@ -376,8 +376,7 @@ class ConvLayerModel():
         # We're going to initialize _buf with NaN so that we can
         # detect when the output should be not an X in simulation
         # Buffer for all input channels, storing the most recent kernel_width values for each channel
-        self._buf = [np.zeros((self._kernel_width, self._input_width), dtype=int)
-             for _ in range(self._InChannels)]
+        self._buf = [np.zeros((self._kernel_width,self._input_width))/0 for _ in range(self._InChannels)]
         self._deqs = 0
         self._enqs = 0
 

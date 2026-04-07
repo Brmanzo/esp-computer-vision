@@ -7,11 +7,11 @@ module conv_layer #(
    parameter  int unsigned LineWidthPx    = 16
   ,parameter  int unsigned LineCountPx    = 12
   ,parameter  int unsigned InBits         = 1
-  ,parameter  int unsigned OutBits        = 32
+  ,parameter  int unsigned OutBits        = 1
   ,parameter  int unsigned KernelWidth    = 3
   ,parameter  int unsigned WeightBits     = 2
-  ,parameter  int unsigned InChannels     = 1
-  ,parameter  int unsigned OutChannels    = 1
+  ,parameter  int unsigned InChannels     = 9
+  ,parameter  int unsigned OutChannels    = 2
   ,localparam int unsigned KernelArea     = KernelWidth * KernelWidth
 
   ,localparam int unsigned TargetRamBits  = (LineWidthPx <= 255) ? 16 : 8
@@ -171,7 +171,7 @@ module conv_layer #(
       window #(
          .KernelWidth(KernelWidth)
         ,.InBits    (InBits)
-      ) win_i (
+      ) window_inst (
          .clk_i   (clk_i)
         ,.rst_i   (rst_i)
 

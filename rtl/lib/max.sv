@@ -4,14 +4,14 @@
 `timescale 1ns / 1ps
 module max #(
    parameter  int unsigned KernelWidth = 3
-  ,parameter  int unsigned WidthIn     = 1
-  ,localparam int unsigned WidthOut    = WidthIn
+  ,parameter  int unsigned InBits      = 1
+  ,localparam int unsigned OutBits     = InBits
   ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
 )  (
-   input  logic [KernelArea-1:0][WidthIn-1:0] window // 1D Packed Array
-  ,output logic [WidthOut-1:0] data_o
+   input  logic [KernelArea-1:0][InBits-1:0] window // 1D Packed Array
+  ,output logic [OutBits-1:0] data_o
 );
-  logic signed [WidthOut-1:0] max;
+  logic signed [OutBits-1:0] max;
 
   always_comb begin
     max = window[0];

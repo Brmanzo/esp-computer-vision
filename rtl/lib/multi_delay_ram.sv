@@ -6,7 +6,7 @@ module multi_delay_ram #(
    parameter int unsigned BufferCount    = 2
   ,parameter int unsigned ChannelsPerRam = 4 
   ,parameter int unsigned InBits         = 1
-  ,parameter int unsigned InChannels     = 1
+  ,parameter int unsigned InChannels     = 9
   ,parameter int unsigned KernelWidth    = 3
   ,parameter int unsigned LineWidthPx    = 16
 )  (
