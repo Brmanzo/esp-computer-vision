@@ -292,10 +292,10 @@ def test_stride(test_name, simulator, OutBits, KernelWidth, Stride, LineWidthPx,
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 # Expanded to include InBits, WeightBits, KernelWidth so the DUT scales with the Python math
 @pytest.mark.parametrize("InBits, WeightBits, KernelWidth, OutBits, InChannels, OutChannels, Weights", 
-                         [(1, 2, 3, output_width(1, 2, 3), 1, 2, gen_kernels(2, 2, 1, 3, seed=1234)),
-                          (2, 3, 3, output_width(2, 3, 3), 2, 3, gen_kernels(3, 3, 2, 3, seed=1234)),
-                          (4, 5, 3, output_width(4, 5, 3), 4, 5, gen_kernels(5, 5, 4, 3, seed=1234)),
-                          (8, 8, 3, output_width(8, 8, 3), 8, 8, gen_kernels(8, 8, 8, 3, seed=1234))
+                         [(1, 2, 3, 1, 16, 8, gen_kernels(2, 8, 16, 3, seed=1234)),
+                          (1, 2, 3, 1, 17, 8, gen_kernels(2, 8, 17, 3, seed=1234)),
+                          (1, 2, 3, 1, 8, 8, gen_kernels(2, 8, 8, 3, seed=1234)),
+                          (4, 5, 3, output_width(4, 5, 3), 4, 5, gen_kernels(5, 5, 4, 3, seed=1234))
                           ])
 
 def test_channels(test_name, simulator, InBits, WeightBits, KernelWidth, OutBits, InChannels, OutChannels, Weights):
@@ -376,7 +376,8 @@ class ConvLayerModel():
         # We're going to initialize _buf with NaN so that we can
         # detect when the output should be not an X in simulation
         # Buffer for all input channels, storing the most recent kernel_width values for each channel
-        self._buf = [np.zeros((self._kernel_width,self._input_width))/0 for _ in range(self._InChannels)]
+        self._buf = [np.zeros((self._kernel_width, self._input_width), dtype=int)
+             for _ in range(self._InChannels)]
         self._deqs = 0
         self._enqs = 0
 

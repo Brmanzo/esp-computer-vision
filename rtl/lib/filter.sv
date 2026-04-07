@@ -41,7 +41,7 @@ module filter #(
   always_comb begin
     sum_d = '0;
     for (int ch = 0; ch < InChannels; ch++) begin
-      sum_d += kernel_data_o[ch];
+      sum_d += AccBits'(kernel_data_o[ch]);
     end
     // If binary activation, encode a positive sum as 1 and a negative sum as 0
     if (OutBits == 1) begin
