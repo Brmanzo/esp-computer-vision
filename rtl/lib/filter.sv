@@ -7,9 +7,8 @@ module filter #(
   ,parameter   int unsigned OutBits     = 1
   ,parameter   int unsigned KernelWidth = 3
   ,parameter   int unsigned WeightBits  = 2
-  ,parameter   int unsigned MacBits     = 32
   ,parameter   int unsigned AccBits     = 32
-  ,parameter   int unsigned InChannels  = 2
+  ,parameter   int unsigned InChannels  = 8
   ,localparam  int unsigned KernelArea  = KernelWidth * KernelWidth
 )  (
    input [InChannels-1:0][KernelArea-1:0][InBits-1:0] windows_i
@@ -19,15 +18,14 @@ module filter #(
 );
 
   /* ------------------------------------ Output Channels ------------------------------------ */
-  logic signed [InChannels-1:0][MacBits-1:0] kernel_data_o;
-  logic signed [AccBits-1:0] sum_d;
+  logic signed [InChannels-1:0][AccBits-1:0] kernel_data_o;
+
   generate
     for (genvar ch = 0; ch < InChannels; ch++) begin : gen_InChannels
       mac #(
          .KernelWidth(KernelWidth)
         ,.InBits    (InBits)
-        ,.OutBits   (OutBits)
-        ,.AccBits   (MacBits)
+        ,.AccBits   (AccBits)
         ,.WeightBits(WeightBits)
       ) mac_inst (
          .window   (windows_i[ch])
@@ -38,11 +36,18 @@ module filter #(
   endgenerate
 
   /* ----------------------------- Filter Output Summation Logic ----------------------------- */
+  wire signed [AccBits-1:0] sum_d;
+
+  // Balanced Adder Tree to sum the contributions from each input channel while minimizing the critical path
+  balanced_add #(
+     .AccBits    (AccBits)
+    ,.AddendCount(InChannels)
+  ) adder (
+     .addends_i(kernel_data_o)
+    ,.sum_o    (sum_d)
+  );
+
   always_comb begin
-    sum_d = '0;
-    for (int ch = 0; ch < InChannels; ch++) begin
-      sum_d += AccBits'(kernel_data_o[ch]);
-    end
     // If binary activation, encode a positive sum as 1 and a negative sum as 0
     if (OutBits == 1) begin
       data_o = (sum_d > 0) ? OutBits'(1) : OutBits'(0);

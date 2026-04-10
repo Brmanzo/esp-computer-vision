@@ -172,10 +172,10 @@ module uart_cnn #(
   conv_layer #(
      .LineWidthPx (WidthIn)
     ,.LineCountPx (HeightIn)
-    ,.WidthIn     (QuantizedWidth)
-    ,.WidthOut    (ConvOutWidth)
+    ,.InBits      (QuantizedWidth)
+    ,.OutBits     (ConvOutWidth)
     ,.KernelWidth (KernelWidth)
-    ,.WeightWidth (WeightWidth)
+    ,.WeightBits  (WeightWidth)
     ,.InChannels  (InChannels)
     ,.OutChannels (OutChannels)
     ,.Stride      (Stride)

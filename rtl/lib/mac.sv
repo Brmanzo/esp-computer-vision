@@ -5,7 +5,6 @@
 module mac #(
    parameter  int unsigned KernelWidth = 3
   ,parameter  int unsigned InBits      = 1
-  ,parameter  int unsigned OutBits     = 1
   ,parameter  int unsigned AccBits     = 32
   ,parameter  int unsigned WeightBits  = 2
   ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
@@ -15,25 +14,34 @@ module mac #(
 
   ,output logic signed [AccBits-1:0] data_o
 );
-  logic signed [AccBits-1:0]    acc_d;
-  logic signed [WeightBits-1:0] weight;
+
+  logic signed [KernelArea-1:0][AccBits-1:0] addends; // 2D array to hold the terms at each level of the tree
+  
+  typedef logic signed [AccBits-1:0] acc_t; 
 
   always_comb begin
-    acc_d = '0;
-    for (int i = 0; i < KernelArea; i++) begin
-      weight = weights_i[i];
-      // Binarized activation encodes a 1 as +1 and a 0 as -1
-      if (OutBits == 1) begin
-        if (window[i] == 1'b1) begin
-          acc_d += AccBits'(weight);
-        end else begin
-          acc_d -= AccBits'(weight);
-        end
-      end else begin
-        acc_d += (AccBits'(weight) * $signed({1'b0, window[i]}));
+
+    // Multiply
+    // If binary input, encode {0,1} as {-1,1} so that multiplication is just +/- the weight
+    if (InBits == 1) begin
+      for (int i = 0; i < KernelArea; i++) begin
+        addends[i] = window[i] ? acc_t'(weights_i[i]) : -acc_t'(weights_i[i]);
+      end
+    // Otherwise multiply normally
+    end else begin
+      for (int i = 0; i < KernelArea; i++) begin
+        addends[i] = acc_t'(weights_i[i]) * $signed({1'b0, window[i]});
       end
     end
   end
-  assign data_o = acc_d;
+
+  // Accumulate the products using a balanced adder tree to minimize the critical path
+  balanced_add #(
+     .AccBits   (AccBits)
+    ,.AddendCount(KernelArea)
+  ) adder (
+     .addends_i(addends)
+    ,.sum_o    (data_o)
+  );
 
 endmodule

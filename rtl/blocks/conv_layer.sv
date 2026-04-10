@@ -10,8 +10,8 @@ module conv_layer #(
   ,parameter  int unsigned OutBits        = 1
   ,parameter  int unsigned KernelWidth    = 3
   ,parameter  int unsigned WeightBits     = 2
-  ,parameter  int unsigned InChannels     = 9
-  ,parameter  int unsigned OutChannels    = 2
+  ,parameter  int unsigned InChannels     = 5
+  ,parameter  int unsigned OutChannels    = 5
   ,localparam int unsigned KernelArea     = KernelWidth * KernelWidth
 
   ,localparam int unsigned TargetRamBits  = (LineWidthPx <= 255) ? 16 : 8
@@ -53,7 +53,6 @@ module conv_layer #(
     end
   endfunction
 
-  localparam MacBits = acc_bits(KernelArea, InBits, WeightBits, 1);
   localparam AccBits = acc_bits(KernelArea, InBits, WeightBits, InChannels);
 
   /* ---------------------------------------- Kernel Validation ---------------------------------------- */
@@ -190,7 +189,6 @@ module conv_layer #(
         ,.OutBits    (OutBits)
         ,.KernelWidth(KernelWidth)
         ,.WeightBits (WeightBits)
-        ,.MacBits    (MacBits)
         ,.AccBits    (AccBits)
         ,.InChannels (InChannels)
       ) filter_inst (
