@@ -3,45 +3,44 @@
 
 `timescale 1ns / 1ps
 module mac #(
-   parameter  int unsigned KernelWidth = 3
-  ,parameter  int unsigned InBits      = 1
-  ,parameter  int unsigned AccBits     = 32
-  ,parameter  int unsigned WeightBits  = 2
-  ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
+   parameter  int unsigned InBits     = 1
+  ,parameter  int unsigned OutBits    = 32
+  ,parameter  int unsigned WeightBits = 2
+  ,parameter  int unsigned TermCount  = 3
 )  (
-   input  logic [KernelArea-1:0][InBits-1:0] window // 1D Packed Array
-  ,input  logic signed [KernelArea-1:0][WeightBits-1:0] weights_i
+   input  logic [TermCount-1:0][InBits-1:0]             window_i 
+  ,input  logic signed  [TermCount-1:0][WeightBits-1:0] weights_i
 
-  ,output logic signed [AccBits-1:0] data_o
+  ,output logic signed [OutBits-1:0] sum_o
 );
 
-  logic signed [KernelArea-1:0][AccBits-1:0] addends; // 2D array to hold the terms at each level of the tree
+  logic signed [TermCount-1:0][OutBits-1:0] addends; // 2D array to hold the terms at each level of the tree
   
-  typedef logic signed [AccBits-1:0] acc_t; 
+  typedef logic signed [OutBits-1:0] acc_t; 
 
-  always_comb begin
-
+  generate
     // Multiply
     // If binary input, encode {0,1} as {-1,1} so that multiplication is just +/- the weight
-    if (InBits == 1) begin
-      for (int i = 0; i < KernelArea; i++) begin
-        addends[i] = window[i] ? acc_t'(weights_i[i]) : -acc_t'(weights_i[i]);
+    if (InBits == 1) begin : gen_binary
+      for (genvar i = 0; i < TermCount; i++) begin : gen_binary_multiply
+        assign addends[i] = window_i[i][0] ? acc_t'(weights_i[i]) : -acc_t'(weights_i[i]);
       end
     // Otherwise multiply normally
-    end else begin
-      for (int i = 0; i < KernelArea; i++) begin
-        addends[i] = acc_t'(weights_i[i]) * $signed({1'b0, window[i]});
+    end else begin : gen_normal
+      for (genvar i = 0; i < TermCount; i++) begin : gen_normal_multiply
+        assign addends[i] = acc_t'(weights_i[i]) * $signed({1'b0, window_i[i]});
       end
     end
-  end
+  endgenerate
 
   // Accumulate the products using a balanced adder tree to minimize the critical path
   balanced_add #(
-     .AccBits   (AccBits)
-    ,.AddendCount(KernelArea)
-  ) adder (
+     .InBits     (OutBits) // products are sign extended to output width
+    ,.OutBits    (OutBits)
+    ,.AddendCount(TermCount)
+  ) balanced_add_inst (
      .addends_i(addends)
-    ,.sum_o    (data_o)
+    ,.sum_o    (sum_o)
   );
 
 endmodule

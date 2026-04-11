@@ -23,14 +23,14 @@ module filter #(
   generate
     for (genvar ch = 0; ch < InChannels; ch++) begin : gen_InChannels
       mac #(
-         .KernelWidth(KernelWidth)
-        ,.InBits    (InBits)
-        ,.AccBits   (AccBits)
+         .InBits    (InBits)
+        ,.OutBits   (AccBits)
         ,.WeightBits(WeightBits)
+        ,.TermCount (KernelArea)
       ) mac_inst (
-         .window   (windows_i[ch])
+         .window_i (windows_i[ch])
         ,.weights_i(weights_i[ch])
-        ,.data_o   (kernel_data_o[ch])
+        ,.sum_o   (kernel_data_o[ch])
       );
     end
   endgenerate
@@ -40,7 +40,8 @@ module filter #(
 
   // Balanced Adder Tree to sum the contributions from each input channel while minimizing the critical path
   balanced_add #(
-     .AccBits    (AccBits)
+     .InBits     (AccBits)
+    ,.OutBits    (AccBits)
     ,.AddendCount(InChannels)
   ) adder (
      .addends_i(kernel_data_o)

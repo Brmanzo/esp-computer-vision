@@ -1,0 +1,7 @@
+{
+    "top": "mac",
+    "files":
+    ["rtl/lib/mac.sv"
+    ,"rtl/lib/balanced_add.sv"
+    ]
+}

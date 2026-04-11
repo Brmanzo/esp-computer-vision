@@ -362,6 +362,7 @@ class ConvLayerModel():
 
         self._input_width = int(dut.LineWidthPx.value)
         self._input_height = int(dut.LineCountPx.value)
+        self._InBits  = int(dut.InBits.value)
         self._OutBits = int(dut.OutBits.value)
         self._InChannels  = int(dut.InChannels.value)
         self._OutChannels = int(dut.OutChannels.value)
@@ -431,7 +432,7 @@ class ConvLayerModel():
             for ic in range(self._InChannels):
                 win = windows[ic]
 
-                if self._OutBits == 1:
+                if self._InBits == 1:
                     # Binary input encoding used by RTL MAC
                     win_enc = np.where(win == 1, 1, -1)
                 else:

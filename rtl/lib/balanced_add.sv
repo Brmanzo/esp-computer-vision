@@ -1,41 +1,42 @@
-// balanced_add.sv
-// Bradley Manzo, 2026
-
 `timescale 1ns / 1ps
 module balanced_add #(
-   parameter  int unsigned AccBits     = 32
-  ,parameter  int unsigned AddendCount = 32
-  ,localparam int unsigned TreeLevels  = $clog2(AddendCount)
-  ,localparam int unsigned TreeWidth   = 1 << TreeLevels
-)  (
-   input  signed [AddendCount-1:0][AccBits-1:0] addends_i // 1D Packed Array
-
-  ,output signed [AccBits-1:0] sum_o
+   parameter  int unsigned InBits      = 8,
+   parameter  int unsigned OutBits     = 32,
+   parameter  int unsigned AddendCount = 32,
+   localparam int unsigned TreeLevels  = (AddendCount <= 1) ? 1 : $clog2(AddendCount),
+   localparam int unsigned TreeWidth   = 1 << TreeLevels
+) (
+   input  logic signed [AddendCount-1:0][InBits-1:0] addends_i,
+   output logic signed [OutBits-1:0] sum_o
 );
 
-  typedef logic signed [AccBits-1:0] acc_t; 
+  typedef logic signed [OutBits-1:0] acc_t;
 
-  acc_t tree [TreeLevels:0][TreeWidth-1:0]; // 2D array to hold the terms at each level of the tree
+  // Unpacked array of packed elements
+  acc_t tree [TreeLevels:0][TreeWidth-1:0];
 
   always_comb begin
-
-    // Load addends into first level of tree, padding to the next power of 2
-    for(int i = 0; i < TreeWidth; i++) begin
-      if (i < AddendCount) begin
-        tree[0][i] = addends_i[i];
-      end else begin
-        tree[0][i] = '0;
+    // Default everything to zero first
+    for (int level = 0; level <= TreeLevels; level++) begin
+      for (int idx = 0; idx < TreeWidth; idx++) begin
+        tree[level][idx] = '0;
       end
     end
 
-    // Balanced Accumulation Tree (Yosys will optimize away the unused branches)
-    for (int i = 0; i < TreeLevels; i++) begin
-      for (int j = 0; j < TreeWidth >> (i+1); j++) begin
-        // Next layer of the tree sums pairs of the previous layer
-        tree[i+1][j] = tree[i][2*j] + tree[i][2*j + 1];
+    // Base layer
+    for (int i = 0; i < AddendCount; i++) begin
+      tree[0][i] = acc_t'(addends_i[i]);
+    end
+
+    // Reduction tree
+    for (int level = 0; level < TreeLevels; level++) begin
+      for (int j = 0; j < TreeWidth; j++) begin
+        if (j < (TreeWidth >> (level + 1))) begin
+          tree[level+1][j] = tree[level][2*j] + tree[level][2*j+1];
+        end
       end
-    end    
+    end
+    sum_o = tree[TreeLevels][0];
   end
-  assign sum_o = tree[TreeLevels][0];
 
 endmodule

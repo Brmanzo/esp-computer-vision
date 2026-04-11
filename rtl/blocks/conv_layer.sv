@@ -10,8 +10,8 @@ module conv_layer #(
   ,parameter  int unsigned OutBits        = 1
   ,parameter  int unsigned KernelWidth    = 3
   ,parameter  int unsigned WeightBits     = 2
-  ,parameter  int unsigned InChannels     = 5
-  ,parameter  int unsigned OutChannels    = 5
+  ,parameter  int unsigned InChannels     = 1
+  ,parameter  int unsigned OutChannels    = 1
   ,localparam int unsigned KernelArea     = KernelWidth * KernelWidth
 
   ,localparam int unsigned TargetRamBits  = (LineWidthPx <= 255) ? 16 : 8
