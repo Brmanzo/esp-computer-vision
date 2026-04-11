@@ -21,7 +21,7 @@ module filter #(
   logic signed [InChannels-1:0][AccBits-1:0] kernel_data_o;
 
   generate
-    for (genvar ch = 0; ch < InChannels; ch++) begin : gen_InChannels
+    for (genvar ch = 0; ch < InChannels; ch++) begin : gen_channels
       mac #(
          .InBits    (InBits)
         ,.OutBits   (AccBits)
@@ -30,7 +30,7 @@ module filter #(
       ) mac_inst (
          .window_i (windows_i[ch])
         ,.weights_i(weights_i[ch])
-        ,.sum_o   (kernel_data_o[ch])
+        ,.sum_o    (kernel_data_o[ch])
       );
     end
   endgenerate

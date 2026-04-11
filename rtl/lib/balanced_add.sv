@@ -16,19 +16,20 @@ module balanced_add #(
   acc_t tree [TreeLevels:0][TreeWidth-1:0];
 
   always_comb begin
-    // Default everything to zero first
+    // Initialize Tree as all zeros to avoid inferred latches when AddendCount is not a power of two
     for (int level = 0; level <= TreeLevels; level++) begin
       for (int idx = 0; idx < TreeWidth; idx++) begin
         tree[level][idx] = '0;
       end
     end
 
-    // Base layer
+    // Initialize addends at base level
     for (int i = 0; i < AddendCount; i++) begin
       tree[0][i] = acc_t'(addends_i[i]);
     end
 
-    // Reduction tree
+    // Each successive level of the tree sums pairs of elements from the previous level,
+    // effectively halving the number of elements at each level until only one sum remains at the root
     for (int level = 0; level < TreeLevels; level++) begin
       for (int j = 0; j < TreeWidth; j++) begin
         if (j < (TreeWidth >> (level + 1))) begin

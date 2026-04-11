@@ -26,7 +26,7 @@ module multi_delay_ram #(
   // If buffer length exceeds 256, target 8 bit wide RAM
   //    max parameters for 1 channel:    3x3 kernel with 4 bit inputs or 9x9 kernel with 1 bit inputs
   //    max channels: 4 with parameters: 3x3 kernel with 1 bit inputs
-  // If buffer length is 255 or less, target 16 bit wide RAM
+  // If buffer length is 256 or less, target 16 bit wide RAM
   //    max parameters for 1 channel:    3x3 kernel with 8 bit inputs or 17x17 kernel with 1 bit inputs
   //    max channels: 8 with parameters: 3x3 kernel with 1 bit inputs
 

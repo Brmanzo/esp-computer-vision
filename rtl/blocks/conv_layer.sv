@@ -14,7 +14,7 @@ module conv_layer #(
   ,parameter  int unsigned OutChannels    = 1
   ,localparam int unsigned KernelArea     = KernelWidth * KernelWidth
 
-  ,localparam int unsigned TargetRamBits  = (LineWidthPx <= 255) ? 16 : 8
+  ,localparam int unsigned TargetRamBits  = (LineWidthPx <= 256) ? 16 : 8
   ,localparam int unsigned ChannelsPerRam = TargetRamBits / ((KernelWidth - 1) * InBits)
   ,localparam int unsigned BufferCount    = (InChannels + ChannelsPerRam - 1) / ChannelsPerRam
 

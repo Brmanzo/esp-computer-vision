@@ -197,7 +197,7 @@ def unpack_data_i(packed, width_in, IC):
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize("InBits, WeightBits, OutBits, KernelWidth, InChannels, OutChannels, Weights", 
-                         [(1, 2,                     1, 3, 1, 1, gen_kernels(2, 1, 1, 3, seed=1234)),
+                         [(1, 2,                     1, 2, 1, 1, gen_kernels(2, 1, 1, 2, seed=1234)),
                           (2, 3, output_width(2, 3, 3), 3, 1, 1, gen_kernels(3, 1, 1, 3, seed=1234)), # Unsigned data_i
                           (4, 5, output_width(4, 5, 3), 3, 1, 1, gen_kernels(5, 1, 1, 3, seed=1234)),
                           (8, 8, output_width(8, 8, 3), 3, 1, 1, gen_kernels(8, 1, 1, 3, seed=1234)),

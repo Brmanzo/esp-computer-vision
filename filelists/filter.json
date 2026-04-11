@@ -1,0 +1,8 @@
+{
+    "top": "filter",
+    "files":
+    ["rtl/lib/filter.sv"
+    ,"rtl/lib/mac.sv"
+    ,"rtl/lib/balanced_add.sv"
+    ]
+}
