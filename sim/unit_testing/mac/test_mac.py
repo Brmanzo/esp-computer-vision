@@ -74,7 +74,6 @@ def output_width(in_width: int, weight_width: int, term_count: int) -> str:
     abs_bits = max_sum.bit_length()
     return str(abs_bits + 1)
 
-# Test that binary tree can accomodate 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize("InBits, WeightBits, TermCount, OutBits",

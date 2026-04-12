@@ -87,9 +87,9 @@ def acc_width(in_bits: int, weight_bits: int, kernel_width: int, in_channels: in
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize("InBits, WeightBits, KernelWidth, InChannels, AccBits, OutBits",
     [( 1, 2, 3, 1, acc_width( 1, 2, 3,  1), 1),
-     ( 1, 2, 3, 2, acc_width( 1, 2, 3,  2), acc_width( 1, 2, 3,  2)),
+     ( 1, 2, 2, 2, acc_width( 1, 2, 2,  2), acc_width( 1, 2, 2,  2)),
      ( 1, 3, 3, 1, acc_width( 1, 3, 3,  1), 1),
-     ( 8, 2, 3, 1, acc_width( 8, 2, 3,  1), acc_width( 8, 2, 3,  1)),
+     ( 8, 2, 4, 1, acc_width( 8, 2, 4,  1), acc_width( 8, 2, 4,  1)),
      ( 8, 2, 3, 2, acc_width( 8, 2, 3,  2), 1),
      ( 8, 2, 3,16, acc_width( 8, 2, 3, 16), 1),
      ( 8, 2, 3,32, acc_width( 8, 2, 3, 32), acc_width( 8, 2, 3, 32)),

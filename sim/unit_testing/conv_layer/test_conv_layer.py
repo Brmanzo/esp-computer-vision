@@ -175,11 +175,11 @@ def to_torch_weights(kernels4):
     w = torch.tensor(kernels4, dtype=torch.int32)           # (OC,IC,K,K)
     return w
 
-def torch_conv_ref(input_activation, kernels4, stride, out_bits=1):
+def torch_conv_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1):
     x = to_torch_input(input_activation).to(torch.float32)
     w = to_torch_weights(kernels4).to(torch.float32)
 
-    if out_bits == 1:
+    if in_bits == 1:
         # Match MAC input encoding: 0 -> -1, 1 -> +1
         x = x * 2.0 - 1.0
 
@@ -198,9 +198,11 @@ def unpack_data_i(packed, width_in, IC):
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize("InBits, WeightBits, OutBits, KernelWidth, InChannels, OutChannels, Weights", 
                          [(1, 2,                     1, 2, 1, 1, gen_kernels(2, 1, 1, 2, seed=1234)),
-                          (2, 3, output_width(2, 3, 3), 3, 1, 1, gen_kernels(3, 1, 1, 3, seed=1234)), # Unsigned data_i
-                          (4, 5, output_width(4, 5, 3), 3, 1, 1, gen_kernels(5, 1, 1, 3, seed=1234)),
-                          (8, 8, output_width(8, 8, 3), 3, 1, 1, gen_kernels(8, 1, 1, 3, seed=1234)),
+                          (2, 2, output_width(2, 2, 2, 1), 2, 1, 1, gen_kernels(2, 1, 1, 2, seed=1234)),
+                          (2, 2, output_width(2, 2, 5, 1), 5, 1, 1, gen_kernels(2, 1, 1, 5, seed=1234)),
+                          (2, 3, output_width(2, 3, 3, 1), 3, 1, 1, gen_kernels(3, 1, 1, 3, seed=1234)), # Unsigned data_i
+                          (4, 5, output_width(4, 5, 3, 1), 3, 1, 1, gen_kernels(5, 1, 1, 3, seed=1234)),
+                          (8, 8, output_width(8, 8, 3, 1), 3, 1, 1, gen_kernels(8, 1, 1, 3, seed=1234)),
                           ])
 def test_width(test_name, simulator, InBits, WeightBits, OutBits, KernelWidth, InChannels, OutChannels, Weights):
     parameters = dict(locals())
@@ -970,7 +972,7 @@ async def rate_tests(dut, in_rate, out_rate):
                 print(" ".join(f"{output_activation[oc][r][c]:4d}" for c in range(W_out)))
 
         # Verify against PyTorch reference convolution
-        ref = torch_conv_ref(input_activation, kernels_4d, S, int(dut.OutBits.value))  # (OC,H_out,W_out)
+        ref = torch_conv_ref(input_activation, kernels_4d, S, in_bits=int(dut.InBits.value), out_bits=int(dut.OutBits.value))  # (OC,H_out,W_out)
 
         for oc in range(OC):
             print(f"\nExpected (PyTorch) for OC{oc}")

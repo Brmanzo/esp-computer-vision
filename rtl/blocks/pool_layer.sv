@@ -161,18 +161,18 @@ module pool_layer #(
       // Depending on mode, take max (0) or average (1)
       if (PoolMode == 0) begin : gen_max_pool
         max #(
-          .KernelWidth(KernelWidth)
+           .KernelWidth(KernelWidth)
           ,.InBits   (InBits)
         ) max_i (
-          .window(windows[ch])
+           .window(windows[ch])
           ,.data_o(data_o[ch])
         );
       end else if (PoolMode == 1) begin : gen_avg_pool
         avg #(
-          .KernelWidth(KernelWidth)
-          ,.InBits   (InBits)
+           .KernelWidth(KernelWidth)
+          ,.InBits    (InBits)
         ) avg_i (
-          .window(windows[ch])
+           .window(windows[ch])
           ,.data_o(data_o[ch])
         );
       end

@@ -23,7 +23,7 @@ module adder_tree #(
       end
     end
 
-    // Initialize addends at base level
+    // Initialize addends at leaves
     for (int i = 0; i < AddendCount; i++) begin
       tree[0][i] = acc_t'(addends_i[i]);
     end
