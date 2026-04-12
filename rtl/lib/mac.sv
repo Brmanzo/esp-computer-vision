@@ -34,11 +34,11 @@ module mac #(
   endgenerate
 
   // Accumulate the products using a balanced adder tree to minimize the critical path
-  balanced_add #(
+  adder_tree #(
      .InBits     (OutBits) // products are sign extended to output width
     ,.OutBits    (OutBits)
     ,.AddendCount(TermCount)
-  ) balanced_add_inst (
+  ) adder_inst (
      .addends_i(addends)
     ,.sum_o    (sum_o)
   );

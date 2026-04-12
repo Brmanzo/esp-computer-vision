@@ -39,7 +39,7 @@ module filter #(
   wire signed [AccBits-1:0] sum_d;
 
   // Balanced Adder Tree to sum the contributions from each input channel while minimizing the critical path
-  balanced_add #(
+  adder_tree #(
      .InBits     (AccBits)
     ,.OutBits    (AccBits)
     ,.AddendCount(InChannels)

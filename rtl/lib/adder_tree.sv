@@ -1,5 +1,5 @@
 `timescale 1ns / 1ps
-module balanced_add #(
+module adder_tree #(
    parameter  int unsigned InBits      = 8,
    parameter  int unsigned OutBits     = 32,
    parameter  int unsigned AddendCount = 32,

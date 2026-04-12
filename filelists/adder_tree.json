@@ -1,0 +1,6 @@
+{
+    "top": "adder_tree",
+    "files":
+    ["rtl/lib/adder_tree.sv"
+    ]
+}

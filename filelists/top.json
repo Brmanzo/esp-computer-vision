@@ -25,6 +25,6 @@
     ,"rtl/lib/mac.sv"
     ,"rtl/lib/filter.sv"
     ,"rtl/lib/window.sv"
-    ,"rtl/lib/balanced_add.sv"
+    ,"rtl/lib/adder_tree.sv"
     ]
 }

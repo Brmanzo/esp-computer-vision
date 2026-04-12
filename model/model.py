@@ -77,32 +77,32 @@ class cnn_model(nn.Module):
 
         self.features = nn.Sequential(
             # Block 0
-            QuantConv2d(in_ch, self._in_ch[0], kernel_size=3, padding=2, bias=True),
+            QuantConv2d(in_ch, self._in_ch[0], kernel_size=3, padding=0, bias=False),
             nn.BatchNorm2d(self._in_ch[0]),
             BinaryActivation(),
             nn.MaxPool2d(2),
 
             # Block 1
-            QuantConv2d(self._in_ch[0], self._in_ch[1], kernel_size=3, padding=1, bias=True),
+            QuantConv2d(self._in_ch[0], self._in_ch[1], kernel_size=3, padding=0, bias=False),
             nn.BatchNorm2d(self._in_ch[1]),
             BinaryActivation(),
             nn.MaxPool2d(2),
 
             # Block 2
-            QuantConv2d(self._in_ch[1], self._in_ch[2], kernel_size=3, padding=1, bias=True),
+            QuantConv2d(self._in_ch[1], self._in_ch[2], kernel_size=3, padding=0, bias=False),
             nn.BatchNorm2d(self._in_ch[2]),
             BinaryActivation(),
             nn.MaxPool2d(2),
 
             # Block 3
-            QuantConv2d(self._in_ch[2], self._in_ch[3], kernel_size=3, padding=1, bias=True),
+            QuantConv2d(self._in_ch[2], self._in_ch[3], kernel_size=3, padding=0, bias=False),
             nn.BatchNorm2d(self._in_ch[3]),
         )
 
         # Classifier Block
         self.classifier = nn.Sequential(
             nn.Dropout2d(p=0.1),
-            QuantConv2d(self._in_ch[3], num_classes, kernel_size=1, bias=True),
+            QuantConv2d(self._in_ch[3], num_classes, kernel_size=1, bias=False),
             nn.BatchNorm2d(num_classes)
         )
 

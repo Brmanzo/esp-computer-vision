@@ -87,7 +87,7 @@ def test_each(test_name, simulator, InBits, OutBits, AddendCount):
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
-    runner(simulator, timescale, tbpath, parameters, testname=test_name, pymodule="test_balanced_add")
+    runner(simulator, timescale, tbpath, parameters, testname=test_name, pymodule="test_adder_tree")
 
 @pytest.mark.parametrize("simulator", ["verilator"])
 @pytest.mark.parametrize("InBits, AddendCount, OutBits", 
@@ -107,7 +107,7 @@ def test_style(simulator, InBits, OutBits, AddendCount):
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"])
 
-class BalancedAddModel():
+class AdderTreeModel():
     def __init__(self, dut):
         self._dut = dut
         self._addends_i = dut.addends_i
@@ -145,7 +145,7 @@ async def comb_step(dut, model, addends):
 @cocotb.test
 async def single_test(dut):
     addend_count = int(dut.AddendCount.value)
-    model = BalancedAddModel(dut)
+    model = AdderTreeModel(dut)
 
     addends = [1] * addend_count
     await comb_step(dut, model, addends)
@@ -155,7 +155,7 @@ async def single_test(dut):
 async def full_bw_test(dut):
     in_bits = int(dut.InBits.value)
     addend_count = int(dut.AddendCount.value)
-    model = BalancedAddModel(dut)
+    model = AdderTreeModel(dut)
 
     lo = -(1 << (in_bits - 1))
     hi = (1 << (in_bits - 1)) - 1

@@ -1,6 +1,0 @@
-{
-    "top": "balanced_add",
-    "files":
-    ["rtl/lib/balanced_add.sv"
-    ]
-}
