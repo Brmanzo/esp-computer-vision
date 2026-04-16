@@ -43,6 +43,7 @@ module filter #(
   endgenerate
 
   /* -------------------------------- Elastic Pipeline Stage -------------------------------- */
+  wire [0:0] valid_o_internal, ready_i_internal;
   elastic #(
      .Width        (InChannels * AccBits)
     ,.DatapathGate (1)
@@ -55,15 +56,15 @@ module filter #(
     ,.ready_o(ready_o)
     ,.data_i (kernel_data_d)
 
-    ,.valid_o(valid_o)
-    ,.ready_i(ready_i)
+    ,.valid_o(valid_o_internal)
+    ,.ready_i(ready_i_internal)
     ,.data_o (kernel_data_q)
   );
 
   /* ----------------------------- Filter Output Summation Logic ----------------------------- */
   wire  signed [AccBits-1:0] sum_d;
 
-  logic signed [OutBits-1:0] data_q;
+  logic signed [OutBits-1:0] data_d, data_q;
   assign data_o = data_q;
 
   // Balanced Adder Tree to sum the contributions from each input channel while minimizing the critical path
@@ -79,11 +80,28 @@ module filter #(
   always_comb begin
     // If binary activation, encode a positive sum as 1 and a negative sum as 0
     if (OutBits == 1) begin
-      data_q = (sum_d > 0) ? OutBits'(1) : OutBits'(0);
+      data_d = (sum_d > 0) ? OutBits'(1) : OutBits'(0);
     end else begin
-      data_q = OutBits'(sum_d);
+      data_d = OutBits'(sum_d);
     end
   end
+
+  elastic #(
+     .Width        (OutBits)
+    ,.DatapathGate (1)
+    ,.DatapathReset(1)
+  ) output_elastic_inst (
+     .clk_i  (clk_i)
+    ,.rst_i  (rst_i)
+
+    ,.valid_i(valid_o_internal) // Comes from the first elastic stage
+    ,.ready_o(ready_i_internal) // Backpressures the first elastic stage
+    ,.data_i (data_d)
+
+    ,.valid_o(valid_o) // Top level valid_o
+    ,.ready_i(ready_i) // Top level ready_i
+    ,.data_o (data_q)  // Top level data_o (now safely registered!)
+  );
 
 
 endmodule
