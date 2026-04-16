@@ -119,15 +119,22 @@ module conv_layer #(
 
   /* ------------------------------------ Elastic Handshaking Logic ------------------------------------ */
   // Provided Elastic State Machine Logic
-  logic  [0:0] valid_r;
-  wire   [0:0] window_valid = valid_r;
+  logic  [0:0] input_valid_r;
 
   always_ff @(posedge clk_i) begin
     // If reset, we are not valid this cycle
-    if (rst_i)       valid_r <= 1'b0;
+    if (rst_i)       input_valid_r  <= 1'b0; 
     // If not stalling, then we have valid data if we are producing it this cycle
-    else if (ready_o) valid_r <= produce;
+    else if (ready_o) input_valid_r <= produce;
   end
+
+  wire [0:0] window_valid;
+
+  // Each filter has its own internal pipeline stage
+  wire [OutChannels-1:0] filter_ready;
+  wire [OutChannels-1:0] filter_valid;
+  // Top level output is valid and ready when all filters are valid and ready, respectively
+  assign valid_o = &filter_valid;
   
   /* --------------------------------------- Input Channel Logic --------------------------------------- */
   // Vertically partition channels and row buffers for each channel within RAM
@@ -161,7 +168,7 @@ module conv_layer #(
   /* ------------------------------------ Window Generation Logic ------------------------------------ */
   // Every input channel is represented within its own matrix and passed to every filter
   // Which each have input channel number of kernels 
-  logic [InChannels-1:0][KernelArea-1:0][InBits-1:0] windows;
+  logic [InChannels-1:0][KernelArea-1:0][InBits-1:0] windows_d, windows_q;
 
   generate
     for (genvar ch = 0; ch < InChannels; ch++) begin : gen_windows
@@ -174,20 +181,34 @@ module conv_layer #(
 
         ,.in_fire_i    (in_fire)
         ,.row_buffers_i(row_buffers[ch])
-        ,.window_o     (windows[ch])
+        ,.window_o     (windows_d[ch])
       );
     end
   endgenerate
 
-  wire [OutChannels-1:0] mac_ready;
-  wire [OutChannels-1:0] mac_valid;
-  assign ready_o = &mac_ready;
-  assign valid_o = &mac_valid;
+  // Delay between Window output and filter input
+  elastic #(
+     .Width        (InChannels * KernelArea * InBits)
+    ,.DatapathGate (1)
+    ,.DatapathReset(1)
+  ) elastic_inst (
+     .clk_i   (clk_i)
+    ,.rst_i   (rst_i)
+
+    ,.valid_i (input_valid_r) // Valid when top-level is valid
+    ,.ready_o (ready_o)       // Handles top-level backpressure
+    ,.data_i  (windows_d)
+
+    ,.valid_o (window_valid)
+    ,.ready_i (&filter_ready) // ready when all filters are ready to accept data
+    ,.data_o  (windows_q)
+  );
+
   /* ------------------------------------ Filter Logic ------------------------------------ */
   generate
     for (genvar ch = 0; ch < OutChannels; ch++) begin : gen_row_buffer_delayed
       filter #(
-        .InBits      (InBits)
+         .InBits      (InBits)
         ,.OutBits    (OutBits)
         ,.KernelWidth(KernelWidth)
         ,.WeightBits (WeightBits)
@@ -197,11 +218,11 @@ module conv_layer #(
          .clk_i      (clk_i)
         ,.rst_i      (rst_i)
         ,.valid_i    (window_valid)
-        ,.ready_o    (mac_ready[ch])
-        ,.windows_i  (windows)
+        ,.ready_o    (filter_ready[ch])
+        ,.windows_i  (windows_q)
         ,.weights_i  (Weights[ch*WeightIndex +: WeightIndex])
         ,.ready_i    (ready_i)
-        ,.valid_o    (mac_valid[ch])
+        ,.valid_o    (filter_valid[ch])
         ,.data_o     (data_o[ch])
       );
     end
