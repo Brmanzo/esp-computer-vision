@@ -66,7 +66,8 @@ def buffer_count(InBits: int, LineWidthPx: int, KernelWidth: int, InChannels: in
                          ,("8", "257",  "3", channels_per_ram(8, 257, 3),  "1", buffer_count(8, 257, 3, 1))
                          ,("1", "257", "17", channels_per_ram(1, 257, 17), "1", buffer_count(1, 257, 17, 1))
                          ,("1", "257",  "3", channels_per_ram(1, 257, 3),  "8", buffer_count(1, 257, 3, 8))
-                         ,("1", "260",  "3", channels_per_ram(1, 260, 3),  "32", buffer_count(1, 260, 3, 32))])
+                         ,("1", "260",  "3", channels_per_ram(1, 260, 3),  "32", buffer_count(1, 260, 3, 32))
+                         ,("4", "258",  "3", channels_per_ram(4, 258, 3),  "2", buffer_count(4, 258, 3, 2))])
 def test_each(test_name, simulator, InBits, LineWidthPx, KernelWidth, ChannelsPerRam, InChannels, BufferCount):
     # This line must be first
     parameters = dict(locals())

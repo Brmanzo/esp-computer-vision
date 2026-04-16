@@ -14,7 +14,7 @@ module conv_layer #(
   ,parameter  int unsigned OutChannels    = 1
   ,localparam int unsigned KernelArea     = KernelWidth * KernelWidth
 
-  ,localparam int unsigned TargetRamBits  = (LineWidthPx <= 256) ? 16 : 8
+  ,localparam int unsigned TargetRamBits  = ((LineWidthPx - 1) <= 256) ? 16 : 8
   ,localparam int unsigned ChannelsPerRam = TargetRamBits / ((KernelWidth - 1) * InBits)
   ,localparam int unsigned BufferCount    = (InChannels + ChannelsPerRam - 1) / ChannelsPerRam
 
@@ -119,16 +119,16 @@ module conv_layer #(
 
   /* ------------------------------------ Elastic Handshaking Logic ------------------------------------ */
   // Provided Elastic State Machine Logic
-  logic [0:0] valid_r;
+  logic  [0:0] valid_r;
+  wire   [0:0] window_valid = valid_r;
 
   always_ff @(posedge clk_i) begin
-    if (rst_i)        valid_r <= 1'b0;
+    // If reset, we are not valid this cycle
+    if (rst_i)       valid_r <= 1'b0;
+    // If not stalling, then we have valid data if we are producing it this cycle
     else if (ready_o) valid_r <= produce;
   end
-
-  assign valid_o =  valid_r;
-  assign ready_o = ~valid_r | ready_i;
-
+  
   /* --------------------------------------- Input Channel Logic --------------------------------------- */
   // Vertically partition channels and row buffers for each channel within RAM
   logic [InChannels-1:0][KernelWidth-1:0][InBits-1:0] row_buffers;
@@ -153,10 +153,8 @@ module conv_layer #(
   ) multi_delay_ram_inst (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)
-
     ,.in_fire (in_fire)
     ,.data_i  (data_i)
-
     ,.data_o  (row_buffer_taps) // Row buffers >= 1 read from delay buffer
   );
 
@@ -181,6 +179,10 @@ module conv_layer #(
     end
   endgenerate
 
+  wire [OutChannels-1:0] mac_ready;
+  wire [OutChannels-1:0] mac_valid;
+  assign ready_o = &mac_ready;
+  assign valid_o = &mac_valid;
   /* ------------------------------------ Filter Logic ------------------------------------ */
   generate
     for (genvar ch = 0; ch < OutChannels; ch++) begin : gen_row_buffer_delayed
@@ -192,8 +194,14 @@ module conv_layer #(
         ,.AccBits    (AccBits)
         ,.InChannels (InChannels)
       ) filter_inst (
-         .windows_i  (windows)
+         .clk_i      (clk_i)
+        ,.rst_i      (rst_i)
+        ,.valid_i    (window_valid)
+        ,.ready_o    (mac_ready[ch])
+        ,.windows_i  (windows)
         ,.weights_i  (Weights[ch*WeightIndex +: WeightIndex])
+        ,.ready_i    (ready_i)
+        ,.valid_o    (mac_valid[ch])
         ,.data_o     (data_o[ch])
       );
     end

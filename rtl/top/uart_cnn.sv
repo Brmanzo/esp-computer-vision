@@ -176,10 +176,10 @@ module uart_cnn #(
     ,.OutBits     (ConvOutWidth)
     ,.KernelWidth (KernelWidth)
     ,.WeightBits  (WeightWidth)
-    ,.InChannels  (InChannels)
+    ,.InChannels  (16*InChannels)
     ,.OutChannels (OutChannels)
     ,.Stride      (Stride)
-    ,.Weights     (WeightsFlat)
+    ,.Weights     ({16{WeightsFlat}})
   ) conv_layer_inst (
      .clk_i    (clk_i)
     ,.rst_i    (rst_i)
