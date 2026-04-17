@@ -111,10 +111,10 @@ num_classes = len(dataset.classes)
 model = cnn_model(in_ch=1, num_classes=num_classes).to(device)
 
 # Establish schedule for progressive quantization of each layer
-schedule = [LayerConfig(20,  [5, 5, 5, 5,  5, 10, 20], 8, 2),
-            LayerConfig(30, [5, 5, 5, 5,  5, 10, 20], 8, 2),
-            LayerConfig(40, [5, 5, 5, 5,  5, 10, 20], 8, 2),
-            LayerConfig(50, [5, 5, 5, 5, 30, 30], 8, 3),
+schedule = [LayerConfig(20, [5, 5, 5, 10, 20], 8, 4),
+            LayerConfig(30, [5, 5, 5, 10, 20], 8, 4),
+            LayerConfig(40, [5, 5, 5, 10, 20], 8, 4),
+            LayerConfig(50, [5, 5, 5, 10, 20], 8, 4),
             LayerConfig(50, [10], 8, 8)]
 
 model_layers = model.modules()

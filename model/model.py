@@ -8,6 +8,8 @@ from typing import cast
 import torch
 import torch.nn as nn
 
+BRAM_COUNT = 29
+
 class QuantizeBit(torch.autograd.Function):
     '''Quantizes weights to a specified number of bits with symmetric quantization.'''
     @staticmethod
@@ -73,7 +75,17 @@ class cnn_model(nn.Module):
     def __init__(self, in_ch=1, num_classes=5):
         super().__init__()
 
-        self._in_ch = [8, 16, 32, 32]
+        self._in_ch = [8, 16, 24, 32]
+        
+        # One BRAM consumed by binary in_ch
+        rams = BRAM_COUNT - in_ch
+        # Each BRAM can support 4 input channels
+        for ch in self._in_ch:
+            rams -= (ch // 8)   # Cost per conv_layer
+            rams -= (ch // 16)  # Cost per pool_layer
+        
+        assert rams >= 0, f"Model exceeds BRAM budget! Remaining: {rams}"
+        print(f"BRAMs remaining after model layers: {rams}")
 
         self.features = nn.Sequential(
             # Block 0
