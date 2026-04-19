@@ -11,7 +11,7 @@ module pool_layer #(
 
   ,parameter  int unsigned InChannels   = 1
   ,parameter  int unsigned PoolMode     = 0 // 0 for max pooling, 1 for average pooling
-  ,localparam int unsigned OutBits     = InBits
+  ,localparam int unsigned OutBits      = InBits
   ,localparam int unsigned OutChannels  = InChannels
   ,localparam int unsigned KernelArea   = KernelWidth * KernelWidth
 

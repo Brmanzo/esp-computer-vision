@@ -1,7 +1,8 @@
 {
-    "top": "uart_cnn",
+    "top": "uart_sobel",
     "files":
-    ["rtl/top/uart_cnn.sv"
+    ["rtl/top/uart_sobel.sv"
+    ,"rtl/top/uart_cnn.sv"
     ,"rtl/blocks/mag.sv"
     ,"rtl/blocks/conv_layer.sv"
     ,"rtl/blocks/pool_layer.sv"

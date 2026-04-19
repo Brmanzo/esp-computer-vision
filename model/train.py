@@ -106,9 +106,10 @@ test_loader  = DataLoader(test_ds, batch_size=32, shuffle=False,
 device = "cuda" if torch.cuda.is_available() else "cpu"
 torch.backends.cudnn.benchmark = True
 
-num_classes = len(dataset.classes)
-# Import CNN Model and set the optimizer, loss function, and scheduler for training
-model = cnn_model(in_ch=1, num_classes=num_classes).to(device)
+# Define model architecture and quantization schedule
+input_dimensions = (320, 240)
+in_channels = [1, 8, 16, 24, 32]
+kernels     = [[3,2], [3,2], [3,2], [3], [1]]
 
 # Establish schedule for progressive quantization of each layer
 schedule = [LayerConfig(20, [5, 5, 5, 10, 20], 8, 4),
@@ -116,6 +117,17 @@ schedule = [LayerConfig(20, [5, 5, 5, 10, 20], 8, 4),
             LayerConfig(40, [5, 5, 5, 10, 20], 8, 4),
             LayerConfig(50, [5, 5, 5, 10, 20], 8, 4),
             LayerConfig(50, [10], 8, 8)]
+
+
+num_classes = len(dataset.classes)
+# Import CNN Model and set the optimizer, loss function, and scheduler for training
+model = cnn_model(
+    input_dimensions=input_dimensions, 
+    in_channels=in_channels, 
+    kernels=kernels,
+    schedule=schedule,
+    num_classes=num_classes).to(device)
+
 
 model_layers = model.modules()
 assert len(schedule) == sum(1 for m in model_layers if isinstance(m, QuantConv2d)), "Schedule must have an entry for each QuantConv2d layer"

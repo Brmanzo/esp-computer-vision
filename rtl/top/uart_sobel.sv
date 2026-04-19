@@ -1,9 +1,9 @@
-// uart_cnn.sv
+// uart_sobel.sv
 // Bradley Manzo, 2026
 
 `timescale 1ns / 1ps
 /* verilator lint_off PINCONNECTEMPTY */
-module uart_cnn #(
+module uart_sobel #(
    parameter  int unsigned WidthIn        = 320
   ,parameter  int unsigned HeightIn       = 240
   ,parameter  int unsigned KernelWidth    = 3
@@ -94,11 +94,16 @@ module uart_cnn #(
   assign led_o[5:1] = 5'b0;
 
   localparam logic signed
-    [KernelArea*WeightWidth-1:0] WeightsFlat = {
+    [OutChannels*KernelArea*WeightWidth-1:0] WeightsFlat = {
       // gy (channel 1)
       2'sd1,  2'sd1,  2'sd1,
       2'sd0,  2'sd0,  2'sd0,
-      -2'sd1, -2'sd1, -2'sd1
+      -2'sd1, -2'sd1, -2'sd1,
+
+      // gx (channel 0)
+      2'sd1,  2'sd0, -2'sd1,
+      2'sd1,  2'sd0, -2'sd1,
+      2'sd1,  2'sd0, -2'sd1
   };
 
   // UART head to convert UART serial data to AXIS data
@@ -171,7 +176,7 @@ module uart_cnn #(
     ,.OutBits     (ConvOutWidth)
     ,.KernelWidth (KernelWidth)
     ,.WeightBits  (WeightWidth)
-    ,.InChannels  (32*InChannels)
+    ,.InChannels  (InChannels)
     ,.OutChannels (OutChannels)
     ,.Stride      (Stride)
     ,.Weights     (WeightsFlat)

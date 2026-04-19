@@ -8,7 +8,132 @@ from typing import cast
 import torch
 import torch.nn as nn
 
-BRAM_COUNT = 29
+BRAM_COUNT = 30 - 1 # Subtract 1 for the Skid Buffer BRAM on deframer
+
+def render_conv_layer(
+    LineWidthPx,
+    LineCountPx,
+    InBits,
+    OutBits,
+    KernelWidth,
+    WeightBits,
+    InChannels,
+    OutChannels,
+    Stride,
+    Weights,
+    instance,
+    num_instances,
+):
+    if instance == 0:
+        valid_i = "valid_i"
+        data_i = "data_i"
+    else:
+        valid_i = f"pool_{instance - 1}_valid"
+        data_i = f"pool_{instance - 1}_data"
+
+    if instance == num_instances - 1:
+        ready_i = "ready_i"
+    else:
+        ready_i = f"pool_{instance + 1}_ready"
+
+    ready_o = f"pool_{instance}_ready"
+    valid_o = f"pool_{instance}_valid"
+    data_o = f"pool_{instance}_data"
+    lines = [
+        "conv_layer #(",
+        f"   .LineWidthPx ({LineWidthPx})",
+        f"  ,.LineCountPx ({LineCountPx})",
+        f"  ,.InBits      ({InBits})",
+        f"  ,.OutBits     ({OutBits})",
+        f"  ,.KernelWidth ({KernelWidth})",
+        f"  ,.WeightBits  ({WeightBits})",
+        f"  ,.InChannels  ({InChannels})",
+        f"  ,.OutChannels ({OutChannels})",
+        f"  ,.Stride      ({Stride})",
+        f"  ,.Weights     ({Weights})",
+        f") conv_layer_inst_{instance} (",
+        "   .clk_i   (clk_i)",
+        "  ,.rst_i   (rst_i)",
+        "",
+        f"  ,.ready_o  ({ready_o})",
+        f"  ,.valid_i  ({valid_i})",
+        f"  ,.data_i   ({data_i})",
+        "",
+        f"  ,.ready_i  ({ready_i})",
+        f"  ,.valid_o  ({valid_o})",
+        f"  ,.data_o   ({data_o})",
+        ");\n",
+    ]
+    return "\n".join(lines)
+
+def render_pool_layer(
+    LineWidthPx,
+    LineCountPx,
+    InBits,
+    KernelWidth,
+    InChannels,
+    instance,
+    num_instances,
+):
+    if instance == 0:
+        valid_i = "valid_i"
+        data_i = "data_i"
+    else:
+        valid_i = f"pool_{instance - 1}_valid"
+        data_i = f"pool_{instance - 1}_data"
+
+    if instance == num_instances - 1:
+        ready_i = "ready_i"
+    else:
+        ready_i = f"pool_{instance + 1}_ready"
+
+    ready_o = f"pool_{instance}_ready"
+    valid_o = f"pool_{instance}_valid"
+    data_o = f"pool_{instance}_data"
+
+    lines = [
+        "pool_layer #(",
+        f"   .LineWidthPx ({LineWidthPx})",
+        f"  ,.LineCountPx ({LineCountPx})",
+        f"  ,.InBits      ({InBits})",
+        f"  ,.KernelWidth ({KernelWidth})",
+        f"  ,.InChannels  ({InChannels})",
+        f") pool_layer_inst_{instance} (",
+        "   .clk_i    (clk_i)",
+        "  ,.rst_i    (rst_i)",
+        "",
+        f"  ,.ready_o  ({ready_o})",
+        f"  ,.valid_i  ({valid_i})",
+        f"  ,.data_i   ({data_i})",
+        "",
+        f"  ,.ready_i  ({ready_i})",
+        f"  ,.valid_o  ({valid_o})",
+        f"  ,.data_o   ({data_o})",
+        ");\n",
+    ]
+    return "\n".join(lines)
+
+def render_wires(kernels):
+    lines = []
+
+    for layer in range(len(kernels)):
+        for module in range(len(kernels[layer])):
+            mode = "conv" if module == 0 else "pool"
+
+            lines.append(f"wire [0:0] {mode}_{layer}_ready;")
+
+            if layer != 0:
+                lines.append(f"wire [0:0] {mode}_{layer}_valid;")
+                lines.append(f"wire [0:0] {mode}_{layer}_data;")
+
+            is_last_module = module == len(kernels[layer]) - 1
+            is_last_layer = layer == len(kernels) - 1
+
+            if not (is_last_module and is_last_layer):
+                lines.append("")
+
+    return "\n".join(lines)
+
 
 class QuantizeBit(torch.autograd.Function):
     '''Quantizes weights to a specified number of bits with symmetric quantization.'''
@@ -72,50 +197,122 @@ class BinaryActivation(nn.Module):
         return BinaryActivationSTE.apply(x)
 
 class cnn_model(nn.Module):
-    def __init__(self, in_ch=1, num_classes=5):
-        super().__init__()
 
-        self._in_ch = [8, 16, 24, 32]
-        
-        # One BRAM consumed by binary in_ch
-        rams = BRAM_COUNT - in_ch
+    def ram_utilization(self) -> None:
+        rams = BRAM_COUNT
         # Each BRAM can support 4 input channels
-        for ch in self._in_ch:
-            rams -= (ch // 8)   # Cost per conv_layer
-            rams -= (ch // 16)  # Cost per pool_layer
+        for layer in range(len(self._kernels)):
+            for module in range(len(self._kernels[layer])):
+                if (self._kernels[layer][module] - 1) <= 0:
+                    continue # Skip layers with kernel size 1 (e.g., classifier)
+                target_ram_bits  = 16 if (self._input_widths[layer][module] - 1) <= 256 else 8
+                channels_per_ram = target_ram_bits // (self._kernels[layer][module] - 1) * self._input_bits[layer][module]
+                rams_per_layer = (self._in_ch[layer] + channels_per_ram - 1) // channels_per_ram
+                
+                rams -= rams_per_layer
         
         assert rams >= 0, f"Model exceeds BRAM budget! Remaining: {rams}"
         print(f"BRAMs remaining after model layers: {rams}")
 
+    def render_verilog(self) -> None:
+        print(render_wires(self._kernels))
+        for layer in range(self._layers):
+            for module in range(len(self._kernels[layer])):
+                if module == 0: # Convolution module
+                    print(render_conv_layer(
+                        LineWidthPx=self._input_widths[layer][0],
+                        LineCountPx=self._input_heights[layer][0],
+                        InBits=self._input_bits[layer][0],
+                        OutBits=self._output_bits[layer],
+                        KernelWidth=self._kernels[layer][0],
+                        WeightBits=self._weight_bits[layer],
+                        InChannels=self._in_ch[layer],
+                        OutChannels=self._in_ch[layer+1] if layer < self._layers - 1 else self._num_classes,
+                        Stride=self._stride[layer],
+                        Weights=f"weights_{layer}",
+                        instance=layer,
+                        num_instances=self._layers
+                    ))
+                elif module == 1: # Pooling module
+                    print(render_pool_layer(
+                        LineWidthPx=self._input_widths[layer][1],
+                        LineCountPx=self._input_heights[layer][1],
+                        InBits=self._input_bits[layer][1],
+                        KernelWidth=self._kernels[layer][1],
+                        InChannels=self._in_ch[layer+1] if layer < self._layers - 1 else self._num_classes,
+                        instance=layer,
+                        num_instances=self._layers
+                    ))
+
+
+    def __init__(self, input_dimensions, in_channels, kernels, schedule, num_classes=5):
+        super().__init__()
+
+        self._in_ch       = in_channels
+        self._num_classes = num_classes
+        self._layers = len(self._in_ch)
+        
+        self._input_bits       = [[1, 1] for _ in range(self._layers)]
+        self._output_bits      = [    1  for _ in range(self._layers)]
+        self._kernels          = kernels
+
+        self._input_dimensions = input_dimensions
+        w, h = self._input_dimensions
+
+        self._input_widths     = [[] for _ in range(self._layers)]
+        self._input_heights    = [[] for _ in range(self._layers)]
+        
+        for layer in range(self._layers):
+            for module in range(len(self._kernels[layer])):
+                self._input_widths[layer].append(w)
+                self._input_heights[layer].append(h)
+
+                if module == 0: # Convolution module
+                    w = w - self._kernels[layer][module] + 1
+                    h = h - self._kernels[layer][module] + 1
+
+                elif module == 1: # Pooling module
+                    w = w // self._kernels[layer][1]
+                    h = h // self._kernels[layer][1]
+
+        self._weight_bits   = [schedule[i]._q_min_bits for i in range(self._layers)]
+
+        self._stride        = [    1  for _ in range(self._layers)]
+        
+        # One BRAM consumed by binary in_ch
+        self.ram_utilization()
+
+        self.render_verilog()
+
         self.features = nn.Sequential(
             # Block 0
-            QuantConv2d(in_ch, self._in_ch[0], kernel_size=3, padding=0, bias=False),
-            nn.BatchNorm2d(self._in_ch[0]),
-            BinaryActivation(),
-            nn.MaxPool2d(2),
-
-            # Block 1
-            QuantConv2d(self._in_ch[0], self._in_ch[1], kernel_size=3, padding=0, bias=False),
+            QuantConv2d(self._in_ch[0], self._in_ch[1], kernel_size=self._kernels[0][0], padding=0, bias=False),
             nn.BatchNorm2d(self._in_ch[1]),
             BinaryActivation(),
-            nn.MaxPool2d(2),
+            nn.MaxPool2d(self._kernels[0][1]),
 
-            # Block 2
-            QuantConv2d(self._in_ch[1], self._in_ch[2], kernel_size=3, padding=0, bias=False),
+            # Block 1
+            QuantConv2d(self._in_ch[1], self._in_ch[2], kernel_size=self._kernels[1][0], padding=0, bias=False),
             nn.BatchNorm2d(self._in_ch[2]),
             BinaryActivation(),
-            nn.MaxPool2d(2),
+            nn.MaxPool2d(self._kernels[1][1]),
+
+            # Block 2
+            QuantConv2d(self._in_ch[2], self._in_ch[3], kernel_size=self._kernels[2][0], padding=0, bias=False),
+            nn.BatchNorm2d(self._in_ch[3]),
+            BinaryActivation(),
+            nn.MaxPool2d(self._kernels[2][1]),
 
             # Block 3
-            QuantConv2d(self._in_ch[2], self._in_ch[3], kernel_size=3, padding=0, bias=False),
-            nn.BatchNorm2d(self._in_ch[3]),
+            QuantConv2d(self._in_ch[3], self._in_ch[4], kernel_size=self._kernels[3][0], padding=0, bias=False),
+            nn.BatchNorm2d(self._in_ch[4]),
         )
 
         # Classifier Block
         self.classifier = nn.Sequential(
             nn.Dropout2d(p=0.1),
-            QuantConv2d(self._in_ch[3], num_classes, kernel_size=1, bias=False),
-            nn.BatchNorm2d(num_classes)
+            QuantConv2d(self._in_ch[4], self._num_classes, kernel_size=self._kernels[4][0], bias=False),
+            nn.BatchNorm2d(self._num_classes)
         )
 
     def forward(self, x):
