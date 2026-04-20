@@ -1,9 +1,9 @@
-// tb_fc_layer.sv
+// tb_linear_layer.sv
 // Bradley Manzo, 2026
   
 /* verilator lint_off PINCONNECTEMPTY */
 `timescale 1ns / 1ps
-module tb_fc_layer #(
+module tb_linear_layer #(
    parameter int unsigned WidthIn      = 1
   ,parameter int unsigned WidthOut     = 32
   ,parameter int unsigned WeightWidth  = 2
@@ -27,7 +27,7 @@ module tb_fc_layer #(
 `include "injected_weights.vh"
 `include "injected_biases.vh"
 
-fc_layer #(
+linear_layer #(
      .WidthIn     (WidthIn)
     ,.WidthOut    (WidthOut)
     ,.WeightWidth (WeightWidth)

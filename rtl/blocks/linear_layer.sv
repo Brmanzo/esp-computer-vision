@@ -1,7 +1,7 @@
-// fc_layer.sv
+// linear_layer.sv
 // Bradley Manzo, 2026
 
-module fc_layer #(
+module linear_layer #(
    parameter int unsigned WidthIn      = 1
   ,parameter int unsigned WidthOut     = 1
   ,parameter int unsigned WeightWidth  = 2

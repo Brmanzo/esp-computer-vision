@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 
 from .model import cnn_model, QuantConv2d
 from .export import export_model_to_csv
+from .quantize import LayerConfig
 
 IMG_H, IMG_W = 240, 320
 DATA_SPLIT = 0.8
@@ -26,35 +27,6 @@ WEIGHT_DECAY  = 1e-5
 
 train_acc_history = []
 test_acc_history = []
-
-class LayerConfig:
-    def __init__(self, q_start=0, q_epochs=[15,15,15,15,15,15,30], q_max_bits=8, q_min_bits=2):
-        self._q_start = q_start
-        assert len(q_epochs) == q_max_bits - q_min_bits + 1, "q_epochs must specify epochs for each bit-width quantization step + the final plateau"
-        self._epochs_per_bit = q_epochs
-        self._q_max_bits = q_max_bits
-        self._q_min_bits = q_min_bits
-
-    def total_epochs(self):
-        '''Return the total epochs to carry out the final quantization'''
-        return self._q_start + sum(self._epochs_per_bit)
-    
-    def get_target_bits(self, current_epoch):
-            '''Returns the target bit-width for a given epoch, or None if quantization hasn't started.'''
-            if current_epoch < self._q_start:
-                return None
-                
-            epochs_passed = current_epoch - self._q_start
-            accumulated_epochs = 0
-            
-            # Walk through the schedule to find our current bit-width
-            for i, duration in enumerate(self._epochs_per_bit):
-                accumulated_epochs += duration
-                if epochs_passed < accumulated_epochs:
-                    return self._q_max_bits - i
-                    
-            # If we've passed the final scheduled duration, clamp to min bits
-            return self._q_min_bits
     
 def pad_to_target(img):
     '''Dataset images are smaller than first conv layer -> pad to 320x240.'''
@@ -66,8 +38,21 @@ def pad_to_target(img):
     pad_bottom = max(IMG_H - h - pad_top, 0)
     return TF.pad(img, [pad_left, pad_top, pad_right, pad_bottom], fill=255)
 
+# Define model architecture and quantization schedule
+input_dimensions = (320, 240)
+in_channels = [1, 8, 16, 24, 32]
+in_bits     = [1, 1, 1, 1, 8]
+kernels     = [[3,2], [3,2], [3,2], [3], [1]]
+
+# Establish schedule for progressive quantization of each layer
+schedule = [LayerConfig(20, [5, 5, 5, 10, 20], 8, 4),
+            LayerConfig(30, [5, 5, 5, 10, 20], 8, 4),
+            LayerConfig(40, [5, 5, 5, 10, 20], 8, 4),
+            LayerConfig(50, [5, 5, 5, 10, 20], 8, 4),
+            LayerConfig(50, [10], 8, 8)]
+
 tfm_train = transforms.Compose([
-    transforms.Grayscale(1),
+    transforms.Grayscale(in_bits[0]),  # Ensure images are single-channel grayscale
     
     # Pad the image to 320x240 (centers it and fills borders with white: 255)
     transforms.Lambda(pad_to_target),
@@ -106,24 +91,12 @@ test_loader  = DataLoader(test_ds, batch_size=32, shuffle=False,
 device = "cuda" if torch.cuda.is_available() else "cpu"
 torch.backends.cudnn.benchmark = True
 
-# Define model architecture and quantization schedule
-input_dimensions = (320, 240)
-in_channels = [1, 8, 16, 24, 32]
-kernels     = [[3,2], [3,2], [3,2], [3], [1]]
-
-# Establish schedule for progressive quantization of each layer
-schedule = [LayerConfig(20, [5, 5, 5, 10, 20], 8, 4),
-            LayerConfig(30, [5, 5, 5, 10, 20], 8, 4),
-            LayerConfig(40, [5, 5, 5, 10, 20], 8, 4),
-            LayerConfig(50, [5, 5, 5, 10, 20], 8, 4),
-            LayerConfig(50, [10], 8, 8)]
-
-
 num_classes = len(dataset.classes)
 # Import CNN Model and set the optimizer, loss function, and scheduler for training
 model = cnn_model(
     input_dimensions=input_dimensions, 
     in_channels=in_channels, 
+    in_bits=in_bits,
     kernels=kernels,
     schedule=schedule,
     num_classes=num_classes).to(device)

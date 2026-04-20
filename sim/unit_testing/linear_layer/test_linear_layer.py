@@ -246,7 +246,7 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut,
     os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
     os.environ["INJECTED_BIASES_INT"]  = str(Biases)
 
-    wrapper_path = os.path.join(tbpath, "tb_fc_layer.sv")
+    wrapper_path = os.path.join(tbpath, "tb_linear_layer.sv")
 
     runner(
         simulator=simulator,
@@ -256,7 +256,7 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut,
         testname=test_name,
         work_dir=custom_work_dir,
         includes=[custom_work_dir],        # so injected_*.vh can be `included
-        toplevel_override="tb_fc_layer",
+        toplevel_override="tb_linear_layer",
         extra_sources=[wrapper_path],
     )
 
@@ -309,7 +309,7 @@ def test_channels(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthO
     os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
     os.environ["INJECTED_BIASES_INT"]  = str(Biases)
 
-    wrapper_path = os.path.join(tbpath, "tb_fc_layer.sv")
+    wrapper_path = os.path.join(tbpath, "tb_linear_layer.sv")
 
     runner(
         simulator=simulator,
@@ -319,7 +319,7 @@ def test_channels(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthO
         testname=test_name,
         work_dir=custom_work_dir,
         includes=[custom_work_dir],        # so injected_*.vh can be `included
-        toplevel_override="tb_fc_layer",
+        toplevel_override="tb_linear_layer",
         extra_sources=[wrapper_path],
     )
 

@@ -3,6 +3,7 @@
 
 import torch
 import torch.nn as nn
+import math
 from typing import cast
 
 import torch
@@ -13,67 +14,7 @@ from pathlib import Path
 BRAM_COUNT = 30 - 1 # Subtract 1 for the Skid Buffer BRAM on deframer
 
 from .render import render_header, render_wires, render_conv_layer, render_pool_layer, render_footer
-
-class QuantizeBit(torch.autograd.Function):
-    '''Quantizes weights to a specified number of bits with symmetric quantization.'''
-    @staticmethod
-    def forward(ctx, w: torch.Tensor, bits: int = 4):
-        if bits == 2:
-            qmin, qmax = -1, 1
-        else:
-            qmin = -2**(bits-1)
-            qmax = 2**(bits-1) - 1
-
-        # Compute symmetric scale from max abs weight
-        max_abs = w.abs().max()
-        scale = max_abs / qmax if max_abs > 0 else 1.0
-
-        # Q(x;s=scale,b=bits) = s * clip(round(x/s), (-2^b), (2^b)-1)
-        q = torch.round(w / scale)
-        q = torch.clip(q, qmin, qmax)
-        w_q = q * scale
-
-        return w_q
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        # Return gradient for 'w', and None for 'bits'
-        return grad_output, None
-
-class QuantConv2d(nn.Conv2d):
-    '''Applies quantization to conv2d layer weights during the forward pass when enabled.'''
-    def __init__(self, *args, threshold: float = 0.05, bits: int = 4, **kwargs):
-        # Hardware tip: If your FPGA/ASIC doesn't support biases yet, 
-        # force bias=False here or pass it in kwargs.
-        super().__init__(*args, **kwargs)
-        self._threshold = threshold
-        self._bits = bits
-        self._quantize = False
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self._quantize:
-            # Cast the output to guarantee to the linter that this is a Tensor
-            w_q = cast(torch.Tensor, QuantizeBit.apply(self.weight, self._bits))
-            return self._conv_forward(x, w_q, self.bias)
-        else:
-            return self._conv_forward(x, self.weight, self.bias)
-        
-class BinaryActivationSTE(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x):
-        ctx.save_for_backward(x)
-        return torch.where(x > 0, 1.0, -1.0)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        x, = ctx.saved_tensors
-        grad = grad_output.clone()
-        grad[x.abs() > 1] = 0
-        return grad
-    
-class BinaryActivation(nn.Module):
-    def forward(self, x):
-        return BinaryActivationSTE.apply(x)
+from .quantize import QuantConv2d, QuantizeActivation
 
 class cnn_model(nn.Module):
 
@@ -85,7 +26,7 @@ class cnn_model(nn.Module):
                 if (self._kernels[layer][module] - 1) <= 0:
                     continue # Skip layers with kernel size 1 (e.g., classifier)
                 target_ram_bits  = 16 if (self._input_widths[layer][module] - 1) <= 256 else 8
-                channels_per_ram = target_ram_bits // (self._kernels[layer][module] - 1) * self._input_bits[layer][module]
+                channels_per_ram = target_ram_bits // (self._kernels[layer][module] - 1) * self._input_bits[layer]
                 rams_per_layer = (self._in_ch[layer] + channels_per_ram - 1) // channels_per_ram
                 
                 rams -= rams_per_layer
@@ -106,12 +47,12 @@ class cnn_model(nn.Module):
                             render_conv_layer(
                                 LineWidthPx=self._input_widths[layer][0],
                                 LineCountPx=self._input_heights[layer][0],
-                                InBits=self._input_bits[layer][0],
-                                OutBits=self._output_bits[layer],
+                                InBits=self._input_bits[layer],
+                                OutBits=self._out_bits[layer],
                                 KernelWidth=self._kernels[layer][0],
                                 WeightBits=self._weight_bits[layer],
                                 InChannels=self._in_ch[layer],
-                                OutChannels=self._in_ch[layer + 1] if layer < self._layers - 1 else self._num_classes,
+                                OutChannels=self._out_ch[layer],
                                 Stride=self._stride[layer],
                                 Weights=f"weights_{layer}",
                                 instance=layer,
@@ -125,9 +66,9 @@ class cnn_model(nn.Module):
                             render_pool_layer(
                                 LineWidthPx=self._input_widths[layer][1],
                                 LineCountPx=self._input_heights[layer][1],
-                                InBits=self._input_bits[layer][1],
+                                InBits=self._input_bits[layer],
                                 KernelWidth=self._kernels[layer][1],
-                                InChannels=self._in_ch[layer + 1] if layer < self._layers - 1 else self._num_classes,
+                                InChannels=self._out_ch[layer],
                                 instance=layer,
                                 num_instances=self._layers,
                                 kernels=self._kernels,
@@ -137,18 +78,20 @@ class cnn_model(nn.Module):
 
             print(render_footer(), file=f)
 
-    def __init__(self, input_dimensions, in_channels, kernels, schedule, num_classes=5):
+    def __init__(self, input_dimensions, in_channels, in_bits, kernels, schedule, num_classes=5):
         super().__init__()
 
         repo_root = Path(__file__).resolve().parents[1]   # adjust depth as needed
         out_file = repo_root / "rtl" / "blocks" / "cnn.sv"
 
         self._in_ch       = in_channels
+        self._out_ch      = in_channels[1:] + [num_classes]
         self._num_classes = num_classes
         self._layers = len(self._in_ch)
         
-        self._input_bits       = [[1, 1] for _ in range(self._layers)]
-        self._output_bits      = [    1  for _ in range(self._layers)]
+        self._input_bits       = in_bits
+        acc_bits = in_bits[-1] + schedule[-1]._q_min_bits + math.ceil(math.log2(self._in_ch[-1]))
+        self._out_bits      = in_bits[1:] + [acc_bits]
         self._kernels          = kernels
 
         self._input_dimensions = input_dimensions
@@ -181,33 +124,34 @@ class cnn_model(nn.Module):
 
         self.features = nn.Sequential(
             # Block 0
-            QuantConv2d(self._in_ch[0], self._in_ch[1], kernel_size=self._kernels[0][0], padding=0, bias=False),
-            nn.BatchNorm2d(self._in_ch[1]),
-            BinaryActivation(),
+            QuantConv2d(self._in_ch[0], self._out_ch[0], kernel_size=self._kernels[0][0], padding=0, bias=False),
+            nn.BatchNorm2d(self._out_ch[0]),
+            QuantizeActivation(bits=self._out_bits[0]),
             nn.MaxPool2d(self._kernels[0][1]),
 
             # Block 1
-            QuantConv2d(self._in_ch[1], self._in_ch[2], kernel_size=self._kernels[1][0], padding=0, bias=False),
-            nn.BatchNorm2d(self._in_ch[2]),
-            BinaryActivation(),
+            QuantConv2d(self._in_ch[1], self._out_ch[1], kernel_size=self._kernels[1][0], padding=0, bias=False),
+            nn.BatchNorm2d(self._out_ch[1]),
+            QuantizeActivation(bits=self._out_bits[1]),
             nn.MaxPool2d(self._kernels[1][1]),
 
             # Block 2
-            QuantConv2d(self._in_ch[2], self._in_ch[3], kernel_size=self._kernels[2][0], padding=0, bias=False),
-            nn.BatchNorm2d(self._in_ch[3]),
-            BinaryActivation(),
+            QuantConv2d(self._in_ch[2], self._out_ch[2], kernel_size=self._kernels[2][0], padding=0, bias=False),
+            nn.BatchNorm2d(self._out_ch[2]),
+            QuantizeActivation(bits=self._out_bits[2]),
             nn.MaxPool2d(self._kernels[2][1]),
 
             # Block 3
-            QuantConv2d(self._in_ch[3], self._in_ch[4], kernel_size=self._kernels[3][0], padding=0, bias=False),
-            nn.BatchNorm2d(self._in_ch[4]),
+            QuantConv2d(self._in_ch[3], self._out_ch[3], kernel_size=self._kernels[3][0], padding=0, bias=False),
+            nn.BatchNorm2d(self._out_ch[3]),
+            QuantizeActivation(bits=self._out_bits[3]),
         )
 
         # Classifier Block
         self.classifier = nn.Sequential(
             nn.Dropout2d(p=0.1),
-            QuantConv2d(self._in_ch[4], self._num_classes, kernel_size=self._kernels[4][0], bias=False),
-            nn.BatchNorm2d(self._num_classes)
+            QuantConv2d(self._in_ch[4], self._out_ch[4], kernel_size=self._kernels[4][0], bias=False),
+            nn.BatchNorm2d(self._out_ch[4])
         )
 
     def forward(self, x):

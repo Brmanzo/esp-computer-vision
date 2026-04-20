@@ -1,4 +1,4 @@
-// tb_fc_layer.sv
+// tb_neuron.sv
 // Bradley Manzo, 2026
   
 /* verilator lint_off PINCONNECTEMPTY */

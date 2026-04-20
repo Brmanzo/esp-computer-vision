@@ -1,0 +1,7 @@
+{
+    "top": "linear_layer",
+    "files":
+    ["rtl/blocks/linear_layer.sv"
+    ,"rtl/lib/neuron.sv"
+    ]
+}
