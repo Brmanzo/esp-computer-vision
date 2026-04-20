@@ -31,7 +31,7 @@ jobs:
           declare -A SEEN=()
 
           # 1) If RTL blocks changed, map block -> unit test dir
-          mapfile -t RTL < <(echo "$CHANGED" | grep -E '^rtl/blocks/.*\.(sv|py)$' || true)
+          mapfile -t RTL < <(echo "$CHANGED" | grep -E '^rtl/blocks/.*\.(sv|py)$' | grep -vE '^rtl/blocks/cnn\.sv$' || true)
           for f in "${RTL[@]}"; do
             base="$(basename "$f")"
             base="${base%.*}"

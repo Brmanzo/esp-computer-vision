@@ -8,132 +8,11 @@ from typing import cast
 import torch
 import torch.nn as nn
 
+from pathlib import Path
+
 BRAM_COUNT = 30 - 1 # Subtract 1 for the Skid Buffer BRAM on deframer
 
-def render_conv_layer(
-    LineWidthPx,
-    LineCountPx,
-    InBits,
-    OutBits,
-    KernelWidth,
-    WeightBits,
-    InChannels,
-    OutChannels,
-    Stride,
-    Weights,
-    instance,
-    num_instances,
-):
-    if instance == 0:
-        valid_i = "valid_i"
-        data_i = "data_i"
-    else:
-        valid_i = f"pool_{instance - 1}_valid"
-        data_i = f"pool_{instance - 1}_data"
-
-    if instance == num_instances - 1:
-        ready_i = "ready_i"
-    else:
-        ready_i = f"pool_{instance + 1}_ready"
-
-    ready_o = f"pool_{instance}_ready"
-    valid_o = f"pool_{instance}_valid"
-    data_o = f"pool_{instance}_data"
-    lines = [
-        "conv_layer #(",
-        f"   .LineWidthPx ({LineWidthPx})",
-        f"  ,.LineCountPx ({LineCountPx})",
-        f"  ,.InBits      ({InBits})",
-        f"  ,.OutBits     ({OutBits})",
-        f"  ,.KernelWidth ({KernelWidth})",
-        f"  ,.WeightBits  ({WeightBits})",
-        f"  ,.InChannels  ({InChannels})",
-        f"  ,.OutChannels ({OutChannels})",
-        f"  ,.Stride      ({Stride})",
-        f"  ,.Weights     ({Weights})",
-        f") conv_layer_inst_{instance} (",
-        "   .clk_i   (clk_i)",
-        "  ,.rst_i   (rst_i)",
-        "",
-        f"  ,.ready_o  ({ready_o})",
-        f"  ,.valid_i  ({valid_i})",
-        f"  ,.data_i   ({data_i})",
-        "",
-        f"  ,.ready_i  ({ready_i})",
-        f"  ,.valid_o  ({valid_o})",
-        f"  ,.data_o   ({data_o})",
-        ");\n",
-    ]
-    return "\n".join(lines)
-
-def render_pool_layer(
-    LineWidthPx,
-    LineCountPx,
-    InBits,
-    KernelWidth,
-    InChannels,
-    instance,
-    num_instances,
-):
-    if instance == 0:
-        valid_i = "valid_i"
-        data_i = "data_i"
-    else:
-        valid_i = f"pool_{instance - 1}_valid"
-        data_i = f"pool_{instance - 1}_data"
-
-    if instance == num_instances - 1:
-        ready_i = "ready_i"
-    else:
-        ready_i = f"pool_{instance + 1}_ready"
-
-    ready_o = f"pool_{instance}_ready"
-    valid_o = f"pool_{instance}_valid"
-    data_o = f"pool_{instance}_data"
-
-    lines = [
-        "pool_layer #(",
-        f"   .LineWidthPx ({LineWidthPx})",
-        f"  ,.LineCountPx ({LineCountPx})",
-        f"  ,.InBits      ({InBits})",
-        f"  ,.KernelWidth ({KernelWidth})",
-        f"  ,.InChannels  ({InChannels})",
-        f") pool_layer_inst_{instance} (",
-        "   .clk_i    (clk_i)",
-        "  ,.rst_i    (rst_i)",
-        "",
-        f"  ,.ready_o  ({ready_o})",
-        f"  ,.valid_i  ({valid_i})",
-        f"  ,.data_i   ({data_i})",
-        "",
-        f"  ,.ready_i  ({ready_i})",
-        f"  ,.valid_o  ({valid_o})",
-        f"  ,.data_o   ({data_o})",
-        ");\n",
-    ]
-    return "\n".join(lines)
-
-def render_wires(kernels):
-    lines = []
-
-    for layer in range(len(kernels)):
-        for module in range(len(kernels[layer])):
-            mode = "conv" if module == 0 else "pool"
-
-            lines.append(f"wire [0:0] {mode}_{layer}_ready;")
-
-            if layer != 0:
-                lines.append(f"wire [0:0] {mode}_{layer}_valid;")
-                lines.append(f"wire [0:0] {mode}_{layer}_data;")
-
-            is_last_module = module == len(kernels[layer]) - 1
-            is_last_layer = layer == len(kernels) - 1
-
-            if not (is_last_module and is_last_layer):
-                lines.append("")
-
-    return "\n".join(lines)
-
+from .render import render_header, render_wires, render_conv_layer, render_pool_layer, render_footer
 
 class QuantizeBit(torch.autograd.Function):
     '''Quantizes weights to a specified number of bits with symmetric quantization.'''
@@ -214,39 +93,55 @@ class cnn_model(nn.Module):
         assert rams >= 0, f"Model exceeds BRAM budget! Remaining: {rams}"
         print(f"BRAMs remaining after model layers: {rams}")
 
-    def render_verilog(self) -> None:
-        print(render_wires(self._kernels))
-        for layer in range(self._layers):
-            for module in range(len(self._kernels[layer])):
-                if module == 0: # Convolution module
-                    print(render_conv_layer(
-                        LineWidthPx=self._input_widths[layer][0],
-                        LineCountPx=self._input_heights[layer][0],
-                        InBits=self._input_bits[layer][0],
-                        OutBits=self._output_bits[layer],
-                        KernelWidth=self._kernels[layer][0],
-                        WeightBits=self._weight_bits[layer],
-                        InChannels=self._in_ch[layer],
-                        OutChannels=self._in_ch[layer+1] if layer < self._layers - 1 else self._num_classes,
-                        Stride=self._stride[layer],
-                        Weights=f"weights_{layer}",
-                        instance=layer,
-                        num_instances=self._layers
-                    ))
-                elif module == 1: # Pooling module
-                    print(render_pool_layer(
-                        LineWidthPx=self._input_widths[layer][1],
-                        LineCountPx=self._input_heights[layer][1],
-                        InBits=self._input_bits[layer][1],
-                        KernelWidth=self._kernels[layer][1],
-                        InChannels=self._in_ch[layer+1] if layer < self._layers - 1 else self._num_classes,
-                        instance=layer,
-                        num_instances=self._layers
-                    ))
+    def render_verilog(self, filepath: Path) -> None:
+        with open(filepath, "w", encoding="utf-8") as f:
+            print(render_header(), file=f)
+            print(render_wires(self._kernels), file=f)
+            print("", file=f)
 
+            for layer in range(self._layers):
+                for module in range(len(self._kernels[layer])):
+                    if module == 0:  # Convolution module
+                        print(
+                            render_conv_layer(
+                                LineWidthPx=self._input_widths[layer][0],
+                                LineCountPx=self._input_heights[layer][0],
+                                InBits=self._input_bits[layer][0],
+                                OutBits=self._output_bits[layer],
+                                KernelWidth=self._kernels[layer][0],
+                                WeightBits=self._weight_bits[layer],
+                                InChannels=self._in_ch[layer],
+                                OutChannels=self._in_ch[layer + 1] if layer < self._layers - 1 else self._num_classes,
+                                Stride=self._stride[layer],
+                                Weights=f"weights_{layer}",
+                                instance=layer,
+                                num_instances=self._layers,
+                                kernels=self._kernels,
+                            ),
+                            file=f,
+                        )
+                    elif module == 1:  # Pooling module
+                        print(
+                            render_pool_layer(
+                                LineWidthPx=self._input_widths[layer][1],
+                                LineCountPx=self._input_heights[layer][1],
+                                InBits=self._input_bits[layer][1],
+                                KernelWidth=self._kernels[layer][1],
+                                InChannels=self._in_ch[layer + 1] if layer < self._layers - 1 else self._num_classes,
+                                instance=layer,
+                                num_instances=self._layers,
+                                kernels=self._kernels,
+                            ),
+                            file=f,
+                        )
+
+            print(render_footer(), file=f)
 
     def __init__(self, input_dimensions, in_channels, kernels, schedule, num_classes=5):
         super().__init__()
+
+        repo_root = Path(__file__).resolve().parents[1]   # adjust depth as needed
+        out_file = repo_root / "rtl" / "blocks" / "cnn.sv"
 
         self._in_ch       = in_channels
         self._num_classes = num_classes
@@ -282,7 +177,7 @@ class cnn_model(nn.Module):
         # One BRAM consumed by binary in_ch
         self.ram_utilization()
 
-        self.render_verilog()
+        self.render_verilog(out_file)
 
         self.features = nn.Sequential(
             # Block 0
