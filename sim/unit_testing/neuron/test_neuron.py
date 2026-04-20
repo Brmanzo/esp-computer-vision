@@ -120,7 +120,7 @@ def unpack_weights(packed_val: int, WW: int, IC: int):
 def pack_data_i(samples, width):
     """
     samples: list[int] length = InChannels
-    width: WidthIn
+    width: InBits
     Returns packed int: sum(samples[ic] << (ic*width))
     """
     mask = (1 << width) - 1
@@ -153,7 +153,7 @@ def unpack_data_i(packed, width_in, IC):
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize(
-    "WidthIn, WeightWidth, InChannels, WidthOut, Weights, BiasWidth, Bias",
+    "InBits, WeightBits, InChannels, OutBits, Weights, BiasBits, Bias",
     [
         (1, 2, 1, output_width(1, 2, 1), gen_weights(2, 1, seed=1234), 2, gen_bias(2)),
         (2, 3, 1, output_width(2, 3, 1), gen_weights(3, 1, seed=1234), 3, gen_bias(3)),
@@ -161,7 +161,7 @@ def unpack_data_i(packed, width_in, IC):
         (8, 8, 1, output_width(8, 8, 1), gen_weights(8, 1, seed=1234), 8, gen_bias(8)),
     ],
 )
-def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut, Weights, BiasWidth, Bias):
+def test_width(test_name, simulator, InBits, WeightBits, InChannels, OutBits, Weights, BiasBits, Bias):
     parameters = dict(locals())
     del parameters["test_name"]
     del parameters["simulator"]
@@ -170,14 +170,14 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut,
     del parameters["Weights"]
     del parameters["Bias"]
 
-    param_str = f"WidthIn_{WidthIn}_WeightWidth_{WeightWidth}_WidthOut_{WidthOut}_test_{test_name}"
+    param_str = f"InBits_{InBits}_WeightBits_{WeightBits}_OutBits_{OutBits}_test_{test_name}"
     custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
     if simulator.startswith("icarus") and os.path.exists(custom_work_dir):
         shutil.rmtree(custom_work_dir)
     os.makedirs(custom_work_dir, exist_ok=True)
 
     # ---- Emit injected_weights.vh ----
-    total_bits_w = int(InChannels) * int(WeightWidth)
+    total_bits_w = int(InChannels) * int(WeightBits)
     vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
     with open(vh_path, "w") as f:
         hex_width = (total_bits_w + 3) // 4
@@ -187,7 +187,7 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut,
             f"{total_bits_w}'h{weights_bits:0{hex_width}x};\n"
         )
     # ---- Emit injected_bias.vh ----
-    total_bits_b = BiasWidth
+    total_bits_b = BiasBits
     vhb_path = os.path.join(custom_work_dir, "injected_bias.vh")
     with open(vhb_path, "w") as f:
         hex_width = (total_bits_b + 3) // 4
@@ -218,7 +218,7 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut,
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize(
-    "WidthIn, WeightWidth, InChannels, WidthOut, Weights, BiasWidth, Bias",
+    "InBits, WeightBits, InChannels, OutBits, Weights, BiasBits, Bias",
     [
         (1, 2, 1,  output_width(1, 2, 1),  gen_weights(2, 1, seed=1234),  8, gen_bias(8)),
         (1, 2, 2,  output_width(1, 2, 2),  gen_weights(2, 2, seed=1234),  8, gen_bias(8)),
@@ -226,7 +226,7 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut,
         (1, 2, 32, output_width(1, 2, 32), gen_weights(2, 32, seed=1234), 8, gen_bias(8)),
     ],
 )
-def test_channels(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut, Weights, BiasWidth, Bias):
+def test_channels(test_name, simulator, InBits, WeightBits, InChannels, OutBits, Weights, BiasBits, Bias):
     parameters = dict(locals())
     del parameters["test_name"]
     del parameters["simulator"]
@@ -242,7 +242,7 @@ def test_channels(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthO
     os.makedirs(custom_work_dir, exist_ok=True)
 
     # ---- Emit injected_weights.vh ----
-    total_bits_w = int(InChannels) * int(WeightWidth)
+    total_bits_w = int(InChannels) * int(WeightBits)
     vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
     with open(vh_path, "w") as f:
         hex_width = (total_bits_w + 3) // 4
@@ -252,7 +252,7 @@ def test_channels(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthO
             f"{total_bits_w}'h{weights_bits:0{hex_width}x};\n"
         )
     # ---- Emit injected_bias.vh ----
-    total_bits_b = BiasWidth
+    total_bits_b = BiasBits
     vhb_path = os.path.join(custom_work_dir, "injected_bias.vh")
     with open(vhb_path, "w") as f:
         hex_width = (total_bits_b + 3) // 4
@@ -281,18 +281,18 @@ def test_channels(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthO
     )
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("WidthIn, WeightWidth, InChannels, WidthOut", 
+@pytest.mark.parametrize("InBits, WeightBits, InChannels, OutBits", 
                          [(1, 2, 1, output_width(1, 2, 1))])
-def test_lint(simulator, WidthIn, WeightWidth, InChannels, WidthOut):
+def test_lint(simulator, InBits, WeightBits, InChannels, OutBits):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("WidthIn, WeightWidth, InChannels, WidthOut, Weights, BiasWidth, Bias", 
+@pytest.mark.parametrize("InBits, WeightBits, InChannels, OutBits, Weights, BiasBits, Bias", 
                          [(1, 2, 1, output_width(1, 2, 1), gen_weights(2, 1, seed=1234), 2, gen_bias(2))])
-def test_style(simulator, WidthIn, WeightWidth, InChannels, WidthOut, Weights, BiasWidth, Bias):
+def test_style(simulator, InBits, WeightBits, InChannels, OutBits, Weights, BiasBits, Bias):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
@@ -306,22 +306,22 @@ class NeuronModel():
 
         self._q = queue.SimpleQueue()
 
-        self._WidthIn     = int(dut.WidthIn.value)
-        self._WidthOut    = int(dut.WidthOut.value)
+        self._InBits     = int(dut.InBits.value)
+        self._OutBits    = int(dut.OutBits.value)
         self._InChannels  = int(dut.InChannels.value)
-        self._WeightWidth = int(dut.WeightWidth.value)
-        self._BiasWidth   = int(dut.BiasWidth.value)
+        self._WeightBits = int(dut.WeightBits.value)
+        self._BiasBits   = int(dut.BiasBits.value)
 
         self.w = np.array(weights, dtype=int)
 
-        bias_bits = int(bias) & ((1 << self._BiasWidth) - 1)
-        self.b = sign_extend(bias_bits, self._BiasWidth)
+        bias_bits = int(bias) & ((1 << self._BiasBits) - 1)
+        self.b = sign_extend(bias_bits, self._BiasBits)
 
         self._in_idx = 0
 
     def consume(self):
         packed = int(self._data_i.value.integer)
-        din = unpack_data_i(packed, int(self._dut.WidthIn.value), self._InChannels)
+        din = unpack_data_i(packed, int(self._dut.InBits.value), self._InChannels)
         # compute expected NOW, while _buf matches this accepted input position    
         acc = self.b
         for ic in range(self._InChannels):
@@ -332,7 +332,7 @@ class NeuronModel():
     def produce(self, expected, ref=None):
         assert_resolvable(self._data_o)
 
-        w   = int(self._dut.WidthOut.value)
+        w   = int(self._dut.OutBits.value)
         got = sign_extend(int(self._data_o.value.integer), w)
         exp = int(expected)
 
@@ -346,7 +346,7 @@ class NeuronModel():
     
 async def comb_step(dut, model, din_list, ref):
     # Drive packed input
-    w = int(dut.WidthIn.value)
+    w = int(dut.InBits.value)
     dut.data_i.value = pack_data_i(din_list, w)
 
     # Compute expected from the *driven input* (your existing consume reads dut.data_i)
@@ -359,7 +359,7 @@ async def comb_step(dut, model, din_list, ref):
 @cocotb.test
 async def single_test(dut):
     IC = int(dut.InChannels.value)
-    WW = int(dut.WeightWidth.value)
+    WW = int(dut.WeightBits.value)
     dut.data_i.value = 0  # Initialize to avoid X's in consume()
     await Timer(Decimal(1), units="step")
 
@@ -371,7 +371,7 @@ async def single_test(dut):
     print(f"Testing with Weights: {weights_1d}, Bias: {bias}")
     model = NeuronModel(dut, weights_1d, bias)
 
-    din = [random.randint(0, (1 << int(dut.WidthIn.value)) - 1) for _ in range(IC)]
+    din = [random.randint(0, (1 << int(dut.InBits.value)) - 1) for _ in range(IC)]
     # Convert data_i to tensor and compute Pytorch Reference Activation
     tensor = torch.tensor([din], dtype=torch.float32)
     ref = fc(tensor).item()
@@ -380,7 +380,7 @@ async def single_test(dut):
 @cocotb.test
 async def full_bw_test(dut):
     IC = int(dut.InChannels.value)
-    WW = int(dut.WeightWidth.value)
+    WW = int(dut.WeightBits.value)
     dut.data_i.value = 0  # Initialize to avoid X's in consume()
     await Timer(Decimal(1), units="step")
 
@@ -392,7 +392,7 @@ async def full_bw_test(dut):
     model = NeuronModel(dut, weights_1d, bias)
 
     for _ in range(500):
-        din = [random.randint(0, (1 << int(dut.WidthIn.value)) - 1) for _ in range(IC)]
+        din = [random.randint(0, (1 << int(dut.InBits.value)) - 1) for _ in range(IC)]
         # Convert data_i to tensor and compute Pytorch Reference Activation
         tensor = torch.tensor([din], dtype=torch.float32)
         ref = fc(tensor).item()

@@ -197,7 +197,8 @@ def unpack_data_i(packed, width_in, IC):
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize("InBits, WeightBits, OutBits, KernelWidth, InChannels, OutChannels, Weights", 
-                         [(1, 2,                     1, 2, 1, 1, gen_kernels(2, 1, 1, 2, seed=1234)),
+                         [(1, 2,                     1, 1, 1, 1, gen_kernels(2, 1, 1, 2, seed=1234)),
+                          (1, 2,                     1, 2, 1, 1, gen_kernels(2, 1, 1, 2, seed=1234)),
                           (2, 2, output_width(2, 2, 2, 1), 2, 1, 1, gen_kernels(2, 1, 1, 2, seed=1234)),
                           (2, 2, output_width(2, 2, 5, 1), 5, 1, 1, gen_kernels(2, 1, 1, 5, seed=1234)),
                           (2, 3, output_width(2, 3, 3, 1), 3, 1, 1, gen_kernels(3, 1, 1, 3, seed=1234)), # Unsigned data_i
@@ -218,12 +219,16 @@ def test_width(test_name, simulator, InBits, WeightBits, OutBits, KernelWidth, I
     
     # 2. Calculate total bits to format the Verilog hex string correctly
     total_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
-    
-    # 3. Write the massive integer as a strictly sized hex literal to a header file
+    mask = (1 << total_bits) - 1
+    packed_weights = Weights & mask
+
+    hex_width = (total_bits + 3) // 4
     vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
     with open(vh_path, "w") as f:
-        hex_width = (total_bits + 3) // 4
-        f.write(f"localparam logic signed [{total_bits-1}:0] INJECTED_WEIGHTS = {total_bits}'h{Weights:0{hex_width}x};\n")
+        f.write(
+            f"localparam logic signed [{total_bits-1}:0] INJECTED_WEIGHTS = "
+            f"{total_bits}'h{packed_weights:0{hex_width}x};\n"
+        )
 
     # Pass the massive integer strictly through the OS environment to Cocotb
     os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)

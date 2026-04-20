@@ -4,10 +4,10 @@
 /* verilator lint_off PINCONNECTEMPTY */
 `timescale 1ns / 1ps
 module tb_linear_layer #(
-   parameter int unsigned WidthIn      = 1
-  ,parameter int unsigned WidthOut     = 32
-  ,parameter int unsigned WeightWidth  = 2
-  ,parameter int unsigned BiasWidth    = 8
+   parameter int unsigned InBits      = 1
+  ,parameter int unsigned OutBits     = 32
+  ,parameter int unsigned WeightBits  = 2
+  ,parameter int unsigned BiasBits    = 8
   ,parameter int unsigned InChannels   = 1
   ,parameter int unsigned OutChannels  = 1
 )  (
@@ -16,22 +16,22 @@ module tb_linear_layer #(
 
   ,input  [0:0] valid_i
   ,output [0:0] ready_o
-  ,input  [InChannels-1:0][WidthIn-1:0] data_i
+  ,input  [InChannels-1:0][InBits-1:0] data_i
 
   ,output [0:0] valid_o
   ,input  [0:0] ready_i
 
-  ,output logic signed [OutChannels-1:0][WidthOut-1:0] data_o
+  ,output logic signed [OutChannels-1:0][OutBits-1:0] data_o
 );
 
 `include "injected_weights.vh"
 `include "injected_biases.vh"
 
 linear_layer #(
-     .WidthIn     (WidthIn)
-    ,.WidthOut    (WidthOut)
-    ,.WeightWidth (WeightWidth)
-    ,.BiasWidth   (BiasWidth)
+     .InBits     (InBits)
+    ,.OutBits    (OutBits)
+    ,.WeightBits (WeightBits)
+    ,.BiasBits   (BiasBits)
     ,.InChannels  (InChannels)
     ,.OutChannels (OutChannels)
     ,.Weights     (INJECTED_WEIGHTS)

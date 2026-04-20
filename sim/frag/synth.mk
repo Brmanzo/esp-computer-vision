@@ -62,7 +62,7 @@ abstract.json: $(FILELIST) $(SYNTH_SOURCES)
 	  exit 1; \
 	fi; \
 	echo "[Yosys] $$sv -> $@ (top=$*)"; \
-	$(YOSYS) -ql $*.yslog -p "read_verilog -sv $(SYNTH_SOURCES); hierarchy -top $*; proc; opt; delete t:\$$scopeinfo; clean -purge; write_json $@"
+	$(YOSYS) -ql $*.yslog -p "read_verilog -sv $$sv $(SYNTH_SOURCES); hierarchy -top $*; proc; opt; delete t:\$$scopeinfo; clean -purge; write_json $@"
 
 %.pdf: %.json
 	$(NETLISTSVG) $< -o $(subst pdf,svg,$@)
@@ -75,7 +75,7 @@ abstract.json: $(FILELIST) $(SYNTH_SOURCES)
 	  exit 1; \
 	fi; \
 	echo "[Yosys] $$sv -> $@ (synth_ice40 top=$*)"; \
-	$(YOSYS) -ql $*.mapped.yslog -p "read_verilog -sv $(SYNTH_SOURCES); hierarchy -top $*; synth_ice40 -dsp -top $*; delete t:\$$scopeinfo; clean -purge; write_json $@"
+	$(YOSYS) -ql $*.mapped.yslog -p "read_verilog -sv $$sv $(SYNTH_SOURCES); hierarchy -top $*; synth_ice40 -dsp -top $*; delete t:\$$scopeinfo; clean -purge; write_json $@"
 
 %.mapped.pdf: %.mapped.json
 	$(NETLISTSVG) $< -o $(subst .pdf,.svg,$@)

@@ -166,6 +166,76 @@ def render_pool_layer(
     ]
     return "\n".join(lines)
 
+def render_linear_layer(
+    WidthIn,
+    WidthOut,
+    WeightWidth,
+    BiasWidth,
+    InChannels,
+    OutChannels,
+    Weights,
+    Biases,
+    instance,
+    num_instances,
+    kernels,
+):
+    # If at head of the first layer, connect to global input
+    if instance == 0:
+        valid_i = "valid_i"
+        data_i  = "data_i"
+        ready_o = "ready_o"
+    # If the last layer did not have pooling, connect to the previous conv/linear layer's output
+    elif len(kernels[instance - 1]) == 1:
+        valid_i = f"conv_{instance - 1}_valid"
+        data_i  = f"conv_{instance - 1}_data"
+        ready_o = f"conv_{instance}_ready"
+    # Otherwise, connect to the previous layer's pool
+    else:
+        valid_i = f"pool_{instance - 1}_valid"
+        data_i  = f"pool_{instance - 1}_data"
+        ready_o = f"conv_{instance}_ready"
+
+    # If at tail of the last layer, connect to global output
+    if instance == num_instances - 1:
+        ready_i = "ready_i"
+        valid_o = "valid_o"
+        data_o  = "data_o"
+    # If the current layer does not have pooling, connect to the next conv/linear layer's input
+    elif len(kernels[instance]) == 1:
+        ready_i = f"conv_{instance + 1}_ready"
+        valid_o = f"conv_{instance}_valid"
+        data_o  = f"conv_{instance}_data"
+    # Otherwise, connect to current layer's pool
+    else:
+        ready_i = f"pool_{instance}_ready"
+        valid_o = f"conv_{instance}_valid"
+        data_o  = f"conv_{instance}_data"
+
+    lines = [
+        "  linear_layer #(",
+        f"     .WidthIn     ({WidthIn})",
+        f"    ,.WidthOut    ({WidthOut})",
+        f"    ,.WeightWidth ({WeightWidth})",
+        f"    ,.BiasWidth   ({BiasWidth})",
+        f"    ,.InChannels  ({InChannels})",
+        f"    ,.OutChannels ({OutChannels})",
+        f"    ,.Weights     ({Weights})",
+        f"    ,.Biases      ({Biases})",
+        f"  ) linear_layer_inst_{instance} (",
+        "     .clk_i   (clk_i)",
+        "    ,.rst_i   (rst_i)",
+        "",
+        f"    ,.ready_o  ({ready_o})",
+        f"    ,.valid_i  ({valid_i})",
+        f"    ,.data_i   ({data_i})",
+        "",
+        f"    ,.ready_i  ({ready_i})",
+        f"    ,.valid_o  ({valid_o})",
+        f"    ,.data_o   ({data_o})",
+        "  );\n",
+    ]
+    return "\n".join(lines)
+
 def render_footer():
     lines = [
         "endmodule",

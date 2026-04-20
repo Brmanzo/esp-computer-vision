@@ -170,7 +170,7 @@ def unpack_biases(packed_val: int, BW: int, OC: int):
 def pack_data_i(samples, width):
     """
     samples: list[int] length = InChannels
-    width: WidthIn
+    width: InBits
     Returns packed int: sum(samples[ic] << (ic*width))
     """
     mask = (1 << width) - 1
@@ -200,7 +200,7 @@ def unpack_data_i(packed, width_in, IC):
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize(
-    "WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights, BiasWidth, Biases",
+    "InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases",
     [
         (1, 2, 1, output_width(1, 2, 1), 1, gen_weights(2, 1, 1, seed=1234), 2, gen_biases(2, 1)),
         (2, 3, 1, output_width(2, 3, 1), 1, gen_weights(3, 1, 1, seed=1234), 3, gen_biases(3, 1)),
@@ -208,7 +208,7 @@ def unpack_data_i(packed, width_in, IC):
         (8, 8 ,1 ,output_width(8 ,8 ,1) ,1 ,gen_weights(8 ,1 ,1 ,seed=1234) ,8 ,gen_biases(8 ,1)),
     ],
 )
-def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights, BiasWidth, Biases):
+def test_width(test_name, simulator, InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases):
     parameters = dict(locals())
     del parameters["test_name"]
     del parameters["simulator"]
@@ -217,14 +217,14 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut,
     del parameters["Weights"]
     del parameters["Biases"]
 
-    param_str = f"WidthIn_{WidthIn}_WeightWidth_{WeightWidth}_WidthOut_{WidthOut}_BiasWidth_{BiasWidth}_test_{test_name}"
+    param_str = f"InBits_{InBits}_WeightBits_{WeightBits}_OutBits_{OutBits}_BiasBits_{BiasBits}_test_{test_name}"
     custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
     if simulator.startswith("icarus") and os.path.exists(custom_work_dir):
         shutil.rmtree(custom_work_dir)
     os.makedirs(custom_work_dir, exist_ok=True)
 
     # ---- Emit injected_weights.vh ----
-    total_bits_w = int(OutChannels) * int(InChannels) * int(WeightWidth)
+    total_bits_w = int(OutChannels) * int(InChannels) * int(WeightBits)
     vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
     with open(vh_path, "w") as f:
         hex_width = (total_bits_w + 3) // 4
@@ -233,7 +233,7 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut,
             f"{total_bits_w}'h{Weights:0{hex_width}x};\n"
         )
 
-    total_bits_b = int(OutChannels) * int(BiasWidth)
+    total_bits_b = int(OutChannels) * int(BiasBits)
     vhb_path = os.path.join(custom_work_dir, "injected_biases.vh")
     with open(vhb_path, "w") as f:
         hex_width = (total_bits_b + 3) // 4
@@ -263,7 +263,7 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut,
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize(
-    "WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights, BiasWidth, Biases",
+    "InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases",
     [
         (1, 2,  1, output_width(1, 2, 1),    1, gen_weights(2,  1,  1, seed=1234), 2, gen_biases(2, 1)),
         (2, 3,  2, output_width(2, 3, 2),    2, gen_weights(3,  2,  2, seed=1234), 3, gen_biases(3, 2)),
@@ -271,7 +271,7 @@ def test_width(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut,
         (8, 8, 32, output_width(8, 8, 32),  32, gen_weights(8, 32, 32, seed=1234), 8, gen_biases(8, 32)),
     ],
 )
-def test_channels(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, Weights, BiasWidth, Biases):
+def test_channels(test_name, simulator, InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases):
     parameters = dict(locals())
     del parameters["test_name"]
     del parameters["simulator"]
@@ -287,7 +287,7 @@ def test_channels(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthO
     os.makedirs(custom_work_dir, exist_ok=True)
 
     # ---- Emit injected_weights.vh ----
-    total_bits_w = int(OutChannels) * int(InChannels) * int(WeightWidth)
+    total_bits_w = int(OutChannels) * int(InChannels) * int(WeightBits)
     vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
     with open(vh_path, "w") as f:
         hex_width = (total_bits_w + 3) // 4
@@ -296,7 +296,7 @@ def test_channels(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthO
             f"{total_bits_w}'h{Weights:0{hex_width}x};\n"
         )
 
-    total_bits_b = int(OutChannels) * int(BiasWidth)
+    total_bits_b = int(OutChannels) * int(BiasBits)
     vhb_path = os.path.join(custom_work_dir, "injected_biases.vh")
     with open(vhb_path, "w") as f:
         hex_width = (total_bits_b + 3) // 4
@@ -324,17 +324,17 @@ def test_channels(test_name, simulator, WidthIn, WeightWidth, InChannels, WidthO
     )
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, BiasWidth", 
+@pytest.mark.parametrize("InBits, WeightBits, InChannels, OutBits, OutChannels, BiasBits", 
                          [(1, 2, 1, output_width(1, 2, 1), 1, 2)])
-def test_lint(simulator, WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, BiasWidth):
+def test_lint(simulator, InBits, WeightBits, InChannels, OutBits, OutChannels, BiasBits):
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, BiasWidth", 
+@pytest.mark.parametrize("InBits, WeightBits, InChannels, OutBits, OutChannels, BiasBits", 
                          [(1, 2, 1, output_width(1, 2, 1), 1, 2)])
-def test_style(simulator, WidthIn, WeightWidth, InChannels, WidthOut, OutChannels, BiasWidth):
+def test_style(simulator, InBits, WeightBits, InChannels, OutBits, OutChannels, BiasBits):
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"])
@@ -347,8 +347,8 @@ class FCLayerModel():
 
         self._q = queue.SimpleQueue()
 
-        self._WidthIn     = int(dut.WidthIn.value)
-        self._WidthOut    = int(dut.WidthOut.value)
+        self._InBits     = int(dut.InBits.value)
+        self._OutBits    = int(dut.OutBits.value)
         self._InChannels  = int(dut.InChannels.value)
         self._OutChannels = int(dut.OutChannels.value)
 
@@ -386,7 +386,7 @@ class FCLayerModel():
         assert_resolvable(self._data_i)
         packed_data_i = []
         packed = int(self._data_i.value.integer)
-        packed_data_i = unpack_data_i(packed, int(self._dut.WidthIn.value), self._InChannels)
+        packed_data_i = unpack_data_i(packed, int(self._dut.InBits.value), self._InChannels)
 
         # load data_i into buffer for all channels
         for ic, inp in enumerate(packed_data_i):
@@ -403,10 +403,10 @@ class FCLayerModel():
 
         data_i_ref = torch.tensor(packed_data_i, dtype=torch.int64)
         data_o_ref = (self._W @ data_i_ref) + self._b
-        mask = (1 << self._WidthOut) - 1
+        mask = (1 << self._OutBits) - 1
 
-        exp_wrapped = [sign_extend(int(v) & mask, self._WidthOut) for v in expected]
-        ref_wrapped = [sign_extend(int(data_o_ref[oc].item()) & mask, self._WidthOut) for oc in range(self._OutChannels)]
+        exp_wrapped = [sign_extend(int(v) & mask, self._OutBits) for v in expected]
+        ref_wrapped = [sign_extend(int(data_o_ref[oc].item()) & mask, self._OutBits) for oc in range(self._OutChannels)]
         # Check that Pytorch is equal to our reference python model
         assert exp_wrapped == ref_wrapped, f"Expected {exp_wrapped}, got {ref_wrapped}"
         return expected
@@ -414,7 +414,7 @@ class FCLayerModel():
     def produce(self, expected):
         assert_resolvable(self._data_o)
 
-        w = int(self._dut.WidthOut.value)
+        w = int(self._dut.OutBits.value)
         packed = int(self._data_o.value.integer)
 
         for ch in range(self._OutChannels):
@@ -478,7 +478,7 @@ class CountingDataGenerator():
     
 class RandomDataGenerator:
     def __init__(self, dut):
-        self._width_p = int(dut.WidthIn.value)
+        self._width_p = int(dut.InBits.value)
         self._InChannels = int(dut.InChannels.value)
 
     def generate(self):
@@ -627,7 +627,7 @@ class InputModel():
         valid_i = self._dut.valid_i
         data_i  = self._dut.data_i
 
-        w  = int(self._dut.WidthIn.value)
+        w  = int(self._dut.InBits.value)
 
         valid_i.value = 0
         data_i.value  = 0
@@ -731,8 +731,8 @@ async def single_test(dut):
 
     IC = int(dut.InChannels.value)
     OC = int(dut.OutChannels.value)
-    WW = int(dut.WeightWidth.value)
-    BW = int(dut.BiasWidth.value)
+    WW = int(dut.WeightBits.value)
+    BW = int(dut.BiasBits.value)
 
     # One accepted input -> one produced output (FC vector-per-handshake assumption)
     N_in  = 1
@@ -794,8 +794,8 @@ async def rate_tests(dut, in_rate: float, out_rate: float, N_vec: int = 200):
 
     IC = int(dut.InChannels.value)
     OC = int(dut.OutChannels.value)
-    WW = int(dut.WeightWidth.value)
-    BW = int(dut.BiasWidth.value)
+    WW = int(dut.WeightBits.value)
+    BW = int(dut.BiasBits.value)
 
     N_in  = int(N_vec)
     N_out = int(N_vec)

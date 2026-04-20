@@ -2,27 +2,27 @@
 // Bradley Manzo, 2026
 
 module linear_layer #(
-   parameter int unsigned WidthIn      = 1
-  ,parameter int unsigned WidthOut     = 1
-  ,parameter int unsigned WeightWidth  = 2
-  ,parameter int unsigned BiasWidth    = 8
+   parameter int unsigned InBits      = 1
+  ,parameter int unsigned OutBits     = 1
+  ,parameter int unsigned WeightBits  = 2
+  ,parameter int unsigned BiasBits    = 8
   ,parameter int unsigned InChannels   = 1
   ,parameter int unsigned OutChannels  = 1
 
-  ,localparam int unsigned WeightIndex = InChannels * WeightWidth
+  ,localparam int unsigned WeightIndex = InChannels * WeightBits
   ,parameter logic signed [OutChannels*WeightIndex-1:0] Weights = '0
-  ,parameter logic signed [OutChannels*BiasWidth-1:0]   Biases  = '0
+  ,parameter logic signed [OutChannels*BiasBits-1:0]   Biases  = '0
 )  (
    input [0:0] clk_i
   ,input [0:0] rst_i
 
   ,input  [0:0] valid_i
   ,output [0:0] ready_o
-  ,input  [InChannels-1:0][WidthIn-1:0] data_i
+  ,input  [InChannels-1:0][InBits-1:0] data_i
 
   ,output [0:0] valid_o
   ,input  [0:0] ready_i
-  ,output logic signed [OutChannels-1:0][WidthOut-1:0] data_o
+  ,output logic signed [OutChannels-1:0][OutBits-1:0] data_o
 );
 
   /* ------------------------------------ Elastic Handshaking Logic ------------------------------------ */
@@ -41,7 +41,7 @@ module linear_layer #(
   /* --------------------------------------- Output Channel Logic --------------------------------------- */
   // Each output channel is a neuron with the same input data but different weights and biases
 
-  logic [InChannels-1:0][WidthIn-1:0] data_q;
+  logic [InChannels-1:0][InBits-1:0] data_q;
 
   always_ff @(posedge clk_i) begin
     if (rst_i) data_q <= '0;
@@ -51,14 +51,14 @@ module linear_layer #(
   generate
     for (genvar ch = 0; ch < OutChannels; ch++) begin : gen_neurons
       neuron #(
-         .WidthIn    (WidthIn)
-        ,.WidthOut   (WidthOut)
-        ,.WeightWidth(WeightWidth)
-        ,.BiasWidth  (BiasWidth)
+         .InBits    (InBits)
+        ,.OutBits   (OutBits)
+        ,.WeightBits(WeightBits)
+        ,.BiasBits  (BiasBits)
         ,.InChannels (InChannels)
 
         ,.Weights(Weights[ch*WeightIndex +: WeightIndex])
-        ,.Bias   (Biases[ch*BiasWidth +: BiasWidth])
+        ,.Bias   (Biases[ch*BiasBits +: BiasBits])
       ) neuron_inst (
          .data_i(data_q)
         ,.data_o(data_o[ch])
