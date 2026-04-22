@@ -1,0 +1,6 @@
+{
+    "top": "comparator_tree",
+    "files":
+    ["rtl/lib/comparator_tree.sv"
+    ]
+}
