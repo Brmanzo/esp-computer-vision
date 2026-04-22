@@ -28,6 +28,28 @@ random.seed(42)
 
 timescale = "1ps/1ps"
 
+def sign_extend(value: int, width: int) -> int:
+    mask = (1 << width) - 1
+    value &= mask
+    sign_bit = 1 << (width - 1)
+    return (value ^ sign_bit) - sign_bit
+
+
+def pack(inputs, in_bits):
+    packed = 0
+    mask = (1 << in_bits) - 1
+    for i, x in enumerate(inputs):
+        packed |= (x & mask) << (i * in_bits)
+    return packed
+
+def unpack(packed, in_bits, input_count):
+    unpacked = []
+    mask = (1 << in_bits) - 1
+    for i in range(input_count):
+        raw = (packed >> (i * in_bits)) & mask
+        unpacked.append(sign_extend(raw, in_bits))
+    return unpacked
+
 tests = ['reset_test'
         ,'single_test'
         ,'inout_fuzz_test'
@@ -37,12 +59,12 @@ tests = ['reset_test'
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("InBits, TermCount", [
-    (8, 9),
-    (16, 17),
-    (32, 33)
+@pytest.mark.parametrize("InBits, TermCount, InChannels", [
+    (8, 9, 1),
+    (16, 17, 2),
+    (32, 33, 4)
 ])
-def test_each(test_name, simulator, InBits, TermCount):
+def test_each(test_name, simulator, InBits, TermCount, InChannels):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
@@ -77,21 +99,30 @@ class GlobalMaxModel():
         self._dut = dut
         self._data_i = dut.data_i
         self._data_o = dut.data_o
-        self._expected = queue.SimpleQueue()
 
-        self._current_max  = None
-        self._terms        = dut.TermCount
+        self._in_bits     = int(dut.InBits.value)
+        self._out_bits    = int(dut.OutBits.value)
+        self._in_channels = int(dut.InChannels.value)
+        self._terms       = dut.TermCount
+
         self._term_counter = 0
+        self._current_max  = None
+        self._expected = queue.SimpleQueue()
 
     
     def consume(self):
         assert_resolvable(self._data_i)
-        x = self._data_i.value.signed_integer
+
+        packed_in = self._data_i.value.integer
+        x = unpack(packed_in, self._in_bits, self._in_channels)
 
         if self._term_counter == 0:
-            self._current_max = x
+            self._current_max = x[:]
         else:
-            self._current_max = max(self._current_max, x)
+            self._current_max = [
+                max(self._current_max[ch], x[ch])
+                for ch in range(self._in_channels)
+            ]
 
         self._term_counter += 1
 
@@ -102,22 +133,29 @@ class GlobalMaxModel():
 
     def produce(self):
         assert_resolvable(self._data_o)
-        got = self._data_o.value.signed_integer
+
+        packed_out = self._data_o.value.integer
         expected = self._expected.get()
+        got = unpack(packed_out, self._out_bits, self._in_channels)
+
         print(f"Produced output {got}, expected {expected} at time {get_sim_time(units='ns')}ns")
         assert got == expected, (
             f"Output mismatch. Expected {expected}, got {got}"
         )
 
-class RandomDataGenerator():
+class RandomDataGenerator:
     def __init__(self, dut):
         self._dut = dut
 
     def generate(self):
-        nbits = int(self._dut.InBits.value)
-        lo = -(1 << (nbits - 1))
-        hi =  (1 << (nbits - 1)) - 1
-        return random.randint(lo, hi)
+        in_bits = int(self._dut.InBits.value)
+        in_channels = int(self._dut.InChannels.value)
+
+        lo = -(1 << (in_bits - 1))
+        hi =  (1 << (in_bits - 1)) - 1
+
+        vals = [random.randint(lo, hi) for _ in range(in_channels)]
+        return pack(vals, in_bits)
 
 class RateGenerator():
     def __init__(self, dut, r):
@@ -253,13 +291,14 @@ class InputModel():
             produce = self._rate.generate()
             success = 0
             valid_i.value = produce
-            data_i.value = self._data.generate()
+            data = self._data.generate()
+
+            data_i.value = data if produce else 0
 
             # Wait until ready
             while(produce and not success):
                 await RisingEdge(clk_i)
                 assert_resolvable(ready_o)
-                #assert ready_o.value.is_resolvable, f"Unresolvable value in ready_o (x or z in some or all bits) at Time {get_sim_time(units='ns')}ns."
 
                 success = True if (ready_o.value == 1) else False
                 if (success):
