@@ -41,23 +41,23 @@ def sign_extend(value: int, width: int) -> int:
     sign_bit = 1 << (width - 1)
     return (value ^ sign_bit) - sign_bit
 
-def pack_terms(terms, in_bits):
+def pack_classes(classes, in_bits):
     packed = 0
     mask = (1 << in_bits) - 1
-    for i, x in enumerate(terms):
+    for i, x in enumerate(classes):
         packed |= (x & mask) << (i * in_bits)
     return packed
 
-def unpack_terms(packed, in_bits, term_count):
-    terms = []
+def unpack_classes(packed, in_bits, class_count):
+    classes = []
     mask = (1 << in_bits) - 1
-    for i in range(term_count):
+    for i in range(class_count):
         raw = (packed >> (i * in_bits)) & mask
-        terms.append(sign_extend(raw, in_bits))
-    return terms
+        classes.append(sign_extend(raw, in_bits))
+    return classes
 
-def acc_width(term_count, in_width):
-    return math.ceil(math.log2(term_count)) + in_width
+def acc_width(class_count, in_width):
+    return math.ceil(math.log2(class_count)) + in_width
 
 def trunc_signed(value: int, width: int) -> int:
     return sign_extend(value, width)
@@ -65,7 +65,7 @@ def trunc_signed(value: int, width: int) -> int:
 # Test that binary tree can accomodate 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("InBits, TermCount",
+@pytest.mark.parametrize("InBits, ClassCount",
     [( 2,  2),
      ( 2,  3),
      ( 4,  5),
@@ -75,7 +75,7 @@ def trunc_signed(value: int, width: int) -> int:
     ],
 )
 
-def test_each(test_name, simulator, InBits, TermCount):
+def test_each(test_name, simulator, InBits, ClassCount):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
@@ -83,18 +83,18 @@ def test_each(test_name, simulator, InBits, TermCount):
     runner(simulator, timescale, tbpath, parameters, testname=test_name, pymodule="test_comparator_tree")
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("InBits, TermCount", 
+@pytest.mark.parametrize("InBits, ClassCount", 
                          [(1, 2), (2, 3)])
-def test_lint(simulator, InBits, TermCount):
+def test_lint(simulator, InBits, ClassCount):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("InBits, TermCount", 
+@pytest.mark.parametrize("InBits, ClassCount", 
                          [(1, 2), (2, 3)])
-def test_style(simulator, InBits, TermCount):
+def test_style(simulator, InBits, ClassCount):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
@@ -103,19 +103,19 @@ def test_style(simulator, InBits, TermCount):
 class ComparatorTreeModel():
     def __init__(self, dut):
         self._dut = dut
-        self._terms_i = dut.terms_i
+        self._classes_i = dut.classes_i
         self._max_o = dut.max_o
         self._id_o = dut.id_o
 
         self._InBits      = int(dut.InBits.value)
         self._OutBits     = int(dut.OutBits.value)
         self._IdBits      = int(dut.IdBits.value)
-        self._TermCount = int(dut.TermCount.value)
+        self._ClassCount = int(dut.ClassCount.value)
 
     def consume(self):
-        packed = int(self._terms_i.value.integer)
-        terms = unpack_terms(packed, self._InBits, self._TermCount)
-        return (trunc_signed(max(terms), self._OutBits), terms.index(max(terms)))
+        packed = int(self._classes_i.value.integer)
+        classes = unpack_classes(packed, self._InBits, self._ClassCount)
+        return (trunc_signed(max(classes), self._OutBits), classes.index(max(classes)))
 
     def produce(self, expected):
         assert_resolvable(self._max_o)
@@ -125,7 +125,7 @@ class ComparatorTreeModel():
         got_id = int(self._id_o.value.integer)
         exp_id = int(expected[1])
 
-        print(f"Expected: {exp_max}, Got: {got_max}, Terms: {unpack_terms(int(self._terms_i.value.integer), self._InBits, self._TermCount)}")
+        print(f"Expected: {exp_max}, Got: {got_max}, Classes: {unpack_classes(int(self._classes_i.value.integer), self._InBits, self._ClassCount)}")
         print(f"Expected ID: {exp_id}, Got ID: {int(self._id_o.value.integer)}")
         assert got_max == exp_max, (
             f"Mismatch. Exp_maxected {exp_max}, got {got_max}"
@@ -134,9 +134,9 @@ class ComparatorTreeModel():
             f"ID Mismatch. Expected {exp_id}, got {got_id}"
         )   
     
-async def comb_step(dut, model, terms):
+async def comb_step(dut, model, classes):
     in_bits = int(dut.InBits.value)
-    dut.terms_i.value = pack_terms(terms, in_bits)
+    dut.classes_i.value = pack_classes(classes, in_bits)
 
     await Timer(Decimal(1), units="step")
 
@@ -146,22 +146,22 @@ async def comb_step(dut, model, terms):
 
 @cocotb.test
 async def single_test(dut):
-    term_count = int(dut.TermCount.value)
+    class_count = int(dut.ClassCount.value)
     model = ComparatorTreeModel(dut)
 
-    terms = [1] * term_count
-    await comb_step(dut, model, terms)
+    classes = [1] * class_count
+    await comb_step(dut, model, classes)
 
 
 @cocotb.test
 async def full_bw_test(dut):
     in_bits = int(dut.InBits.value)
-    term_count = int(dut.TermCount.value)
+    class_count = int(dut.ClassCount.value)
     model = ComparatorTreeModel(dut)
 
     lo = -(1 << (in_bits - 1))
     hi = (1 << (in_bits - 1)) - 1
 
     for _ in range(10):
-        terms = [random.randint(lo, hi) for _ in range(term_count)]
-        await comb_step(dut, model, terms)
+        classes = [random.randint(lo, hi) for _ in range(class_count)]
+        await comb_step(dut, model, classes)

@@ -2,12 +2,12 @@
 module comparator_tree #(
    parameter  int unsigned InBits      = 8,
    parameter  int unsigned OutBits     = InBits,
-   parameter  int unsigned TermCount   = 32,
-   parameter  int unsigned IdBits      = (TermCount <= 1) ? 1 : $clog2(TermCount),
-   localparam int unsigned TreeLevels  = (TermCount <= 1) ? 1 : $clog2(TermCount),
+   parameter  int unsigned ClassCount   = 32,
+   parameter  int unsigned IdBits      = (ClassCount <= 1) ? 1 : $clog2(ClassCount),
+   localparam int unsigned TreeLevels  = (ClassCount <= 1) ? 1 : $clog2(ClassCount),
    localparam int unsigned TreeWidth   = 1 << TreeLevels
 ) (
-   input  logic signed [TermCount-1:0][InBits-1:0] terms_i,
+   input  logic signed [ClassCount-1:0][InBits-1:0] classes_i,
 
    output logic signed [OutBits-1:0] max_o,
    output logic signed [IdBits-1:0]  id_o
@@ -29,9 +29,9 @@ module comparator_tree #(
       end
     end
 
-    // Initialize terms at leaves
-    for (int i = 0; i < TermCount; i++) begin
-      tree[0][i] = comp_t'(terms_i[i]);
+    // Initialize classes at leaves
+    for (int i = 0; i < ClassCount; i++) begin
+      tree[0][i] = comp_t'(classes_i[i]);
       id[0][i]   = id_t'(i); // Store original index
     end
 

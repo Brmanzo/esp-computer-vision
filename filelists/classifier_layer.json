@@ -1,0 +1,9 @@
+{
+    "top": "classifier_layer",
+    "files":
+    ["rtl/blocks/classifier_layer.sv"
+    ,"rtl/lib/global_max.sv"
+    ,"rtl/lib/comparator_tree.sv"
+    ,"rtl/lib/elastic.sv"
+    ]
+}
