@@ -167,10 +167,10 @@ def render_pool_layer(
     return "\n".join(lines)
 
 def render_linear_layer(
-    WidthIn,
-    WidthOut,
-    WeightWidth,
-    BiasWidth,
+    InBits,
+    OutBits,
+    WeightBits,
+    BiasBits,
     InChannels,
     OutChannels,
     Weights,
@@ -213,10 +213,10 @@ def render_linear_layer(
 
     lines = [
         "  linear_layer #(",
-        f"     .WidthIn     ({WidthIn})",
-        f"    ,.WidthOut    ({WidthOut})",
-        f"    ,.WeightWidth ({WeightWidth})",
-        f"    ,.BiasWidth   ({BiasWidth})",
+        f"     .InBits      ({InBits})",
+        f"    ,.OutBits     ({OutBits})",
+        f"    ,.WeightBits  ({WeightBits})",
+        f"    ,.BiasBits    ({BiasBits})",
         f"    ,.InChannels  ({InChannels})",
         f"    ,.OutChannels ({OutChannels})",
         f"    ,.Weights     ({Weights})",

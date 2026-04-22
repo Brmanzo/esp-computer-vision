@@ -1,0 +1,7 @@
+{
+    "top": "global_max",
+    "files":
+    ["rtl/lib/global_max.sv"
+    ,"rtl/lib/elastic.sv"
+    ]
+}

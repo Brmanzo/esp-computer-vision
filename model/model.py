@@ -13,7 +13,7 @@ from pathlib import Path
 
 BRAM_COUNT = 30 - 1 # Subtract 1 for the Skid Buffer BRAM on deframer
 
-from .render import render_header, render_wires, render_conv_layer, render_pool_layer, render_footer
+from .render import render_header, render_wires, render_conv_layer, render_pool_layer, render_linear_layer, render_footer
 from .quantize import QuantConv2d, QuantizeActivation
 
 class cnn_model(nn.Module):
@@ -43,24 +43,42 @@ class cnn_model(nn.Module):
             for layer in range(self._layers):
                 for module in range(len(self._kernels[layer])):
                     if module == 0:  # Convolution module
-                        print(
-                            render_conv_layer(
-                                LineWidthPx=self._input_widths[layer][0],
-                                LineCountPx=self._input_heights[layer][0],
-                                InBits=self._input_bits[layer],
-                                OutBits=self._out_bits[layer],
-                                KernelWidth=self._kernels[layer][0],
-                                WeightBits=self._weight_bits[layer],
-                                InChannels=self._in_ch[layer],
-                                OutChannels=self._out_ch[layer],
-                                Stride=self._stride[layer],
-                                Weights=f"weights_{layer}",
-                                instance=layer,
-                                num_instances=self._layers,
-                                kernels=self._kernels,
-                            ),
-                            file=f,
-                        )
+                        if self._kernels[layer][module] == 1:
+                            print(
+                                render_linear_layer(
+                                    InBits=self._input_bits[layer],
+                                    OutBits=self._out_bits[layer],
+                                    WeightBits=self._weight_bits[layer],
+                                    BiasBits=8,
+                                    InChannels=self._in_ch[layer],
+                                    OutChannels=self._out_ch[layer],
+                                    Weights=f"weights_{layer}",
+                                    Biases=f"biases_{layer}",
+                                    instance=layer,
+                                    num_instances=self._layers,
+                                    kernels=self._kernels
+                                ),
+                                file=f,
+                                )
+                        else:
+                            print(
+                                render_conv_layer(
+                                    LineWidthPx=self._input_widths[layer][0],
+                                    LineCountPx=self._input_heights[layer][0],
+                                    InBits=self._input_bits[layer],
+                                    OutBits=self._out_bits[layer],
+                                    KernelWidth=self._kernels[layer][0],
+                                    WeightBits=self._weight_bits[layer],
+                                    InChannels=self._in_ch[layer],
+                                    OutChannels=self._out_ch[layer],
+                                    Stride=self._stride[layer],
+                                    Weights=f"weights_{layer}",
+                                    instance=layer,
+                                    num_instances=self._layers,
+                                    kernels=self._kernels,
+                                ),
+                                file=f,
+                            )
                     elif module == 1:  # Pooling module
                         print(
                             render_pool_layer(
