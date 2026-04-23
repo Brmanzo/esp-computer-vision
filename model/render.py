@@ -82,7 +82,7 @@ def render_conv_layer(
 
     # If at tail of the last layer (right before classifier), drive internal wires
     if instance == num_instances - 1:
-        ready_i = f"conv_{instance}_ready" # Classifier will drive this
+        ready_i = f"classifier_ready" # Classifier will drive this
         valid_o = f"conv_{instance}_valid" # Classifier will read this
         data_o  = f"conv_{instance}_data"  # Classifier will read this
 
@@ -244,9 +244,14 @@ def render_linear_layer(
 
 def render_classifier_layer(
     TermBits,
-    BusBits,
     TermCount,
+    BusBits,
+    InChannels,
     ClassCount,
+    WeightBits,
+    BiasBits,
+    Weights,
+    Biases,
     instance,
 ):
     # Classifier reads from the final linear/conv stage
@@ -266,9 +271,14 @@ def render_classifier_layer(
     lines = [
         "  classifier_layer #(",
         f"     .TermBits   ({TermBits})",
-        f"    ,.BusBits    ({BusBits})",
         f"    ,.TermCount  ({TermCount})",
+        f"    ,.BusBits    ({BusBits})",
+        f"    ,.InChannels ({InChannels})",
         f"    ,.ClassCount ({ClassCount})",
+        f"    ,.WeightBits ({WeightBits})",
+        f"    ,.BiasBits   ({BiasBits})",
+        f"    ,.Weights    ({Weights})",
+        f"    ,.Biases     ({Biases})",
         f"  ) classifier_layer_inst_{instance} (",
         "     .clk_i   (clk_i)",
         "    ,.rst_i   (rst_i)",

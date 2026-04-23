@@ -179,19 +179,19 @@ def pack_data_i(samples, width):
         out |= (int(v) & mask) << (ic * width)
     return out
 
-def fc_reference(weights_2d, biases_1d, InChannels, OutChannels):
+def linear_reference(weights_2d, biases_1d, InChannels, OutChannels):
     # One output channel instantiates a single neuron
-    fc = nn.Linear(in_features=InChannels, out_features=OutChannels, bias=True)
+    linear = nn.Linear(in_features=InChannels, out_features=OutChannels, bias=True)
 
     # Disable gradient tracking
-    fc.weight.requires_grad = False
-    fc.bias.requires_grad = False
+    linear.weight.requires_grad = False
+    linear.bias.requires_grad = False
 
     # Convert to float32 for deterministic conv math
-    fc.weight.data = torch.tensor(weights_2d, dtype=torch.float32)
-    fc.bias.data   = torch.tensor(biases_1d, dtype=torch.float32)
+    linear.weight.data = torch.tensor(weights_2d, dtype=torch.float32)
+    linear.bias.data   = torch.tensor(biases_1d, dtype=torch.float32)
 
-    return fc
+    return linear
 
 def unpack_data_i(packed, width_in, IC):
     mask = (1 << width_in) - 1
@@ -339,7 +339,7 @@ def test_style(simulator, InBits, WeightBits, InChannels, OutBits, OutChannels, 
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"])
 
-class FCLayerModel():
+class LinearLayerModel():
     def __init__(self, dut, weights: List[List[int]], biases: List[int], torch_ref=None):
         self._dut = dut
         self._data_o = dut.data_o
@@ -734,7 +734,7 @@ async def single_test(dut):
     WW = int(dut.WeightBits.value)
     BW = int(dut.BiasBits.value)
 
-    # One accepted input -> one produced output (FC vector-per-handshake assumption)
+    # One accepted input -> one produced output (LINEAR vector-per-handshake assumption)
     N_in  = 1
     N_out = 1
     rate  = 1.0
@@ -744,10 +744,10 @@ async def single_test(dut):
     biases_1d = unpack_biases(int(os.environ["INJECTED_BIASES_INT"]), BW, OC)
     
     # Instantiate PyTorch reference model
-    fc = fc_reference(weights_2d, biases_1d, IC, OC)
-    fc.eval()
+    linear = linear_reference(weights_2d, biases_1d, IC, OC)
+    linear.eval()
 
-    model = FCLayerModel(dut, weights_2d, biases_1d)
+    model = LinearLayerModel(dut, weights_2d, biases_1d)
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, RateGenerator(dut, 1.0), N_out)
@@ -777,7 +777,7 @@ async def single_test(dut):
         timed_out = True
     
     assert not timed_out, (
-        f"Timed out waiting for the single FC output handshake. "
+        f"Timed out waiting for the single LINEAR output handshake. "
         f"Produced={om.nproduced()} Expected={N_out}"
     )
 
@@ -787,7 +787,7 @@ async def single_test(dut):
 
 async def rate_tests(dut, in_rate: float, out_rate: float, N_vec: int = 200):
     """
-    FC fuzz test: drive N_vec input vectors; expect N_vec output vectors.
+    LINEAR fuzz test: drive N_vec input vectors; expect N_vec output vectors.
     Assumes ONE handshake on input == one full vector (packed [IC] samples),
     and ONE handshake on output == one full output vector (packed [OC]).
     """
@@ -805,11 +805,11 @@ async def rate_tests(dut, in_rate: float, out_rate: float, N_vec: int = 200):
     biases_1d  = unpack_biases(int(os.environ["INJECTED_BIASES_INT"]), BW, OC)
 
     # Instantiate PyTorch reference model
-    fc = fc_reference(weights_2d, biases_1d, IC, OC)
-    fc.eval()
+    linear = linear_reference(weights_2d, biases_1d, IC, OC)
+    linear.eval()
 
     # --- Model + runner ---
-    model = FCLayerModel(dut, weights_2d, biases_1d, fc)
+    model = LinearLayerModel(dut, weights_2d, biases_1d, linear)
     m = ModelRunner(dut, model)
 
     # --- Producer/consumer with fuzzed rates ---
@@ -840,7 +840,7 @@ async def rate_tests(dut, in_rate: float, out_rate: float, N_vec: int = 200):
 
     except SimTimeoutError:
         assert 0, (
-            f"Timed out in FC rate test. "
+            f"Timed out in LINEAR rate test. "
             f"Expected {N_out} output handshakes, got {om.nproduced()} "
             f"in {timeout_ns} ns (in_rate={in_rate}, out_rate={out_rate})."
         )

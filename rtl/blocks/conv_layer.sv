@@ -123,7 +123,7 @@ module conv_layer #(
 
   always_ff @(posedge clk_i) begin
     // If reset, we are not valid this cycle
-    if (rst_i)       input_valid_r  <= 1'b0; 
+    if (rst_i)        input_valid_r <= 1'b0; 
     // If not stalling, then we have valid data if we are producing it this cycle
     else if (ready_o) input_valid_r <= produce;
   end

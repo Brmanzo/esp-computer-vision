@@ -1,4 +1,6 @@
 # test_classifier_layer.py
+import shutil
+
 import git
 import os
 import sys
@@ -18,6 +20,7 @@ tbpath = os.path.dirname(os.path.realpath(__file__))
 import pytest
 
 import cocotb
+from typing import List
 
 from cocotb.utils import get_sim_time
 from cocotb.triggers import Timer, RisingEdge, FallingEdge, with_timeout
@@ -52,6 +55,130 @@ def unpack(packed, term_bits, input_count):
 def trunc_signed(value: int, width: int) -> int:
     return sign_extend(value, width)
 
+def gen_weights(IC: int, OC: int, WW: int, seed: int | None = None):
+    rng = random.Random(seed)
+    if WW < 2:
+        raise ValueError("Weight width must be at least 2 to include negative values in test kernels.")
+    elif WW == 2:
+        rand_weight_value = lambda: rng.choice([-1, 0, 1])
+    else:
+        max_val = (1 << (WW - 1)) - 1
+        min_val = -(1 << (WW - 1))
+        rand_weight_value = lambda: rng.randint(min_val, max_val)
+
+    # Generate the 2D matrix
+    weights2 = [[rand_weight_value() for _ in range(IC)] for _ in range(OC)]
+
+    # Pack the 2D matrix into a single integer for the Verilog Parameter
+    packed_weights = 0
+    bit_shift = 0
+    mask = (1 << WW) - 1
+
+    # Iterate from LSB to MSB: cols -> rows -> InChannels -> OutChannels
+    for oc in range(OC):
+        for ic in range(IC):
+            w = weights2[oc][ic]
+
+            w_bits = w if w >= 0 else (1 << WW) + w
+            w_bits = w_bits & mask # Ensure it fits within WW bits
+            
+            # Shift and combine into the main bit vector
+            packed_weights |= (w_bits << bit_shift)
+            bit_shift += WW
+
+    return packed_weights
+
+def gen_biases(BW: int, OC: int, seed: int | None = None):
+    rng = random.Random(seed)
+
+    max_val = (1 << (BW - 1)) - 1
+    min_val = -(1 << (BW - 1))
+    rand_bias_value = lambda: rng.randint(min_val, max_val)
+
+    # Generate the 2D matrix
+    biases1 = [rand_bias_value()  for _ in range(OC)]
+
+    # Pack the 2D matrix into a single integer for the Verilog Parameter
+    packed_biases = 0
+    bit_shift = 0
+    mask = (1 << BW) - 1
+
+    # Iterate from LSB to MSB: cols -> rows -> InChannels -> OutChannels
+    for oc in range(OC):
+        w = biases1[oc]
+
+        w_bits = w if w >= 0 else (1 << BW) + w
+        w_bits = w_bits & mask # Ensure it fits within BW bits
+        
+        # Shift and combine into the main bit vector
+        packed_biases |= (w_bits << bit_shift)
+        bit_shift += BW
+
+    return packed_biases
+
+def unpack_weights(packed_val: int, WW: int, OC: int, IC: int):
+    """Reconstructs the 4D weights matrix from the Verilog parameter integer."""
+    mask = (1 << WW) - 1
+    sign_bit = 1 << (WW - 1)
+    
+    weights2 = []
+    bit_shift = 0
+    
+    # Must mirror the exact same LSB -> MSB iteration order used in packing
+    for _ in range(OC):
+        oc_list = []
+        for _ in range(IC):
+            # Extract the specific bits for this weight
+            w_bits = (packed_val >> bit_shift) & mask
+            
+            # Convert from two's complement back to a signed Python integer
+            if w_bits & sign_bit:
+                w = w_bits - (1 << WW)
+            else:
+                w = w_bits
+                
+            oc_list.append(w)
+            bit_shift += WW
+        weights2.append(oc_list)
+        
+    return weights2
+
+def unpack_biases(packed_val: int, BW: int, OC: int):
+    """Reconstructs the 4D weights matrix from the Verilog parameter integer."""
+    mask = (1 << BW) - 1
+    sign_bit = 1 << (BW - 1)
+    
+    biases1 = []
+    bit_shift = 0
+    
+    # Must mirror the exact same LSB -> MSB iteration order used in packing
+    for _ in range(OC):
+        # Extract the specific bits for this weight
+        w_bits = (packed_val >> bit_shift) & mask
+        
+        # Convert from two's complement back to a signed Python integer
+        if w_bits & sign_bit:
+            w = w_bits - (1 << BW)
+        else:
+            w = w_bits
+            
+        biases1.append(w)
+        bit_shift += BW
+        
+    return biases1
+
+def pack_data_i(samples, width):
+    """
+    samples: list[int] length = InChannels
+    width: InBits
+    Returns packed int: sum(samples[ic] << (ic*width))
+    """
+    mask = (1 << width) - 1
+    out = 0
+    for ic, v in enumerate(samples):
+        out |= (int(v) & mask) << (ic * width)
+    return out
+
 tests = ['reset_test'
         ,'single_test'
         ,'inout_fuzz_test'
@@ -61,94 +188,170 @@ tests = ['reset_test'
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("TermBits, ClassCount, TermCount", [
-    (8, 9, 32),
-    (16, 17, 64),
-    (32, 33, 64)
+@pytest.mark.parametrize("TermBits, TermCount, BusBits, InChannels, ClassCount, WeightBits, Weights, Biases, BiasBits", [
+    (1,  32, 8,  8, 10,  2, gen_weights( 8, 10, 2), gen_biases( 2, 10), 2),
+    (2,  64, 8, 16, 10,  4, gen_weights(16, 10, 4), gen_biases( 4, 10), 4),
+    (4, 128, 8, 24, 10,  5, gen_weights(24, 10, 5), gen_biases( 8, 10), 8),
+    (8, 256, 8, 32, 10,  8, gen_weights(32, 10,	8), gen_biases(16, 10),	16)
 ])
-def test_each(test_name, simulator, TermBits, ClassCount, TermCount):
+def test_each(test_name, simulator, TermBits, TermCount, BusBits, InChannels, ClassCount, WeightBits, Weights, BiasBits, Biases):
     # This line must be first
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
-    runner(simulator, timescale, tbpath, parameters, testname=test_name, pymodule="test_classifier_layer")
 
-# Opposite above, run all the tests in one simulation but reset
-# between tests to ensure that reset is clearing all state.
-@pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("TermBits, ClassCount, TermCount", [
-    (8, 9, 32)
-])
-def test_all(simulator, TermBits, ClassCount, TermCount):
-    # This line must be first
-    parameters = dict(locals())
-    del parameters['simulator']
-    runner(simulator, timescale, tbpath, parameters, pymodule="test_classifier_layer")
+    # Remove injected params so cocotb-runner doesn't pass them on CLI
+    del parameters["Weights"]
+    del parameters["Biases"]
+
+    param_str = f"TermBits_{TermBits}_WeightBits_{WeightBits}_BiasBits_{BiasBits}_test_{test_name}"
+    custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
+    if simulator.startswith("icarus") and os.path.exists(custom_work_dir):
+        shutil.rmtree(custom_work_dir)
+    os.makedirs(custom_work_dir, exist_ok=True)
+
+    # ---- Emit injected_weights.vh ----
+    total_bits_w = int(ClassCount) * int(InChannels) * int(WeightBits)
+    vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
+    with open(vh_path, "w") as f:
+        hex_width = (total_bits_w + 3) // 4
+        f.write(
+            f"localparam logic signed [{total_bits_w-1}:0] INJECTED_WEIGHTS = "
+            f"{total_bits_w}'h{Weights:0{hex_width}x};\n"
+        )
+
+    total_bits_b = int(ClassCount) * int(BiasBits)
+    vhb_path = os.path.join(custom_work_dir, "injected_biases.vh")
+    with open(vhb_path, "w") as f:
+        hex_width = (total_bits_b + 3) // 4
+        f.write(
+            f"localparam logic signed [{total_bits_b-1}:0] INJECTED_BIASES = "
+            f"{total_bits_b}'h{Biases:0{hex_width}x};\n"
+        )
+
+    # ---- Pass big ints via env vars for cocotb ----
+    os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
+    os.environ["INJECTED_BIASES_INT"]  = str(Biases)
+
+    wrapper_path = os.path.join(tbpath, "tb_classifier_layer.sv")
+    runner(
+        simulator=simulator,
+        timescale=timescale,
+        tbpath=tbpath,
+        params=parameters,
+        testname=test_name,
+        work_dir=custom_work_dir,
+        includes=[custom_work_dir],        # so injected_*.vh can be `included
+        toplevel_override="tb_classifier_layer",
+        extra_sources=[wrapper_path],
+    )
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("TermBits, ClassCount, TermCount", [
-    (8, 9, 32)
+@pytest.mark.parametrize("TermBits, TermCount, BusBits, InChannels, ClassCount, WeightBits, Weights, BiasBits, Biases", [
+    (2, 10, 8, 2, 4, 2, gen_weights(2, 4, 2), 2, gen_biases(2, 10))
 ])
-def test_lint(simulator, TermBits, ClassCount, TermCount):
+def test_lint(simulator, TermBits, TermCount, BusBits, InChannels, ClassCount, WeightBits, Weights, BiasBits, Biases):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
+    del parameters["Weights"]
+    del parameters["Biases"]
     lint(simulator, timescale, tbpath, parameters, pymodule="test_classifier_layer")
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("TermBits, ClassCount, TermCount", [
-    (8, 9, 32)
+@pytest.mark.parametrize("TermBits, TermCount, BusBits, InChannels, ClassCount, WeightBits, Weights, BiasBits, Biases", [
+    (2, 10, 8, 2, 4, 2, gen_weights(2, 4, 2), 2, gen_biases(2, 10))
 ])
-def test_style(simulator, TermBits, ClassCount, TermCount):
+def test_style(simulator, TermBits, TermCount, BusBits, InChannels, ClassCount, WeightBits, Weights, BiasBits, Biases):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
+    del parameters["Weights"]
+    del parameters["Biases"]
     lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"], pymodule="test_classifier_layer")
 
 class ClassifierLayerModel:
-    def __init__(self, dut):
+    def __init__(self, dut, weights: List[List[int]], biases: List[int]):
         self._dut = dut
         self._data_i = dut.data_i
         self._class_o = dut.class_o
 
+        # Global Max parameters
         self._term_bits = int(dut.TermBits.value)
-        self._class_count = int(dut.ClassCount.value)
         self._term_count = int(dut.TermCount.value)
-
         self._term_counter = 0
         self._current_max = None
+
+        # Linear Parameters
+        self._in_channels  = int(dut.InChannels.value)
+        self._class_count = int(dut.ClassCount.value)
+
+        # 2D array storing all weights in each filter: [OC][IC]
+        self.w = np.array(weights, dtype=int)
+        assert self.w.shape == (self._class_count, self._in_channels)
+
+        # 1D array storing bias for each output channel: [OC]
+        self.b = np.array(biases, dtype=int)
+
+        # If scalar bias for OC=1, normalize to shape (1,)
+        if self.b.shape == () and self._class_count == 1:
+            self.b = self.b.reshape((1,))
+
+        assert self.b.shape == (self._class_count,), (
+            f"Bias shape mismatch: got {self.b.shape}, expected ({self._class_count},). "
+            f"biases={biases!r}"
+        )
+
         self._expected = queue.SimpleQueue()
 
     def consume(self):
         assert_resolvable(self._data_i)
 
         packed_in = int(self._data_i.value.integer)
-        x = unpack(packed_in, self._term_bits, self._class_count)
+        
+        # 1. Unpack incoming feature map (InChannels wide)
+        x = unpack(packed_in, self._term_bits, self._in_channels)
 
+        # 2. Global Max Pooling (across spatial TermCount)
         if self._term_counter == 0:
             self._current_max = x[:]
         else:
-            for ch in range(self._class_count):
+            for ch in range(self._in_channels):
                 self._current_max[ch] = max(self._current_max[ch], x[ch])
 
         self._term_counter += 1
 
+        # 3. When spatial max is complete, run the linear layer and comparator!
         if self._term_counter == self._term_count:
-            max_val = max(self._current_max)
-            class_id = self._current_max.index(max_val)  # lowest index wins ties
-            self._expected.put((class_id, self._current_max[:]))
+            
+            # --- Linear Layer MAC Operation ---
+            expected_logits = [0 for _ in range(self._class_count)]
+            for oc in range(self._class_count):
+                acc = self.b[oc]
+                for ic in range(self._in_channels):
+                    acc += self.w[oc][ic] * self._current_max[ic]
+                expected_logits[oc] = acc
+
+            # --- Comparator (Argmax) Operation ---
+            max_val = max(expected_logits)
+            class_id = expected_logits.index(max_val)  # lowest index wins ties
+
+            # Queue the final class ID and the logits for debug printing
+            self._expected.put((class_id, expected_logits[:]))
+            
+            # Reset for the next image
             self._term_counter = 0
             self._current_max = None
 
     def produce(self):
         assert_resolvable(self._class_o)
 
-        expected_id, max_vector = self._expected.get()
+        expected_id, expected_logits = self._expected.get()
         got_id = int(self._class_o.value.integer)
 
         print(
             f"Produced class {got_id}, expected {expected_id}, "
-            f"max_vector={max_vector} at time {get_sim_time(units='ns')}ns"
+            f"logits={expected_logits} at time {get_sim_time(units='ns')}ns"
         )
 
         assert got_id == expected_id, (
@@ -157,17 +360,13 @@ class ClassifierLayerModel:
 
 class RandomDataGenerator:
     def __init__(self, dut):
-        self._dut = dut
+        self._width_p = int(dut.TermBits.value)
+        self._InChannels = int(dut.InChannels.value)
 
     def generate(self):
-        term_bits = int(self._dut.TermBits.value)
-        class_count = int(self._dut.ClassCount.value)
-
-        lo = -(1 << (term_bits - 1))
-        hi =  (1 << (term_bits - 1)) - 1
-
-        vals = [random.randint(lo, hi) for _ in range(class_count)]
-        return pack(vals, term_bits)
+        # Generates a clean list of ints, one for each channel
+        return [random.randint(0, (1 << self._width_p) - 1)
+                for _ in range(self._InChannels)]
 
 class RateGenerator():
     def __init__(self, dut, r):
@@ -290,6 +489,9 @@ class InputModel():
         ready_o = self._dut.ready_o
         valid_i = self._dut.valid_i
         data_i = self._dut.data_i
+        
+        # 1. FIX: Grab the bit width from the DUT (assuming TermBits for classifier)
+        w = int(self._dut.TermBits.value)
 
         await delay_cycles(self._dut, 1, False)
 
@@ -298,14 +500,22 @@ class InputModel():
 
         await delay_cycles(self._dut, 2, False)
 
+        # 2. FIX: Generate the very first data sample before entering the loop
+        din = self._data.generate()
+
         # Precondition: Falling Edge of Clock
         while self._nin < self._length:
-            produce = self._rate.generate()
-            success = 0
-            valid_i.value = produce
-            data = self._data.generate()
+            produce = bool(self._rate.generate())
+            valid_i.value = int(produce)
 
-            data_i.value = data if produce else 0
+            # 1. Pack the list of integers into a single big integer
+            packed_din = pack_data_i(din, w)
+
+            # 2. Assign the packed integer to the pin!
+            data_i.value = packed_din if produce else 0
+
+            # Wait for handshake if producing, otherwise just advance a cycle
+            success = False
 
             # Wait until ready
             while(produce and not success):
@@ -315,8 +525,14 @@ class InputModel():
                 success = True if (ready_o.value == 1) else False
                 if (success):
                     self._nin += 1
+                    
+                    # 3. FIX: Generate the NEXT data sample only after a successful transfer!
+                    din = self._data.generate()
 
             await FallingEdge(clk_i)
+            
+        # Optional but recommended: Drop valid to 0 when finished
+        valid_i.value = 0
         return self._nin
 
 class ModelRunner():
@@ -369,7 +585,15 @@ async def reset_test(dut):
 async def single_test(dut):
     T = int(dut.TermCount.value)
 
-    model = ClassifierLayerModel(dut)
+    IC = int(dut.InChannels.value)
+    OC = int(dut.ClassCount.value)
+    WW = int(dut.WeightBits.value)
+    BW = int(dut.BiasBits.value)
+
+    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_INT"]), WW, OC, IC)
+    biases_1d = unpack_biases(int(os.environ["INJECTED_BIASES_INT"]), BW, OC)
+
+    model = ClassifierLayerModel(dut, weights_2d, biases_1d)
     m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, 1), 1)
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, 1), T)
@@ -385,7 +609,7 @@ async def single_test(dut):
     om.start()
     im.start()
 
-    timeout_ns = 200
+    timeout_ns = 300
     await om.wait(timeout_ns)
 
 async def rate_tests(dut, in_rate, out_rate):
@@ -397,7 +621,16 @@ async def rate_tests(dut, in_rate, out_rate):
     l_in = groups * T
     l_out = groups
 
-    m = ModelRunner(dut, ClassifierLayerModel(dut))
+    IC = int(dut.InChannels.value)
+    OC = int(dut.ClassCount.value)
+    WW = int(dut.WeightBits.value)
+    BW = int(dut.BiasBits.value)
+
+    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_INT"]), WW, OC, IC)
+    biases_1d = unpack_biases(int(os.environ["INJECTED_BIASES_INT"]), BW, OC)
+
+    model = ClassifierLayerModel(dut, weights_2d, biases_1d)
+    m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, out_rate), l_out)
     im = InputModel(dut, eg, RateGenerator(dut, in_rate), l_in)
 
@@ -419,20 +652,18 @@ async def rate_tests(dut, in_rate, out_rate):
     om.start()
     im.start()
 
-    await RisingEdge(dut.ready_i)
-    await RisingEdge(dut.clk_i)
-
+    clock_period_ns = 10
     slow = min(in_rate, out_rate)
     slow = max(slow, 0.05) 
-    timeout_ns        = int((l_in + 500) / slow)
+    timeout_ns = int(((l_in + 500) / slow) * clock_period_ns)
 
     try:
         await om.wait(timeout_ns)
     except SimTimeoutError:
         assert 0, (
             f"Test timed out. Expected {l_out} outputs from {l_in} inputs "
-            f"with ClassCount={T}, in_rate={in_rate}, out_rate={out_rate}"
-    )
+            f"with TermCount={T}, in_rate={in_rate}, out_rate={out_rate}"
+        )
 
 @cocotb.test
 async def out_fuzz_test(dut):

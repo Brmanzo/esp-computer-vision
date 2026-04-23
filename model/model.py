@@ -44,42 +44,24 @@ class cnn_model(nn.Module):
             for layer in range(self._layers):
                 for module in range(len(self._kernels[layer])):
                     if module == 0:  # Convolution module
-                        if self._kernels[layer][module] == 1:
-                            print(
-                                render_linear_layer(
-                                    InBits=self._input_bits[layer],
-                                    OutBits=self._out_bits[layer],
-                                    WeightBits=self._weight_bits[layer],
-                                    BiasBits=8,
-                                    InChannels=self._in_ch[layer],
-                                    OutChannels=self._out_ch[layer],
-                                    Weights=f"weights_{layer}",
-                                    Biases=f"biases_{layer}",
-                                    instance=layer,
-                                    num_instances=self._layers,
-                                    kernels=self._kernels
-                                ),
-                                file=f,
-                                )
-                        else:
-                            print(
-                                render_conv_layer(
-                                    LineWidthPx=self._input_widths[layer][0],
-                                    LineCountPx=self._input_heights[layer][0],
-                                    InBits=self._input_bits[layer],
-                                    OutBits=self._out_bits[layer],
-                                    KernelWidth=self._kernels[layer][0],
-                                    WeightBits=self._weight_bits[layer],
-                                    InChannels=self._in_ch[layer],
-                                    OutChannels=self._out_ch[layer],
-                                    Stride=self._stride[layer],
-                                    Weights=f"weights_{layer}",
-                                    instance=layer,
-                                    num_instances=self._layers,
-                                    kernels=self._kernels,
-                                ),
-                                file=f,
-                            )
+                        print(
+                            render_conv_layer(
+                                LineWidthPx=self._input_widths[layer][0],
+                                LineCountPx=self._input_heights[layer][0],
+                                InBits=self._input_bits[layer],
+                                OutBits=self._out_bits[layer],
+                                KernelWidth=self._kernels[layer][0],
+                                WeightBits=self._weight_bits[layer],
+                                InChannels=self._in_ch[layer],
+                                OutChannels=self._out_ch[layer],
+                                Stride=self._stride[layer],
+                                Weights=f"weights_{layer}",
+                                instance=layer,
+                                num_instances=self._layers,
+                                kernels=self._kernels,
+                            ),
+                            file=f,
+                        )
                     elif module == 1:  # Pooling module
                         print(
                             render_pool_layer(
@@ -96,11 +78,15 @@ class cnn_model(nn.Module):
                         )
             print(
                 render_classifier_layer(
-                    # FIX: Use _out_bits so no data is truncated before the global max
                     TermBits=self._out_bits[-1], 
-                    BusBits=UART_BUS_WIDTH,
                     TermCount=self._classifier_term_count,
+                    BusBits=UART_BUS_WIDTH,
+                    InChannels=self._in_ch[-1],
                     ClassCount=self._num_classes,
+                    WeightBits=self._weight_bits[-1],
+                    BiasBits=8, # Assuming 8 bits for biases, can be adjusted as needed
+                    Weights=f"classifier_weights",
+                    Biases=f"classifier_biases",
                     instance=self._layers
                 ),
                 file=f
@@ -197,17 +183,15 @@ class cnn_model(nn.Module):
     def forward(self, x):
         x = self.features(x)           
         
-        # 1. Classifier (1x1 Conv) applied to full HxW feature map
-        x = self.classifier(x)         
-        
-        # 2. Global Max over the spatial dimensions (reduces H,W to 1,1)
+        # Global Max
+        # Reduces (Batch, Channels, H, W) -> (Batch, Channels, 1, 1)
         x = torch.amax(x, dim=(2, 3), keepdim=True) 
         
-        # 3. Flatten
+        # Classifier
+        # Now the 1x1 Conv acts exactly like your SystemVerilog FC layer
+        x = self.classifier(x)         
+        
+        # 3. Flatten the final output to (Batch, Num_Classes)
         x = torch.flatten(x, 1)
         
-        # (Optional) 4. If this is for cocotb equivalence testing, add argmax:
-        if not self.training:
-            x = torch.argmax(x, dim=1)
-            
         return x
