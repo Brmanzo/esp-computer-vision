@@ -3,11 +3,11 @@
 
 `timescale 1ns / 1ps
 module classifier_layer #(
-   parameter  int unsigned TermBits      = 8 // Preserved between global max and comparator tree to maintain precision for comparisons
-  ,parameter  int unsigned BusBits     = 8 // Output bus width
-  ,parameter  int unsigned TermCount   = 32
-  ,parameter  int unsigned ClassCount  = 10
-  ,localparam int unsigned IdBits      = (ClassCount <= 1) ? 1 : $clog2(ClassCount)
+   parameter  int unsigned TermBits   = 8 // Preserved between global max and comparator tree to maintain precision for comparisons
+  ,parameter  int unsigned BusBits    = 8 // Output bus width
+  ,parameter  int unsigned TermCount  = 32
+  ,parameter  int unsigned ClassCount = 10
+  ,localparam int unsigned IdBits     = (ClassCount <= 1) ? 1 : $clog2(ClassCount)
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i

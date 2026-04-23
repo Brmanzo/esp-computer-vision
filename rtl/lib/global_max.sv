@@ -6,7 +6,7 @@ module global_max #(
    parameter  int unsigned InBits      = 1
   ,parameter  int unsigned OutBits     = InBits
   ,parameter  int unsigned TermCount   = 9
-  ,parameter  int unsigned InChannels   = 1
+  ,parameter  int unsigned InChannels  = 1
   ,localparam int unsigned CountWidth  = (TermCount <= 1) ? 1 : $clog2(TermCount)
 )  (
    input  [0:0] clk_i

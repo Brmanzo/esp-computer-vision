@@ -41,7 +41,7 @@ def pad_to_target(img):
 # Define model architecture and quantization schedule
 input_dimensions = (320, 240)
 in_channels = [1, 8, 16, 24, 32]
-in_bits     = [1, 1, 1, 1, 8]
+in_bits     = [1, 1, 1, 1]
 kernels     = [[3,2], [3,2], [3,2], [3], [1]]
 
 # Establish schedule for progressive quantization of each layer

@@ -2,7 +2,7 @@
 module comparator_tree #(
    parameter  int unsigned InBits      = 8,
    parameter  int unsigned OutBits     = InBits,
-   parameter  int unsigned ClassCount   = 32,
+   parameter  int unsigned ClassCount  = 32,
    parameter  int unsigned IdBits      = (ClassCount <= 1) ? 1 : $clog2(ClassCount),
    localparam int unsigned TreeLevels  = (ClassCount <= 1) ? 1 : $clog2(ClassCount),
    localparam int unsigned TreeWidth   = 1 << TreeLevels

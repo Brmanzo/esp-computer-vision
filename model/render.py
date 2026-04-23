@@ -4,7 +4,7 @@
 from datetime import datetime
 
 
-def render_header():
+def render_header(BusBits):
     date = datetime.now().strftime("%B %d, %Y %I:%M %p")
     lines = [
         "// cnn.sv",
@@ -21,7 +21,7 @@ def render_header():
         "",
         "  ,output [0:0] valid_o",
         "  ,output [0:0] ready_o",
-        "  ,output [0:0] data_o",
+        f"  ,output [{BusBits-1}:0] data_o", # FIXED: No longer [0:0]
         ");",
     ]
 
@@ -44,6 +44,8 @@ def render_wires(kernels):
 
             if not (is_last_module and is_last_layer):
                 lines.append("")
+
+    lines.append("  wire [0:0] classifier_ready;")
 
     return "\n".join(lines)
 
@@ -78,16 +80,18 @@ def render_conv_layer(
         data_i  = f"pool_{instance - 1}_data"
         ready_o = f"conv_{instance}_ready"
 
-    # If at tail of the last layer, connect to global output
+    # If at tail of the last layer (right before classifier), drive internal wires
     if instance == num_instances - 1:
-        ready_i = "ready_i"
-        valid_o = "valid_o"
-        data_o  = "data_o"
-    # If the current layer does not have pooling, connect to the next conv layer's input
-    elif len(kernels[instance]) == 1:  # If the last module in this layer is a conv, connect to next layer's conv
+        ready_i = f"conv_{instance}_ready" # Classifier will drive this
+        valid_o = f"conv_{instance}_valid" # Classifier will read this
+        data_o  = f"conv_{instance}_data"  # Classifier will read this
+
+    # If the current layer does not have pooling, connect to the next layer's input
+    elif len(kernels[instance]) == 1:
         ready_i = f"conv_{instance + 1}_ready"
         valid_o = f"conv_{instance}_valid"
         data_o  = f"conv_{instance}_data"
+        
     # Otherwise, connect to current layer's pool
     else:
         ready_i = f"pool_{instance}_ready"
@@ -195,16 +199,18 @@ def render_linear_layer(
         data_i  = f"pool_{instance - 1}_data"
         ready_o = f"conv_{instance}_ready"
 
-    # If at tail of the last layer, connect to global output
+    # If at tail of the last layer (right before classifier), drive internal wires
     if instance == num_instances - 1:
-        ready_i = "ready_i"
-        valid_o = "valid_o"
-        data_o  = "data_o"
-    # If the current layer does not have pooling, connect to the next conv/linear layer's input
+        ready_i = "classifier_ready"
+        valid_o = f"conv_{instance}_valid" # Classifier will read this
+        data_o  = f"conv_{instance}_data"  # Classifier will read this
+
+    # If the current layer does not have pooling, connect to the next layer's input
     elif len(kernels[instance]) == 1:
         ready_i = f"conv_{instance + 1}_ready"
         valid_o = f"conv_{instance}_valid"
         data_o  = f"conv_{instance}_data"
+        
     # Otherwise, connect to current layer's pool
     else:
         ready_i = f"pool_{instance}_ready"
@@ -235,6 +241,49 @@ def render_linear_layer(
         "  );\n",
     ]
     return "\n".join(lines)
+
+def render_classifier_layer(
+    TermBits,
+    BusBits,
+    TermCount,
+    ClassCount,
+    instance,
+):
+    # Classifier reads from the final linear/conv stage
+    valid_i = f"conv_{instance - 1}_valid"
+    data_i  = f"conv_{instance - 1}_data"
+    
+    # --- Classifier drives the dedicated ready wire ---
+    ready_o = "classifier_ready"
+
+    # Classifier drives the global output handshake
+    ready_i = "ready_i"
+    valid_o = "valid_o"
+    
+    # FIXED: Map the classifier's class_o to the top-level data_o port
+    class_o = "data_o" 
+
+    lines = [
+        "  classifier_layer #(",
+        f"     .TermBits   ({TermBits})",
+        f"    ,.BusBits    ({BusBits})",
+        f"    ,.TermCount  ({TermCount})",
+        f"    ,.ClassCount ({ClassCount})",
+        f"  ) classifier_layer_inst_{instance} (",
+        "     .clk_i   (clk_i)",
+        "    ,.rst_i   (rst_i)",
+        "",
+        f"    ,.ready_o  ({ready_o})",
+        f"    ,.valid_i  ({valid_i})",
+        f"    ,.data_i   ({data_i})",
+        "",
+        f"    ,.valid_o  ({valid_o})",
+        f"    ,.ready_i  ({ready_i})",
+        f"    ,.class_o  ({class_o})",
+        "  );\n",
+    ]
+    return "\n".join(lines)
+
 
 def render_footer():
     lines = [

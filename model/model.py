@@ -12,8 +12,9 @@ import torch.nn as nn
 from pathlib import Path
 
 BRAM_COUNT = 30 - 1 # Subtract 1 for the Skid Buffer BRAM on deframer
+UART_BUS_WIDTH = 8
 
-from .render import render_header, render_wires, render_conv_layer, render_pool_layer, render_linear_layer, render_footer
+from .render import render_classifier_layer, render_header, render_wires, render_conv_layer, render_pool_layer, render_linear_layer, render_footer
 from .quantize import QuantConv2d, QuantizeActivation
 
 class cnn_model(nn.Module):
@@ -36,7 +37,7 @@ class cnn_model(nn.Module):
 
     def render_verilog(self, filepath: Path) -> None:
         with open(filepath, "w", encoding="utf-8") as f:
-            print(render_header(), file=f)
+            print(render_header(UART_BUS_WIDTH), file=f)
             print(render_wires(self._kernels), file=f)
             print("", file=f)
 
@@ -93,7 +94,17 @@ class cnn_model(nn.Module):
                             ),
                             file=f,
                         )
-
+            print(
+                render_classifier_layer(
+                    # FIX: Use _out_bits so no data is truncated before the global max
+                    TermBits=self._out_bits[-1], 
+                    BusBits=UART_BUS_WIDTH,
+                    TermCount=self._classifier_term_count,
+                    ClassCount=self._num_classes,
+                    instance=self._layers
+                ),
+                file=f
+            )
             print(render_footer(), file=f)
 
     def __init__(self, input_dimensions, in_channels, in_bits, kernels, schedule, num_classes=5):
@@ -108,8 +119,8 @@ class cnn_model(nn.Module):
         self._layers = len(self._in_ch)
         
         self._input_bits       = in_bits
-        acc_bits = in_bits[-1] + schedule[-1]._q_min_bits + math.ceil(math.log2(self._in_ch[-1]))
-        self._out_bits      = in_bits[1:] + [acc_bits]
+        self._out_bits         = in_bits[1:]
+
         self._kernels          = kernels
 
         self._input_dimensions = input_dimensions
@@ -131,9 +142,20 @@ class cnn_model(nn.Module):
                     w = w // self._kernels[layer][1]
                     h = h // self._kernels[layer][1]
 
+        self._classifier_term_count = self._input_widths[-1][0] * self._input_heights[-1][0]
+
         self._weight_bits   = [schedule[i]._q_min_bits for i in range(self._layers)]
 
         self._stride        = [    1  for _ in range(self._layers)]
+
+        full_precision_term_count = self._in_ch[3] * (self._kernels[3][0] ** 2)
+        full_precision_acc_bits = self._out_bits[2] + self._weight_bits[3] + math.ceil(math.log2(full_precision_term_count))
+
+        classifier_term_count = self._in_ch[4] * (self._kernels[4][0] ** 2)
+        classifier_acc_bits = full_precision_acc_bits + self._weight_bits[4] + math.ceil(math.log2(classifier_term_count))
+
+        self._input_bits = in_bits + [full_precision_acc_bits]
+        self._out_bits = in_bits[1:] + [full_precision_acc_bits, classifier_acc_bits]
         
         # One BRAM consumed by binary in_ch
         self.ram_utilization()
@@ -175,15 +197,17 @@ class cnn_model(nn.Module):
     def forward(self, x):
         x = self.features(x)           
         
-        # Global Max
-        # Reduces (Batch, Channels, H, W) -> (Batch, Channels, 1, 1)
-        x = torch.amax(x, dim=(2, 3), keepdim=True) 
-        
-        # Classifier
-        # Now the 1x1 Conv acts exactly like your SystemVerilog FC layer
+        # 1. Classifier (1x1 Conv) applied to full HxW feature map
         x = self.classifier(x)         
         
-        # 3. Flatten the final output to (Batch, Num_Classes)
+        # 2. Global Max over the spatial dimensions (reduces H,W to 1,1)
+        x = torch.amax(x, dim=(2, 3), keepdim=True) 
+        
+        # 3. Flatten
         x = torch.flatten(x, 1)
         
+        # (Optional) 4. If this is for cocotb equivalence testing, add argmax:
+        if not self.training:
+            x = torch.argmax(x, dim=1)
+            
         return x
