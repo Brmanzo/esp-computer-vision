@@ -10,7 +10,7 @@ module tb_neuron #(
   ,parameter int unsigned BiasBits   = 8
   ,parameter int unsigned InChannels  = 1
 )  (
-   input  [InChannels-1:0][InBits-1:0] data_i
+   input  signed [InChannels-1:0][InBits-1:0] data_i
   ,output signed [OutBits-1:0]         data_o
 );
   `include "injected_weights.vh"

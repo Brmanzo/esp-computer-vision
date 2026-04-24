@@ -202,13 +202,20 @@ class RandomDataGenerator():
         self._first_high = False
 
     def generate(self):
+        bw = int(self._dut.BufferWidth.value)
+        
+        # Calculate signed bounds
+        min_val = -(1 << (bw - 1))
+        max_val = (1 << (bw - 1)) - 1
+
         for ch in range(int(self._dut.InputChannels.value)):
             if not self._first_high:
-                bw = int(self._dut.BufferWidth.value)
-                self._data[ch] = (1 << bw) - 1
+                # Test the all-ones case (which is -1 in two's complement)
+                self._data[ch] = -1 
                 self._first_high = True
             else:
-                self._data[ch] = random.randint(0, (1 << int(self._dut.BufferWidth.value)) - 1)
+                self._data[ch] = random.randint(min_val, max_val)
+                
         return self._data
 
 class RateGenerator():

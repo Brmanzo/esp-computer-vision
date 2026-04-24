@@ -148,7 +148,14 @@ def fc_reference(weights_1d, bias, InChannels):
     return fc
 def unpack_data_i(packed, width_in, IC):
     mask = (1 << width_in) - 1
-    return [ (packed >> (ic * width_in)) & mask for ic in range(IC) ]
+    
+    # 1-bit data should stay unsigned (0 or 1) so the bipolar mapper works!
+    if width_in == 1:
+        return [ (packed >> (ic * width_in)) & mask for ic in range(IC) ]
+        
+    # Multi-bit data must be sign-extended!
+    else:
+        return [ sign_extend((packed >> (ic * width_in)) & mask, width_in) for ic in range(IC) ]
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
@@ -321,11 +328,23 @@ class NeuronModel():
 
     def consume(self):
         packed = int(self._data_i.value.integer)
+        
+        # NOTE: Make sure unpack_data_i is properly SIGN-EXTENDING multi-bit numbers!
         din = unpack_data_i(packed, int(self._dut.InBits.value), self._InChannels)
+        
         # compute expected NOW, while _buf matches this accepted input position    
         acc = self.b
+        in_bits = int(self._dut.InBits.value)
+        
         for ic in range(self._InChannels):
-            acc += int(self.w[ic]) * int(din[ic])
+            # 1. Hardware Math Mapping
+            if in_bits == 1:
+                val = 1 if din[ic] == 1 else -1
+            else:
+                val = int(din[ic])
+                
+            # 2. Accumulate
+            acc += int(self.w[ic]) * val
 
         return acc
 
@@ -360,6 +379,8 @@ async def comb_step(dut, model, din_list, ref):
 async def single_test(dut):
     IC = int(dut.InChannels.value)
     WW = int(dut.WeightBits.value)
+    in_bits = int(dut.InBits.value)
+
     dut.data_i.value = 0  # Initialize to avoid X's in consume()
     await Timer(Decimal(1), units="step")
 
@@ -371,9 +392,19 @@ async def single_test(dut):
     print(f"Testing with Weights: {weights_1d}, Bias: {bias}")
     model = NeuronModel(dut, weights_1d, bias)
 
-    din = [random.randint(0, (1 << int(dut.InBits.value)) - 1) for _ in range(IC)]
+    # 1. Generate signed bounds and mapped PyTorch values
+    if in_bits == 1:
+        din = [1 for _ in range(IC)] # Test all ones
+        din_math = [1.0 if x == 1 else -1.0 for x in din]
+    else:
+        min_val = -(1 << (in_bits - 1))
+        max_val =  (1 << (in_bits - 1)) - 1
+        din = [random.randint(min_val, max_val) for _ in range(IC)]
+
+        din_math = din
+
     # Convert data_i to tensor and compute Pytorch Reference Activation
-    tensor = torch.tensor([din], dtype=torch.float32)
+    tensor = torch.tensor([din_math], dtype=torch.float32)
     ref = fc(tensor).item()
     await comb_step(dut, model, din, ref)
 
@@ -381,6 +412,8 @@ async def single_test(dut):
 async def full_bw_test(dut):
     IC = int(dut.InChannels.value)
     WW = int(dut.WeightBits.value)
+    in_bits = int(dut.InBits.value)
+
     dut.data_i.value = 0  # Initialize to avoid X's in consume()
     await Timer(Decimal(1), units="step")
 
@@ -391,9 +424,24 @@ async def full_bw_test(dut):
     fc = fc_reference(weights_1d, bias, IC)
     model = NeuronModel(dut, weights_1d, bias)
 
+    if in_bits == 1:
+        min_val, max_val = 0, 1
+    else:
+        min_val = -(1 << (in_bits - 1))
+        max_val =  (1 << (in_bits - 1)) - 1
+
     for _ in range(500):
-        din = [random.randint(0, (1 << int(dut.InBits.value)) - 1) for _ in range(IC)]
-        # Convert data_i to tensor and compute Pytorch Reference Activation
-        tensor = torch.tensor([din], dtype=torch.float32)
+        # 1. Generate random inputs
+        din = [random.randint(min_val, max_val) for _ in range(IC)]
+        
+        # 2. Map for PyTorch if needed
+        if in_bits == 1:
+            din_math = [1.0 if x == 1 else -1.0 for x in din]
+        else:
+            din_math = din
+
+        # Convert to tensor and compute Pytorch Reference Activation
+        tensor = torch.tensor([din_math], dtype=torch.float32)
         ref = fc(tensor).item()
+        
         await comb_step(dut, model, din, ref)

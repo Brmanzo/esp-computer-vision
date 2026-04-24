@@ -32,11 +32,11 @@ module pool_layer #(
 
   ,input  [0:0] valid_i
   ,output [0:0] ready_o
-  ,input  [InChannels-1:0][InBits-1:0] data_i
+  ,input  logic signed [InChannels-1:0][InBits-1:0] data_i
 
   ,output [0:0] valid_o
   ,input  [0:0] ready_i
-  ,output [OutChannels-1:0][OutBits-1:0] data_o
+  ,output logic signed [OutChannels-1:0][OutBits-1:0] data_o
 );
   // Helper function to compute the next phase in the stride cycle for strides greater than 1.
   // Rolls over when the current phase is the last in the cycle, otherwise returns the next phase.
@@ -115,8 +115,8 @@ module pool_layer #(
   
   /* --------------------------------------- Input Channel Logic --------------------------------------- */
   // Vertically partition channels and row buffers for each channel within RAM
-  logic [InChannels-1:0][KernelWidth-1:0][InBits-1:0] row_buffers;
-  logic [InChannels-1:0][KernelWidth-1:1][InBits-1:0] row_buffer_taps;
+  logic signed [InChannels-1:0][KernelWidth-1:0][InBits-1:0] row_buffers;
+  logic signed [InChannels-1:0][KernelWidth-1:1][InBits-1:0] row_buffer_taps;
   generate
     for (genvar ch = 0; ch < InChannels; ch++) begin : gen_data_input
       assign row_buffers[ch][0] = data_i[ch]; // Row buffer 0 is current data input
@@ -144,7 +144,7 @@ module pool_layer #(
   /* ------------------------------------ Window Generation Logic ------------------------------------ */
   // Every input channel is represented within its own matrix and passed to every filter
   // Which each have input channel number of kernels 
-  logic [InChannels-1:0][KernelArea-1:0][InBits-1:0] windows;
+  logic signed [InChannels-1:0][KernelArea-1:0][InBits-1:0] windows;
   generate
     for (genvar ch = 0; ch < InChannels; ch++) begin : gen_windows
       window #(

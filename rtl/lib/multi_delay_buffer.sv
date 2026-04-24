@@ -14,11 +14,11 @@ module multi_delay_buffer #(
    input [0:0] clk_i
   ,input [0:0] rst_i
 
-  ,input  [InputChannels-1:0][BufferWidth-1:0] data_i
+  ,input  signed [InputChannels-1:0][BufferWidth-1:0] data_i
   ,input  [0:0]       valid_i
   ,output [0:0]       ready_o
 
-  ,output [InputChannels-1:0][BufferRows-1:0][BufferWidth-1:0] data_o
+  ,output signed [InputChannels-1:0][BufferRows-1:0][BufferWidth-1:0] data_o
 
   ,output [0:0] valid_o
   ,input  [0:0] ready_i

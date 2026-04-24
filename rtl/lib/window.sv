@@ -11,9 +11,9 @@ module window #(
   ,input [0:0] rst_i
 
   ,input [0:0] in_fire_i
-  ,input [KernelWidth-1:0][InBits-1:0] row_buffers_i 
+  ,input  signed [KernelWidth-1:0][InBits-1:0] row_buffers_i 
 
-  ,output logic [KernelArea-1:0][InBits-1:0] window_o
+  ,output signed [KernelArea-1:0][InBits-1:0]  window_o
 );
   /* ------------------------------------ Window Register Logic ------------------------------------ */
   // Row major Order(window[row][col])

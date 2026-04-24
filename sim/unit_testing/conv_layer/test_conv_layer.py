@@ -192,7 +192,13 @@ def torch_conv_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1):
 
 def unpack_data_i(packed, width_in, IC):
     mask = (1 << width_in) - 1
-    return [ (packed >> (ic * width_in)) & mask for ic in range(IC) ]
+    
+    # 1-bit data stays unsigned (0 or 1) for the bipolar mapper
+    if width_in == 1:
+        return [ (packed >> (ic * width_in)) & mask for ic in range(IC) ]
+    # Multi-bit data must be sign-extended!
+    else:
+        return [ sign_extend((packed >> (ic * width_in)) & mask, width_in) for ic in range(IC) ]
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
@@ -569,8 +575,18 @@ class RandomDataGenerator:
         self._InChannels = int(dut.InChannels.value)
 
     def generate(self):
-        return [random.randint(0, (1 << self._width_p) - 1)
-                for _ in range(self._InChannels)]
+        # 1. Handle the 1-bit bipolar edge case cleanly
+        if self._width_p == 1:
+            min_val = 0
+            max_val = 1
+        # 2. Calculate true signed bounds for multi-bit inputs
+        else:
+            # Example for 8-bit: min_val = -128, max_val = 127
+            min_val = -(1 << (self._width_p - 1))
+            max_val =  (1 << (self._width_p - 1)) - 1
+
+        # 3. Generate the list of true negative/positive Python integers
+        return [random.randint(min_val, max_val) for _ in range(self._InChannels)]
 
 class CountingGenerator():
     def __init__(self, dut, r):

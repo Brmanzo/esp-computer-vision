@@ -14,9 +14,9 @@ module multi_delay_ram #(
   ,input  [0:0] rst_i
   
   ,input  [0:0] in_fire
-  ,input  [InChannels-1:0][InBits-1:0] data_i
+  ,input  signed [InChannels-1:0][InBits-1:0] data_i
   
-  ,output [InChannels-1:0][KernelWidth-1:1][InBits-1:0] data_o
+  ,output signed [InChannels-1:0][KernelWidth-1:1][InBits-1:0] data_o
 );
 
   // Targetting IceStorm's 30 4kB embedded block RAMs

@@ -47,7 +47,13 @@ def unpack(packed, in_bits, input_count):
     mask = (1 << in_bits) - 1
     for i in range(input_count):
         raw = (packed >> (i * in_bits)) & mask
-        unpacked.append(sign_extend(raw, in_bits))
+        
+        # FIX: Skip sign-extension for 1-bit flags!
+        if in_bits == 1:
+            unpacked.append(raw)
+        else:
+            unpacked.append(sign_extend(raw, in_bits))
+            
     return unpacked
 
 tests = ['reset_test'
@@ -60,6 +66,7 @@ tests = ['reset_test'
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize("InBits, TermCount, InChannels", [
+    (1, 16, 10),
     (8, 9, 1),
     (16, 17, 2),
     (32, 33, 4)
@@ -119,6 +126,7 @@ class GlobalMaxModel():
         if self._term_counter == 0:
             self._current_max = x[:]
         else:
+            assert self._current_max is not None
             self._current_max = [
                 max(self._current_max[ch], x[ch])
                 for ch in range(self._in_channels)
@@ -151,8 +159,11 @@ class RandomDataGenerator:
         in_bits = int(self._dut.InBits.value)
         in_channels = int(self._dut.InChannels.value)
 
-        lo = -(1 << (in_bits - 1))
-        hi =  (1 << (in_bits - 1)) - 1
+        if in_bits == 1:
+            lo, hi = 0, 1
+        else:
+            lo = -(1 << (in_bits - 1))
+            hi =  (1 << (in_bits - 1)) - 1
 
         vals = [random.randint(lo, hi) for _ in range(in_channels)]
         return pack(vals, in_bits)

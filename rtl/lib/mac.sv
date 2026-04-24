@@ -8,8 +8,8 @@ module mac #(
   ,parameter  int unsigned WeightBits = 2
   ,parameter  int unsigned TermCount  = 3
 )  (
-   input  signed [TermCount-1:0][InBits-1:0]     window_i 
-  ,input  signed [TermCount-1:0][WeightBits-1:0] weights_i
+   input  logic signed [TermCount-1:0][InBits-1:0]     window_i 
+  ,input  logic signed [TermCount-1:0][WeightBits-1:0] weights_i
 
   ,output logic signed [OutBits-1:0] sum_o
 );

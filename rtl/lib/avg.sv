@@ -8,8 +8,8 @@ module avg #(
   ,localparam int unsigned OutBits     = InBits
   ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
 )  (
-   input  logic [KernelArea-1:0][InBits-1:0] window // 1D Packed Array
-  ,output logic [OutBits-1:0] data_o
+   input  logic signed [KernelArea-1:0][InBits-1:0] window // 1D Packed Array
+  ,output logic signed [OutBits-1:0] data_o
 );
 
   function automatic int unsigned acc_output_width;
@@ -26,12 +26,26 @@ module avg #(
   localparam int unsigned AccOutBits = acc_output_width(KernelArea, InBits);
   logic signed [AccOutBits-1:0] acc;
 
-  always_comb begin
-    acc = '0;
-    for (int i = 0; i < KernelArea; i++) begin
-      acc += window[i];
+  generate
+    // If binary encoding, treat {0,1} as {-1,1}
+    if (InBits == 1) begin : gen_binary_avg
+      always_comb begin
+        acc = '0;
+        for (int i = 0; i < KernelArea; i++) begin
+          if (window[i][0]) acc += 1;
+          else              acc -= 1;
+        end
+      end
+    end else begin : gen_signed_avg
+      always_comb begin
+        acc = '0;
+        for (int i = 0; i < KernelArea; i++) begin
+          acc += $signed(window[i]);
+        end
+      end
     end
-  end
-  assign data_o = acc >> $clog2(KernelArea); // Divide by KernelArea (power of 2) using right shift
+  endgenerate
+
+  assign data_o = OutBits'(acc >>> $clog2(KernelArea)); // Divide by KernelArea (power of 2) using right shift
 
 endmodule

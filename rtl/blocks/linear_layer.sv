@@ -18,7 +18,7 @@ module linear_layer #(
 
   ,input  [0:0] valid_i
   ,output [0:0] ready_o
-  ,input  [InChannels-1:0][InBits-1:0] data_i
+  ,input  logic signed [InChannels-1:0][InBits-1:0] data_i
 
   ,output [0:0] valid_o
   ,input  [0:0] ready_i
@@ -41,7 +41,7 @@ module linear_layer #(
   /* --------------------------------------- Output Channel Logic --------------------------------------- */
   // Each output channel is a neuron with the same input data but different weights and biases
 
-  logic [InChannels-1:0][InBits-1:0] data_q;
+  logic signed [InChannels-1:0][InBits-1:0] data_q;
 
   always_ff @(posedge clk_i) begin
     if (rst_i) data_q <= '0;

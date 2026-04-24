@@ -48,7 +48,7 @@ module classifier_layer #(
   wire signed [InChannels-1:0][TermBits-1:0] global_max_data;
 
   wire [0:0] linear_layer_ready;
-  wire [ClassCount-1:0][LinearBits-1:0] linear_layer_data;
+  wire signed [ClassCount-1:0][LinearBits-1:0] linear_layer_data;
 
   wire [IdBits-1:0] id_o;
 

@@ -195,7 +195,14 @@ def linear_reference(weights_2d, biases_1d, InChannels, OutChannels):
 
 def unpack_data_i(packed, width_in, IC):
     mask = (1 << width_in) - 1
-    return [ (packed >> (ic * width_in)) & mask for ic in range(IC) ]
+    
+    # 1-bit data should stay unsigned (0 or 1) so the bipolar mapper works!
+    if width_in == 1:
+        return [ (packed >> (ic * width_in)) & mask for ic in range(IC) ]
+        
+    # Multi-bit data must be sign-extended!
+    else:
+        return [ sign_extend((packed >> (ic * width_in)) & mask, width_in) for ic in range(IC) ]
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
@@ -482,8 +489,16 @@ class RandomDataGenerator:
         self._InChannels = int(dut.InChannels.value)
 
     def generate(self):
-        return [random.randint(0, (1 << self._width_p) - 1)
-                for _ in range(self._InChannels)]
+        if self._width_p == 1:
+            din = [1 for _ in range(self._InChannels)] # Test all ones
+            din_math = [1.0 if x == 1 else -1.0 for x in din]
+        else:
+            min_val = -(1 << (self._width_p - 1))
+            max_val =  (1 << (self._width_p - 1)) - 1
+            din = [random.randint(min_val, max_val) for _ in range(self._InChannels)]
+
+            din_math = din
+        return din_math
 
 class CountingGenerator():
     def __init__(self, dut, r):

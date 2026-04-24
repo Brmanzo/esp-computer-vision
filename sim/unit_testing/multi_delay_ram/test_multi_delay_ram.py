@@ -251,7 +251,7 @@ class MultiDelayRamModel():
         if not in_fire:
             return None
 
-        full_out = [None] * self._InChannels
+        full_out: list[list[int] | None] = [None] * self._InChannels
         any_valid = False
 
         for buf_idx, buf in enumerate(self._buffers):
@@ -281,12 +281,20 @@ class RandomDataGenerator():
     def generate(self):
         w = int(self._dut.InBits.value)
 
+        # 1. Calculate the true signed bounds
+        # Example for 8 bits: min_val = -128, max_val = 127
+        min_val = -(1 << (w - 1))
+        max_val =  (1 << (w - 1)) - 1
+
         for ch in range(int(self._dut.InChannels.value)):
             if not self._first_high:
-                self._data[ch] = (1 << w) - 1
-                self._first_high = True
+                # 2. In two's complement, all-ones is simply -1
+                self._data[ch] = -1 
             else:
-                self._data[ch] = random.randint(0, (1 << w) - 1)
+                # 3. Generate a true negative or positive Python integer
+                self._data[ch] = random.randint(min_val, max_val)
+
+        self._first_high = True 
 
         return self._data
 

@@ -51,17 +51,33 @@ module global_max #(
     else       max_q <= max_d;
   end
 
-  always_comb begin
-    max_d = max_q;
-    if (in_fire) begin
-      for (int ch = 0; ch < InChannels; ch++) begin
-        // Initialize max with first term
-        if (first_term)          max_d[ch] = data_i[ch];
-        // then update if current term is greater than max
-        else if (data_i[ch] > max_q[ch]) max_d[ch] = data_i[ch];
+  generate
+    if (InBits == 1) begin : gen_binary_comparison
+      always_comb begin
+        max_d = max_q;
+        if (in_fire) begin
+          for (int ch = 0; ch < InChannels; ch++) begin
+            // Initialize max with first term
+            if (first_term) max_d[ch] = data_i[ch];
+            // Encoding {0,1} as {-1,1} requires unsigned, as signed cast inverts comparison
+            else max_d[ch] = ($unsigned(max_q[ch]) > $unsigned(data_i[ch])) ? max_q[ch] : data_i[ch];
+          end
+        end
+      end
+    end else begin : gen_signed_comparison
+      always_comb begin
+        max_d = max_q;
+        if (in_fire) begin
+          for (int ch = 0; ch < InChannels; ch++) begin
+            // Initialize max with first term
+            if (first_term)          max_d[ch] = data_i[ch];
+            // then update if current term is greater than max
+            else max_d[ch] = ($signed(max_q[ch]) > $signed(data_i[ch])) ? max_q[ch] : data_i[ch];
+          end
+        end
       end
     end
-  end
+  endgenerate
 
   /* ------------------ Elastic Handshaking Logic ------------------ */
   wire  [0:0] in_fire   = valid_i && ready_o;

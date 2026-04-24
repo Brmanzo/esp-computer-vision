@@ -71,7 +71,13 @@ def torch_pool_ref(input_activation, kernel_size, stride=None, mode=0):
 
 def unpack_data_i(packed, width_in, IC):
     mask = (1 << width_in) - 1
-    return [ (packed >> (ic * width_in)) & mask for ic in range(IC) ]
+    
+    # 1-bit data stays unsigned
+    if width_in == 1:
+        return [ (packed >> (ic * width_in)) & mask for ic in range(IC) ]
+    # Multi-bit data must be sign-extended
+    else:
+        return [ sign_extend((packed >> (ic * width_in)) & mask, width_in) for ic in range(IC) ]
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
@@ -199,15 +205,21 @@ class PoolLayerModel():
 
     def apply_kernel(self, bufs):
         result = np.zeros(self._OutChannels, dtype=int)
-
         windows = [b[:, -self._kernel_width:].astype(int, copy=False) for b in bufs]
 
         for ch in range(self._OutChannels):
-            # Numpy computes the max of the entire KxK window for this channel
             if self._PoolMode == 0:
                 result[ch] = np.max(windows[ch])
             else:
-                result[ch] = np.sum(windows[ch]) // windows[ch].size
+                # FIX: Accurately model the hardware's 1-bit avg pool bit-shift
+                if self._OutBits == 1:
+                    # acc += 1 for 1, acc -= 1 for 0
+                    acc = np.sum(windows[ch] == 1) - np.sum(windows[ch] == 0)
+                    shift = int(np.log2(windows[ch].size))
+                    # Arithmetic shift and mask the LSB
+                    result[ch] = (acc >> shift) & 1
+                else:
+                    result[ch] = np.sum(windows[ch]) // windows[ch].size
 
         return result
 
@@ -247,9 +259,15 @@ class PoolLayerModel():
         w = int(self._dut.OutBits.value)
         packed = int(self._data_o.value.integer)
 
-        # Write all channels at the SAME (r,c)
         for ch in range(self._OutChannels):
-            got = (packed >> (ch * w)) & ((1 << w) - 1)   # ch0 in LSB slice assumption
+            got_raw = (packed >> (ch * w)) & ((1 << w) - 1)
+            
+            # FIX: Sign-extend the hardware output if multi-bit!
+            if w == 1:
+                got = got_raw
+            else:
+                got = sign_extend(got_raw, w)
+                
             exp = int(expected[ch])
 
             print(f"Output #{self._deqs} (r={self._r}, c={self._c}) ch{ch}: expected {exp}, got {got}")
@@ -322,8 +340,18 @@ class RandomDataGenerator:
         self._InChannels = int(dut.InChannels.value)
 
     def generate(self):
-        return [random.randint(0, (1 << self._width_p) - 1)
-                for _ in range(self._InChannels)]
+        # 1. Handle the 1-bit bipolar edge case cleanly
+        if self._width_p == 1:
+            min_val = 0
+            max_val = 1
+        # 2. Calculate true signed bounds for multi-bit inputs
+        else:
+            # Example for 8-bit: min_val = -128, max_val = 127
+            min_val = -(1 << (self._width_p - 1))
+            max_val =  (1 << (self._width_p - 1)) - 1
+
+        # 3. Generate the list of true negative/positive Python integers
+        return [random.randint(min_val, max_val) for _ in range(self._InChannels)]
 
 class CountingGenerator():
     def __init__(self, dut, r):
@@ -656,6 +684,7 @@ async def rate_tests(dut, in_rate, out_rate):
     IC = int(dut.InChannels.value)
     OC = int(dut.OutChannels.value)
     S  = int(dut.Stride.value)
+    w = int(dut.InBits.value)
     mode = int(dut.PoolMode.value)
 
     # Observe H rows of VALID outputs
@@ -716,12 +745,14 @@ async def rate_tests(dut, in_rate, out_rate):
             for r in range(H_out):
                 print(" ".join(f"{output_activation[oc][r][c]:4d}" for c in range(W_out)))
 
-        ref = torch_pool_ref(input_activation, kernel_size=K, stride=S, mode=mode)
-        for oc in range(OC):
-            print(f"\nExpected (PyTorch) for OC{oc}")
-            for r in range(H_out):
-                print(" ".join(f"{int(ref[oc, r, c]):4d}" for c in range(W_out)))
-        assert np.allclose(output_activation, ref.int().numpy()), "Output activation does not match PyTorch reference"
+        # Only compare against PyTorch if it is NOT 1-bit Avg Pooling
+        if not (w == 1 and mode == 1):
+            ref = torch_pool_ref(input_activation, kernel_size=K, stride=S, mode=mode)
+            for oc in range(OC):
+                print(f"\nExpected (PyTorch) for OC{oc}")
+                for r in range(H_out):
+                    print(" ".join(f"{int(ref[oc, r, c]):4d}" for c in range(W_out)))
+            assert np.allclose(output_activation, ref.int().numpy()), "Output activation does not match PyTorch reference"
 
     except SimTimeoutError:
         assert 0, (

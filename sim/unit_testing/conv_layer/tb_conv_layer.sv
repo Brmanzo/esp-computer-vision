@@ -20,7 +20,7 @@ module tb_conv_layer #(
 
   ,input  [0:0] valid_i
   ,output [0:0] ready_o
-  ,input  [InChannels-1:0][InBits-1:0] data_i
+  ,input  logic signed [InChannels-1:0][InBits-1:0] data_i
 
   ,output [0:0] valid_o
   ,input  [0:0] ready_i

@@ -49,7 +49,13 @@ def unpack(packed, term_bits, input_count):
     mask = (1 << term_bits) - 1
     for i in range(input_count):
         raw = (packed >> (i * term_bits)) & mask
-        unpacked.append(sign_extend(raw, term_bits))
+        
+        # FIX: Skip sign extension for 1-bit bipolar flags
+        if term_bits == 1:
+            unpacked.append(raw)
+        else:
+            unpacked.append(sign_extend(raw, term_bits))
+            
     return unpacked
 
 def trunc_signed(value: int, width: int) -> int:
@@ -313,7 +319,7 @@ class ClassifierLayerModel:
         x = unpack(packed_in, self._term_bits, self._in_channels)
 
         # 2. Global Max Pooling (across spatial TermCount)
-        if self._term_counter == 0:
+        if self._term_counter == 0 or self._current_max is None:
             self._current_max = x[:]
         else:
             for ch in range(self._in_channels):
@@ -329,9 +335,16 @@ class ClassifierLayerModel:
             for oc in range(self._class_count):
                 acc = self.b[oc]
                 for ic in range(self._in_channels):
-                    acc += self.w[oc][ic] * self._current_max[ic]
+                    
+                    # FIX: Map the hardware math properly!
+                    if self._term_bits == 1:
+                        val = 1 if self._current_max[ic] == 1 else -1
+                    else:
+                        val = int(self._current_max[ic])
+                        
+                    acc += self.w[oc][ic] * val # Multiply by mapped value
+                    
                 expected_logits[oc] = acc
-
             # --- Comparator (Argmax) Operation ---
             max_val = max(expected_logits)
             class_id = expected_logits.index(max_val)  # lowest index wins ties
@@ -364,9 +377,15 @@ class RandomDataGenerator:
         self._InChannels = int(dut.InChannels.value)
 
     def generate(self):
-        # Generates a clean list of ints, one for each channel
-        return [random.randint(0, (1 << self._width_p) - 1)
-                for _ in range(self._InChannels)]
+        # 1. 1-bit inputs are strictly 0 and 1
+        if self._width_p == 1:
+            min_val, max_val = 0, 1
+        # 2. Multi-bit inputs are true signed bounds (e.g. -128 to 127)
+        else:
+            min_val = -(1 << (self._width_p - 1))
+            max_val =  (1 << (self._width_p - 1)) - 1
+
+        return [random.randint(min_val, max_val) for _ in range(self._InChannels)]
 
 class RateGenerator():
     def __init__(self, dut, r):
