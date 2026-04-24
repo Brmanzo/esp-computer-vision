@@ -8,8 +8,8 @@ module mac #(
   ,parameter  int unsigned WeightBits = 2
   ,parameter  int unsigned TermCount  = 3
 )  (
-   input  logic [TermCount-1:0][InBits-1:0]             window_i 
-  ,input  logic signed  [TermCount-1:0][WeightBits-1:0] weights_i
+   input  signed [TermCount-1:0][InBits-1:0]     window_i 
+  ,input  signed [TermCount-1:0][WeightBits-1:0] weights_i
 
   ,output logic signed [OutBits-1:0] sum_o
 );
@@ -28,7 +28,7 @@ module mac #(
     // Otherwise multiply normally
     end else begin : gen_normal
       for (genvar i = 0; i < TermCount; i++) begin : gen_normal_multiply
-        assign addends[i] = acc_t'(weights_i[i]) * $signed({1'b0, window_i[i]});
+        assign addends[i] = acc_t'(weights_i[i]) * window_i[i];
       end
     end
   endgenerate

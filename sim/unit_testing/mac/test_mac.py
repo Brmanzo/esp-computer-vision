@@ -124,23 +124,24 @@ class MacModel():
         self._TermCount   = int(dut.TermCount.value)
 
         self._weights = [0] * self._TermCount
-        self._window = [0] * self._TermCount
+        self._window  = [0] * self._TermCount
 
-    def consume(self):
-        # Unpack windows as UNSIGNED
+    def consume(self): # Remove arguments here!
+        # Read the packed integers directly from the DUT pins
         packed_windows = int(self._window_i.value.integer)
-        self._window = unpack_unsigned_inputs(packed_windows, self._InBits, self._TermCount)
-        
-        # Unpack weights as SIGNED
         packed_weights = int(self._weights_i.value.integer)
+
+        # Weights are always signed
         self._weights = unpack_inputs(packed_weights, self._WeightBits, self._TermCount)
         
         # Apply {-1,1} encoding if single bit input
         if self._InBits == 1:
-            # Bipolar logic: 1 -> 1, 0 -> -1
+            # Unpack as unsigned (0 or 1) so the bipolar list comprehension works
+            self._window = unpack_unsigned_inputs(packed_windows, self._InBits, self._TermCount)
             window_vals = [1 if x == 1 else -1 for x in self._window]
         else:
-            # Normal unsigned multiplication
+            # Multi-bit windows are SIGNED in hardware, must be signed in Python!
+            self._window = unpack_inputs(packed_windows, self._InBits, self._TermCount)
             window_vals = self._window
             
         addends = [w * x for w, x in zip(self._weights, window_vals)]
@@ -167,9 +168,9 @@ async def comb_step(dut, model, windows, weights):
     expected = model.consume()
     model.produce(expected)
 
-
 @cocotb.test
 async def single_test(dut):
+    '''Test windows and weights of all ones.'''
     term_count = int(dut.TermCount.value)
     model = MacModel(dut)
 
@@ -180,20 +181,25 @@ async def single_test(dut):
 
 @cocotb.test
 async def full_bw_test(dut):
+    '''Test windows and weights of random signed values.'''
     in_bits     = int(dut.InBits.value)
     weight_bits = int(dut.WeightBits.value)
     term_count  = int(dut.TermCount.value)
     model       = MacModel(dut)
 
-    # Window is unsigned (0 to Max)
-    window_lo = 0
-    window_hi = (1 << in_bits) - 1
+    # If 1 bit inputs, generate just zeros and ones
+    if in_bits == 1:
+        window_lo, window_hi = 0, 1
+    # If multi-bit inputs, generate full range of signed values
+    else:
+        window_lo = -(1 << (in_bits - 1))
+        window_hi =  (1 << (in_bits - 1)) - 1
 
     # Weights are signed two's complement (Min to Max)
     weight_hi =  (1 << (weight_bits - 1)) - 1
     weight_lo = -(1 << (weight_bits - 1))
 
-    for _ in range(10): # Note: Feel free to bump this up to 500 now!
+    for _ in range(10):
         windows = [random.randint(window_lo, window_hi) for _ in range(term_count)]
         weights = [random.randint(weight_lo, weight_hi) for _ in range(term_count)]
         await comb_step(dut, model, windows, weights)

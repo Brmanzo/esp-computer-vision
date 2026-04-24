@@ -16,7 +16,7 @@ module filter #(
 
   ,input [0:0] valid_i
   ,input [0:0] ready_i
-  ,input [InChannels-1:0][KernelArea-1:0][InBits-1:0] windows_i
+  ,input  signed [InChannels-1:0][KernelArea-1:0][InBits-1:0]     windows_i
   ,input  signed [InChannels-1:0][KernelArea-1:0][WeightBits-1:0] weights_i
 
   ,output [0:0] valid_o
