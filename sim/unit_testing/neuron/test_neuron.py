@@ -16,7 +16,7 @@ assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
 _UTIL_PATH = os.path.join(_REPO_ROOT, "sim", "util")
 assert os.path.exists(_UTIL_PATH), f"Utilities path does not exist: {_UTIL_PATH}"
 sys.path.insert(0, _UTIL_PATH)
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
+from utilities import runner, lint, assert_resolvable, sign_extend
 tbpath = os.path.dirname(os.path.realpath(__file__))
 
 import pytest
@@ -24,8 +24,6 @@ import pytest
 import cocotb
 
 from cocotb.triggers import Timer
-
-from cocotb_test.simulator import run
    
 import random
 random.seed(50)
@@ -46,10 +44,6 @@ def output_width(width_in: int, weight_width: int, in_channels: int=1, bias_widt
     max_sum = terms * max_val * max_weight + max_bias
     abs_bits = max_sum.bit_length()
     return str(abs_bits + 1)   # +1 for sign bit
-
-def sign_extend(val: int, bits: int) -> int:
-    sign = 1 << (bits - 1)
-    return (val ^ sign) - sign
 
 def gen_weights(WW: int, IC: int, seed: int | None = None):
     rng = random.Random(seed)

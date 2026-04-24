@@ -9,7 +9,7 @@ _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
 assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
 assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
 sys.path.append(os.path.join(_REPO_ROOT, "util"))
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface
+from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface, ModelRunner
 tbpath = os.path.dirname(os.path.realpath(__file__))
 
 import pytest
@@ -80,24 +80,15 @@ class FramerModel():
         self._PackedNum       = int(dut.PackedNum.value)
         self._packed_width_p     = int(dut.PackedWidth.value)
 
-        # Framer specific
         self._PacketLenElems = int(dut.PacketLenElems.value)
         self._WakeupCmd = int(dut.WakeupCmd.value)
         self._tail0 = int(dut.TailByte0.value)
         self._tail1 = int(dut.TailByte1.value)
 
-        # Packet counter
-        self._count  = 0
-        self._wakeup_sent = False
-
-        # Packing State
+        self._count = 0
         self._step  = 0
         self._acc   = 0
-        
         self._deqs  = 0
-        self._enqs  = 0
-
-        self._q = queue.SimpleQueue()
 
     def reset(self):
         # Clear model state to match DUT reset behavior
@@ -117,15 +108,17 @@ class FramerModel():
         assert_resolvable(self._unpacked_i)
         u = int(self._unpacked_i.value) & ((1 << int(self._UnpackedWidth)) - 1)
         
+        # Shift in new unpacked byte to accumulator
         self._acc |= (u << (self._UnpackedWidth * self._step))
-        self._enqs += 1
 
         last_elem = (self._count == (self._PacketLenElems - 1))
-
-        # Packing behavior
         completed_pack = (self._step == self._PackedNum - 1) or last_elem
+
+        expected_outputs = []
+
+        # Pack completed bytes
         if completed_pack:
-            self._q.put(self._acc & ((1 << self._packed_width_p) - 1))
+            expected_outputs.append(self._acc & ((1 << self._packed_width_p) - 1))
             self._acc = 0
             self._step = 0
         else:
@@ -133,32 +126,27 @@ class FramerModel():
         
         # If end of packet, enqueue the tail bytes
         if last_elem:
-            self._q.put(self._tail0 & ((1 << self._packed_width_p) - 1))
-            self._q.put(self._tail1 & ((1 << self._packed_width_p) - 1))
+            expected_outputs.append(self._tail0 & ((1 << self._packed_width_p) - 1))
+            expected_outputs.append(self._tail1 & ((1 << self._packed_width_p) - 1))
             self._count = 0
         else:
             self._count += 1
-        # Packed byte completed + two tail bytes
-        if completed_pack and last_elem:
-            return 3
-        # Packed byte completed
-        elif completed_pack:
-            return 1
-        # Byte not completed yet, no output produced
-        else:
-            return 0
 
-    def produce(self):
+        # Return None, single value, or list!
+        if len(expected_outputs) == 0:
+            return None
+        elif len(expected_outputs) == 1:
+            return expected_outputs[0]
+        else:
+            return expected_outputs
+
+    def produce(self, expected):
         assert_resolvable(self._data_o)
 
         got = self._data_o.value.integer & ((1 << self._packed_width_p) - 1)
-
-        assert self._q.qsize() > 0, (
-            "Output fired but model has no completed expected byte. "
-        )
-        expected = self._q.get()
         self._deqs += 1
 
+        print(f"Output #{self._deqs}: Expected 0x{expected:02X}, Got 0x{got:02X}")
         assert got == expected, (
             f"Mismatch on output #{self._deqs}: expected 0x{expected:02X}, got 0x{got:02X}"
         )
@@ -339,59 +327,6 @@ class InputModel():
             
         return self._nin
 
-class ModelRunner():
-    def __init__(self, dut, model):
-        self._dut = dut
-        self._clk_i = dut.clk_i
-        self._reset_i = dut.rst_i
-        self._model = model
-        self._expected_out_bytes = 0
-        self._coro = None
-
-    def start(self):
-        if self._coro is not None:
-            raise RuntimeError("ModelRunner already started")
-        self._coro = cocotb.start_soon(self._run())
-
-    def stop(self):
-        if self._coro is None:
-            raise RuntimeError("ModelRunner never started")
-        self._coro.kill()
-        self._coro = None
-
-    async def _run(self):
-        dut = self._dut
-        was_in_reset = True
-
-        while True:
-            await RisingEdge(self._clk_i)
-
-            in_reset = (not self._reset_i.value.is_resolvable) or int(self._reset_i.value) == 1
-            if in_reset:
-                was_in_reset = True
-                continue
-
-            if was_in_reset:
-                self._model.reset()
-                self._expected_out_bytes = 1 # Account for wakeup byte after reset
-                was_in_reset = False
-
-            # INPUT handshake: update expected queue FIRST
-            in_fire = (int(dut.valid_i.value) == 1) and (int(dut.ready_o.value) == 1)
-            if in_fire:
-                produced = self._model.consume()   # returns 0,1,3 (packed + optional tails)
-                self._expected_out_bytes += int(produced)
-
-            # OUTPUT handshake: then check/consume expected
-            out_fire = (int(dut.valid_o.value) == 1) and (int(dut.ready_i.value) == 1)
-            if out_fire:
-                assert self._expected_out_bytes > 0, (
-                    "Output fired but model expects no bytes. "
-                    "This usually means the runner saw output before it accounted for input."
-                )
-                self._expected_out_bytes -= 1
-                self._model.produce()
-
 def framer_lengths(PackedNum: int, PacketLenElems: int, num_packets: int):
     P = PacketLenElems
     K = PackedNum
@@ -453,9 +388,9 @@ async def single_test(dut):
 
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, rst_i, 10)
-
-    # Wait one cycle for reset to start
     await FallingEdge(dut.clk_i)
+
+    m._events.put(int(dut.WakeupCmd.value))
 
     m.start()
     om.start()
@@ -499,8 +434,9 @@ async def rate_tests(dut, in_rate, out_rate):
 
     await clock_start_sequence(clk_i)
     await reset_sequence(clk_i, rst_i, 10)
-
     await FallingEdge(dut.clk_i)
+
+    m._events.put(int(dut.WakeupCmd.value))
 
     m.start()
     om.start()

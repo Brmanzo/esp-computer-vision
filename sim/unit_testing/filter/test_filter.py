@@ -15,7 +15,7 @@ _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
 assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
 assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
 sys.path.append(os.path.join(_REPO_ROOT, "util"))
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface
+from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ModelRunner, sign_extend
 tbpath = os.path.dirname(os.path.realpath(__file__))
 
 import pytest
@@ -30,12 +30,6 @@ import random
 random.seed(50)
 
 timescale = "1ps/1ps"
-
-def sign_extend(value: int, width: int) -> int:
-    mask = (1 << width) - 1
-    value &= mask
-    sign_bit = 1 << (width - 1)
-    return (value ^ sign_bit) - sign_bit
 
 def pack_data_i(samples, width):
     """
@@ -155,8 +149,6 @@ class FilterModel:
         self._weights = None
         self._windows = None
 
-        self._expected = queue.SimpleQueue()
-
     def consume(self):
         packed_windows = int(self._windows_i.value.integer)
         packed_weights = int(self._weights_i.value.integer)
@@ -176,19 +168,19 @@ class FilterModel:
                 if self._InBits == 1:
                     win = 1 if win == 1 else -1
                 total += win * wgt
+
         # Encode binary output activation if requested
         if self._OutBits == 1:
             exp = 1 if total > 0 else 0
         else:
             exp = trunc_signed(total, self._OutBits)
         
-        # Now it successfully pushes to the queue!
-        self._expected.put((exp, windows, weights))
+        return (exp, windows, weights)
 
-    def produce(self):
+    def produce(self, expected):
         assert_resolvable(self._data_o)
 
-        expected, windows, weights = self._expected.get()
+        expected, windows, weights = expected
 
         # If output is single-bit, treat as unsigned 0/1 based on sign of total.
         if self._OutBits == 1:
@@ -355,45 +347,6 @@ class InputModel():
             
         valid_i.value = 0
         return self._nin
-
-
-class ModelRunner():
-    def __init__(self, dut, model):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-
-        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
-                                          dut.valid_i, dut.ready_o)
-        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
-                                           dut.valid_o, dut.ready_i)
-
-        self._model = model
-        self._coro_run_input = None
-        self._coro_run_output = None
-
-    def start(self):
-        if self._coro_run_input is not None:
-            raise RuntimeError("Model already started")
-        self._coro_run_input = cocotb.start_soon(self._run_input(self._model))
-        self._coro_run_output = cocotb.start_soon(self._run_output(self._model))
-
-    async def _run_input(self, model):
-        while True:
-            await self._rv_in.handshake(None)
-            self._model.consume()
-
-    async def _run_output(self, model):
-        while True:
-            await self._rv_out.handshake(None)
-            self._model.produce()
-
-    def stop(self):
-        if self._coro_run_input is None or self._coro_run_output is None:
-            raise RuntimeError("Monitor never started")
-        self._coro_run_input.kill()
-        self._coro_run_output.kill()
-        self._coro_run_input = None
-        self._coro_run_output = None
 
 class RateGenerator():
     def __init__(self, dut, r):

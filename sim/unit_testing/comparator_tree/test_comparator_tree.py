@@ -16,7 +16,7 @@ assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
 _UTIL_PATH = os.path.join(_REPO_ROOT, "sim", "util")
 assert os.path.exists(_UTIL_PATH), f"Utilities path does not exist: {_UTIL_PATH}"
 sys.path.insert(0, _UTIL_PATH)
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
+from utilities import runner, lint, assert_resolvable, sign_extend
 tbpath = os.path.dirname(os.path.realpath(__file__))
 
 import pytest
@@ -24,8 +24,6 @@ import pytest
 import cocotb
 
 from cocotb.triggers import Timer
-
-from cocotb_test.simulator import run
    
 import random
 random.seed(50)
@@ -34,12 +32,6 @@ timescale = "1ps/1ps"
 
 tests = ['single_test'
         ,'full_bw_test']
-
-def sign_extend(value: int, width: int) -> int:
-    mask = (1 << width) - 1
-    value &= mask
-    sign_bit = 1 << (width - 1)
-    return (value ^ sign_bit) - sign_bit
 
 def pack_classes(classes, in_bits):
     packed = 0

@@ -9,10 +9,15 @@ _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
 assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
 assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
 _UTIL_PATH = os.path.join(_REPO_ROOT, "sim", "util")
+_MODEL_PATH = os.path.join(_REPO_ROOT, "sim", "models")
 assert os.path.exists(_UTIL_PATH), f"Utilities path does not exist: {_UTIL_PATH}"
+assert os.path.exists(_MODEL_PATH), f"Models path does not exist: {_MODEL_PATH}"
 sys.path.insert(0, _UTIL_PATH)
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface
+sys.path.insert(0, _MODEL_PATH)
 tbpath = os.path.dirname(os.path.realpath(__file__))
+
+from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface
+from models import MultiDelayBufferModel
 
 import pytest
 
@@ -20,9 +25,6 @@ import cocotb
 
 from cocotb.triggers import RisingEdge, FallingEdge, with_timeout
 from cocotb.result import SimTimeoutError
-
-from cocotb_test.simulator import run
-   
 import random
 random.seed(50)
 
@@ -119,102 +121,6 @@ def unpack_data_o_top(InBits, KernelWidth, InChannels, packed_o):
             out[ch][r] = (packed_o >> bitpos) & mask
 
     return out
-
-class MultiDelayBufferModel:
-    def __init__(self, Delay, BufferRows, InputChannels, BufferWidth):
-        self._q = queue.SimpleQueue()
-
-        self._Delay         = Delay
-        self._BufferRows    = BufferRows
-        self._InputChannels = InputChannels
-        self._BufferWidth   = BufferWidth
-
-        self._mask = (1 << self._BufferWidth) - 1
-        # Model the single cycle output delay
-        self._warmup = self._Delay * self._BufferRows + 1
-
-        # We're going to initialize _buf with zeros so that we can
-        # detect when the output should be not an X in simulation
-        self._deqs = 0
-        self._enqs = 0
-
-        # Deques representing vertical partitions within RAM
-        zero_init = [0] * self._BufferRows
-
-        self._ram = [
-            deque([zero_init.copy() for _ in range(self._Delay)], maxlen=self._Delay)
-            for _ in range(self._InputChannels)
-        ]
-        
-        self._rd_pipe = None
-        self._wr_pipe = [0 for _ in range(self._InputChannels)]  # delayed write data
-        self._wr_valid = False
-
-        self._fires = 0
-
-        # Variables represent regs to provide single cycle delay between output
-        # of buffer and input to the next buffer
-        self._regs = [
-            [0 for _ in range(self._BufferRows - 1)]
-            for _ in range(self._InputChannels)
-        ]
-
-    def step(self, data_i_words, in_fire=True):
-        assert len(data_i_words) == self._InputChannels
-
-        # If not firing, return None (or handle as needed based on interface)
-        if not in_fire:
-            return None
-
-        self._fires += 1
-
-        rd_now = None  # word exiting delay line this cycle
-
-        if self._wr_valid:
-            rd_now = []
-
-            for ch in range(self._InputChannels):
-                # 1) Pop oldest word (this is what exits the delay line)
-                old = self._ram[ch].popleft()
-                rd_now.append(old.copy())
-
-                # 2) Compute new row heads
-                new_word0 = int(self._wr_pipe[ch]) & self._mask
-
-                row_heads = [0] * self._BufferRows
-                row_heads[0] = new_word0
-
-                for r in range(1, self._BufferRows):
-                    row_heads[r] = self._regs[ch][r - 1]
-
-                # 3) Update inter-row regs from *current* old word
-                for r in range(self._BufferRows - 1):
-                    self._regs[ch][r] = old[r]
-
-                # 4) Append new word to end of delay line
-                self._ram[ch].append(row_heads)
-
-        else:
-            # Before first valid write, nothing meaningful leaves
-            rd_now = [self._ram[ch][0].copy() for ch in range(self._InputChannels)]
-
-        # 5) Update write pipeline
-        self._wr_pipe = [int(w) & self._mask for w in data_i_words]
-        self._wr_valid = True
-
-        # 6) Output directly (Removed 1-cycle _rd_pipe delay)
-        out = None
-        
-        # Adjusted threshold: Reduced (+2) to (+1) because we removed the pipeline stage.
-        # If your hardware has 0-cycle output latency relative to the RAM read, 
-        # you might need to adjust this constant further (e.g., to +0).
-        latency_threshold = (self._Delay * self._BufferRows) + 1
-        
-        if self._fires >= latency_threshold:
-            out = rd_now
-
-        # Note: self._rd_pipe is removed entirely
-        return out
 
 class MultiDelayRamModel():
     def __init__(self, dut):

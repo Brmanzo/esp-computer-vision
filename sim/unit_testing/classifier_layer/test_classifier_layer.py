@@ -14,7 +14,7 @@ _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
 assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
 assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
 sys.path.append(os.path.join(_REPO_ROOT, "util"))
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface
+from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ModelRunner, sign_extend
 tbpath = os.path.dirname(os.path.realpath(__file__))
 
 import pytest
@@ -23,19 +23,13 @@ import cocotb
 from typing import List
 
 from cocotb.utils import get_sim_time
-from cocotb.triggers import Timer, RisingEdge, FallingEdge, with_timeout
+from cocotb.triggers import RisingEdge, FallingEdge, with_timeout
 from cocotb.result import SimTimeoutError
    
 import random
 random.seed(42)
 
 timescale = "1ps/1ps"
-
-def sign_extend(value: int, width: int) -> int:
-    mask = (1 << width) - 1
-    value &= mask
-    sign_bit = 1 << (width - 1)
-    return (value ^ sign_bit) - sign_bit
 
 def pack(inputs, term_bits):
     packed = 0
@@ -308,8 +302,6 @@ class ClassifierLayerModel:
             f"biases={biases!r}"
         )
 
-        self._expected = queue.SimpleQueue()
-
     def consume(self):
         assert_resolvable(self._data_i)
 
@@ -335,8 +327,6 @@ class ClassifierLayerModel:
             for oc in range(self._class_count):
                 acc = self.b[oc]
                 for ic in range(self._in_channels):
-                    
-                    # FIX: Map the hardware math properly!
                     if self._term_bits == 1:
                         val = 1 if self._current_max[ic] == 1 else -1
                     else:
@@ -348,18 +338,17 @@ class ClassifierLayerModel:
             # --- Comparator (Argmax) Operation ---
             max_val = max(expected_logits)
             class_id = expected_logits.index(max_val)  # lowest index wins ties
-
-            # Queue the final class ID and the logits for debug printing
-            self._expected.put((class_id, expected_logits[:]))
             
             # Reset for the next image
             self._term_counter = 0
             self._current_max = None
+            return (class_id, expected_logits[:])
+        return None
 
-    def produce(self):
+    def produce(self, expected):
         assert_resolvable(self._class_o)
 
-        expected_id, expected_logits = self._expected.get()
+        expected_id, expected_logits = expected
         got_id = int(self._class_o.value.integer)
 
         print(
@@ -553,44 +542,6 @@ class InputModel():
         # Optional but recommended: Drop valid to 0 when finished
         valid_i.value = 0
         return self._nin
-
-class ModelRunner():
-    def __init__(self, dut, model):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-
-        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
-                                          dut.valid_i, dut.ready_o)
-        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
-                                           dut.valid_o, dut.ready_i)
-
-        self._model = model
-        self._coro_run_input = None
-        self._coro_run_output = None
-
-    def start(self):
-        if self._coro_run_input is not None:
-            raise RuntimeError("Model already started")
-        self._coro_run_input = cocotb.start_soon(self._run_input(self._model))
-        self._coro_run_output = cocotb.start_soon(self._run_output(self._model))
-
-    async def _run_input(self, model):
-        while True:
-            await self._rv_in.handshake(None)
-            self._model.consume()
-
-    async def _run_output(self, model):
-        while True:
-            await self._rv_out.handshake(None)
-            self._model.produce()
-
-    def stop(self):
-        if self._coro_run_input is None or self._coro_run_output is None:
-            raise RuntimeError("Monitor never started")
-        self._coro_run_input.kill()
-        self._coro_run_output.kill()
-        self._coro_run_input = None
-        self._coro_run_output = None
 
 @cocotb.test
 async def reset_test(dut):

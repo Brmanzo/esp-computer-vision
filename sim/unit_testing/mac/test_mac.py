@@ -15,16 +15,13 @@ _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
 assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
 assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
 sys.path.append(os.path.join(_REPO_ROOT, "util"))
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface
+from utilities import runner, lint, assert_resolvable, sign_extend
 tbpath = os.path.dirname(os.path.realpath(__file__))
 
 import pytest
 
 import cocotb
-
-from cocotb.utils import get_sim_time
-from cocotb.triggers import Timer, RisingEdge, FallingEdge, with_timeout
-from cocotb.result import SimTimeoutError
+from cocotb.triggers import Timer
    
 import random
 random.seed(50)
@@ -33,12 +30,6 @@ timescale = "1ps/1ps"
 
 tests = ['single_test'
         ,'full_bw_test']
-
-def sign_extend(value: int, width: int) -> int:
-    mask = (1 << width) - 1
-    value &= mask
-    sign_bit = 1 << (width - 1)
-    return (value ^ sign_bit) - sign_bit
 
 def pack_inputs(input, in_bits):
     packed = 0

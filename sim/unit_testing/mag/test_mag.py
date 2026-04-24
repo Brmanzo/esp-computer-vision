@@ -12,7 +12,7 @@ _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
 assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
 assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
 sys.path.append(os.path.join(_REPO_ROOT, "util"))
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface
+from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ModelRunner
 tbpath = os.path.dirname(os.path.realpath(__file__))
 
 import pytest
@@ -20,7 +20,7 @@ import pytest
 import cocotb
 
 from cocotb.utils import get_sim_time
-from cocotb.triggers import Timer, RisingEdge, FallingEdge, with_timeout
+from cocotb.triggers import RisingEdge, FallingEdge, with_timeout
 from cocotb.result import SimTimeoutError
    
 import random
@@ -78,16 +78,25 @@ class MagModel():
         self._enqs = 0
 
         self._tol = 0.05
-
-        self._q = queue.SimpleQueue()
     
     def consume(self):
         assert_resolvable(self._gx_i)
         assert_resolvable(self._gy_i)
-        self._q.put((self._gx_i.value, self._gy_i.value))
-        self._enqs += 1
 
-    def produce(self):
+        gx = self._gx_i.value.integer
+        gy = self._gy_i.value.integer
+
+        if(gx > (2 * gy)):
+            expected = gx
+        elif(gy > (2 * gx)):
+            expected = gy
+        else:
+            expected = int(gy + (gx/2))
+
+        self._enqs += 1
+        return(expected)
+
+    def produce(self, expected):
         self._deqs += 1
 
         gx = self._gx_i.value.integer
@@ -95,17 +104,8 @@ class MagModel():
 
         assert_resolvable(self._mag_o)
         got = self._mag_o.value.integer
-        if(gx > (2 * gy)):
-            expected = gx
-        elif(gy > (2 * gx)):
-            expected = gy
-        else:
-            expected = int(gy + (gx/2))
-        # expected = round((math.sqrt(self._gx_i.value.integer**2 + self._gy_i.value.integer**2)) * 2) / 2
-        if np.isnan(expected):
-            return
 
-        print(f'gx_i: {self._gx_i.value.integer}, gy_i: {self._gy_i.value.integer}')
+        print(f'gx_i: {gx}, gy_i: {gy}')
         print(f'Got magnitude: {got}, Expected magnitude: {expected}')
         assert abs((got > expected * (1 - self._tol)) or (got < expected * (1 + self._tol))), (
             f"Error! Output value on iteration {self._deqs} does not match expected. "
@@ -273,55 +273,6 @@ class InputModel():
 
             await FallingEdge(clk_i)
         return self._nin
-
-class ModelRunner():
-    def __init__(self, dut, model):
-
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-
-        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
-                                          dut.valid_i, dut.ready_o)
-        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
-                                           dut.valid_o, dut.ready_i)
-
-        self._model = model
-
-        self._events = queue.SimpleQueue()
-
-        self._coro_run_input = None
-        self._coro_run_output = None
-
-    def start(self):
-        """Start model coroutines. """
-        if self._coro_run_input is not None:
-            raise RuntimeError("Model already started")
-        self._coro_run_input = cocotb.start_soon(self._run_input(self._model))
-        self._coro_run_output = cocotb.start_soon(self._run_output(self._model))
-
-    async def _run_input(self, model):
-        ''' Upon input handshake, trigger model consume. '''
-        while True:
-            await self._rv_in.handshake(None)
-            self._events.put(get_sim_time(units='ns'))
-            self._model.consume()
-
-    async def _run_output(self, model):
-        ''' Upon output handshake, trigger model produce. '''
-        while True:
-            await self._rv_out.handshake(None)
-            assert (self._events.qsize() > 0), "Error! Module produced output without valid input"
-            _ = self._events.get()
-            self._model.produce()
-      
-    def stop(self) -> None:
-        """Stop monitor"""
-        if self._coro_run_input is None or self._coro_run_output is None:
-            raise RuntimeError("Monitor never started")
-        self._coro_run_input.kill()
-        self._coro_run_output.kill()
-        self._coro_run_input = None
-        self._coro_run_output = None
 
 @cocotb.test
 async def reset_test(dut):

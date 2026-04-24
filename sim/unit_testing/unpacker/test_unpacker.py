@@ -12,7 +12,7 @@ _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
 assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
 assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
 sys.path.append(os.path.join(_REPO_ROOT, "util"))
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface
+from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface, ModelRunner
 tbpath = os.path.dirname(os.path.realpath(__file__))
 
 import pytest
@@ -79,54 +79,29 @@ class UnpackerModel():
         self._PackedWidth = dut.PackedWidth.value
 
         self._mask = (1 << self._UnpackedWidth) - 1
-        self._step = 0
-        self._packed_buf = None
-        
         self._deqs = 0
-        self._enqs = 0
-
-        self._q = queue.SimpleQueue()
     
     def consume(self):
         assert_resolvable(self._packed_i)
-        b = int(self._packed_i.value) & ((1 << (self._PackedWidth)) - 1)
-        self._q.put(b)
-        self._enqs += 1
+        packed_val = int(self._packed_i.value) & ((1 << (self._PackedWidth)) - 1)
+        expected_outputs = []
+        for step in range(self._PackedNum):
+            val = (packed_val >> (self._UnpackedWidth * step)) & self._mask
+            expected_outputs.append(val)
 
-    def ensure_packed_buf(self):
-        '''Checks for latest packed buffer state in queue before popping'''
-        if self._packed_buf is None:
-            assert (self._q.qsize() > 0), "Error! No input data available to pack"
-            self._packed_buf = self._q.get()
+        return expected_outputs
 
-    def _expected_from_byte(self, b: int, step: int) -> int:
-        '''Masks the input byte to get the expected unpacked output for the given step'''
-        return (b >> (self._UnpackedWidth * step)) & self._mask
+    def produce(self, expected):
 
-    def produce(self):
-
-        self.ensure_packed_buf()
         assert_resolvable(self._unpacked_o)
-
         got = int(self._unpacked_o.value) & self._mask
-        if self._packed_buf is None:
-            raise RuntimeError("Error! No packed buffer available to unpack")
-        expected = self._expected_from_byte(self._packed_buf, self._step) & self._mask
 
         self._deqs += 1
-
-        print(f'packed_byte: 0x{self._packed_buf:02X} step={self._step}')
-        print(f'Got unpacked: {got}, Expected unpacked: {expected}')
+        print(f'Output #{self._deqs}: Got unpacked: {got}, Expected: {expected}')
 
         assert got == expected, (
-            f"Mismatch on output #{self._deqs}: expected {expected}, got {got} "
-            f"(packed=0x{self._packed_buf:02X}, step={self._step})"
+            f"Mismatch on output #{self._deqs}: expected {expected}, got {got}"
         )
-        # Wrap around step
-        self._step = (self._step + 1) % int(self._PackedNum)
-
-        if self._step == 0:
-            self._packed_buf = None
 
 class RandomDataGenerator():
     def __init__(self, dut):
@@ -295,56 +270,7 @@ class InputModel():
             await FallingEdge(clk_i)
             
         return self._nin
-
-class ModelRunner():
-    def __init__(self, dut, model):
-
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._emit_cycles = dut.PackedNum.value
-
-        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
-                                          dut.valid_i, dut.ready_o)
-        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
-                                           dut.valid_o, dut.ready_i)
-
-        self._model = model
-
-        self._events = queue.SimpleQueue()
-
-        self._coro_run_in = None
-        self._coro_run_out = None
-
-    def start(self):
-        """Start model"""
-        if self._coro_run_in is not None:
-            raise RuntimeError("Model already started")
-        self._coro_run_input = cocotb.start_soon(self._run_input(self._model))
-        self._coro_run_output = cocotb.start_soon(self._run_output(self._model))
-
-    async def _run_input(self, model):
-        while True:
-            await self._rv_in.handshake(None)
-            self._model.consume()
-            for _ in range(self._emit_cycles): # Four valid outputs per valid input
-                self._events.put(get_sim_time(units='ns'))
-
-    async def _run_output(self, model):
-        while True:
-            await self._rv_out.handshake(None)
-            assert (self._events.qsize() > 0), "Error! Module produced output without valid input"
-            _ = self._events.get()
-            self._model.produce()
-      
-    def stop(self) -> None:
-        """Stop monitor"""
-        if self._coro_run_input is None or self._coro_run_output is None:
-            raise RuntimeError("Monitor never started")
-        self._coro_run_input.kill()
-        self._coro_run_output.kill()
-        self._coro_run_input = None
-        self._coro_run_output = None
-
+    
 @cocotb.test
 async def reset_test(dut):
     """Test for Initialization"""
@@ -383,11 +309,11 @@ async def single_test(dut):
 
     m.start()
     om.start()
+    im.start()
     await FallingEdge(dut.clk_i)
     await FallingEdge(dut.clk_i)
     await FallingEdge(dut.clk_i)
 
-    im.start()
     await RisingEdge(dut.valid_i)
     await RisingEdge(dut.clk_i)
 

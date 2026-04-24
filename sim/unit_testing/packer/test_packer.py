@@ -10,7 +10,7 @@ _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
 assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
 assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
 sys.path.append(os.path.join(_REPO_ROOT, "util"))
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface
+from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface, ModelRunner
 tbpath = os.path.dirname(os.path.realpath(__file__))
 
 import pytest
@@ -82,8 +82,6 @@ class PackerModel():
         
         self._deqs = 0
         self._enqs = 0
-
-        self._q = queue.SimpleQueue()
     
     def consume(self):
         assert_resolvable(self._unpacked_i)
@@ -97,23 +95,19 @@ class PackerModel():
 
         completed = (self._step == self._PackedNum - 1) or flush
         if completed:
-            self._q.put(self._acc & ((1 << self._PackedWidth) - 1))
+            expected = (self._acc & ((1 << self._PackedWidth) - 1))
             self._acc = 0
             self._step = 0
         else:
             self._step += 1
-        return completed
+            expected = None
+        return expected
 
-    def produce(self):
+    def produce(self, expected):
         assert_resolvable(self._packed_o)
 
         got = self._packed_o.value.integer & ((1 << self._PackedWidth) - 1)
 
-        assert self._q.qsize() > 0, (
-            "Output fired but model has no completed expected byte. "
-            "Did you call consume() on every input handshake?"
-        )
-        expected = self._q.get()
         self._deqs += 1
 
         print(f"Packed out #{self._deqs}: got=0x{got:02X}, expected=0x{expected:02X}")
@@ -121,9 +115,6 @@ class PackerModel():
         assert got == expected, (
             f"Mismatch on output #{self._deqs}: expected 0x{expected:02X}, got 0x{got:02X}"
         )
-
-        if self._step == 0 or self._dut.flush_i.value == 1:
-            self._packed_buf = None
 
 class RandomDataGenerator():
     def __init__(self, dut, flush_rate):
@@ -359,61 +350,6 @@ class InputModel():
             await FallingEdge(clk_i)
             
         return self._nin
-
-class ModelRunner():
-    def __init__(self, dut, model):
-
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._flush_i = dut.flush_i
-
-        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
-                                          dut.valid_i, dut.ready_o)
-        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
-                                           dut.valid_o, dut.ready_i)
-
-        self._num_packed_p  = int(dut.PackedNum.value)
-
-        self._model = model
-
-        self._completed_packs = 0
-
-        self._coro_run_in = None
-        self._coro_run_out = None
-
-    def start(self):
-        """Start model"""
-        if self._coro_run_in is not None:
-            raise RuntimeError("Model already started")
-        self._coro_run_input = cocotb.start_soon(self._run_input(self._model))
-        self._coro_run_output = cocotb.start_soon(self._run_output(self._model))
-
-    async def _run_input(self, model):
-        while True:
-            await self._rv_in.handshake(None)
-            completed = self._model.consume()
-            if completed:
-                self._completed_packs += 1
-
-    async def _run_output(self, model):
-        while True:
-            await self._rv_out.handshake(None)
-
-            assert self._completed_packs > 0, (
-                    f"Output fired with n_inputs={self._completed_packs} (<{self._num_packed_p}) "
-                    f"but flush was not asserted (flush={int(self._flush_i.value)})."
-                )
-            self._completed_packs -= 1
-            self._model.produce()
-            
-    def stop(self) -> None:
-        """Stop monitor"""
-        if self._coro_run_input is None or self._coro_run_output is None:
-            raise RuntimeError("Monitor never started")
-        self._coro_run_input.kill()
-        self._coro_run_output.kill()
-        self._coro_run_input = None
-        self._coro_run_output = None
 
 @cocotb.test
 async def reset_test(dut):

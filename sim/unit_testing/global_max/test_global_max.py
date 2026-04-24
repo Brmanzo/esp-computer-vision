@@ -12,7 +12,7 @@ _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
 assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
 assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
 sys.path.append(os.path.join(_REPO_ROOT, "util"))
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface
+from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ModelRunner, sign_extend
 tbpath = os.path.dirname(os.path.realpath(__file__))
 
 import pytest
@@ -28,13 +28,6 @@ random.seed(42)
 
 timescale = "1ps/1ps"
 
-def sign_extend(value: int, width: int) -> int:
-    mask = (1 << width) - 1
-    value &= mask
-    sign_bit = 1 << (width - 1)
-    return (value ^ sign_bit) - sign_bit
-
-
 def pack(inputs, in_bits):
     packed = 0
     mask = (1 << in_bits) - 1
@@ -48,7 +41,6 @@ def unpack(packed, in_bits, input_count):
     for i in range(input_count):
         raw = (packed >> (i * in_bits)) & mask
         
-        # FIX: Skip sign-extension for 1-bit flags!
         if in_bits == 1:
             unpacked.append(raw)
         else:
@@ -110,11 +102,10 @@ class GlobalMaxModel():
         self._in_bits     = int(dut.InBits.value)
         self._out_bits    = int(dut.OutBits.value)
         self._in_channels = int(dut.InChannels.value)
-        self._terms       = dut.TermCount
+        self._terms       = int(dut.TermCount.value)
 
         self._term_counter = 0
         self._current_max  = None
-        self._expected = queue.SimpleQueue()
 
     
     def consume(self):
@@ -135,20 +126,24 @@ class GlobalMaxModel():
         self._term_counter += 1
 
         if self._term_counter == self._terms:
-            self._expected.put(self._current_max)
+            expected_max = self._current_max[:]
+
             self._term_counter = 0
             self._current_max = None
+            
+            return tuple(expected_max)
 
-    def produce(self):
+    def produce(self, expected):
         assert_resolvable(self._data_o)
 
         packed_out = self._data_o.value.integer
-        expected = self._expected.get()
         got = unpack(packed_out, self._out_bits, self._in_channels)
 
-        print(f"Produced output {got}, expected {expected} at time {get_sim_time(units='ns')}ns")
-        assert got == expected, (
-            f"Output mismatch. Expected {expected}, got {got}"
+        expected_list = list(expected)
+
+        print(f"Produced output {got}, expected {expected_list} at time {get_sim_time(units='ns')}ns")
+        assert got == expected_list, (
+            f"Output mismatch. Expected {expected_list}, got {got}"
         )
 
 class RandomDataGenerator:
@@ -317,44 +312,6 @@ class InputModel():
 
             await FallingEdge(clk_i)
         return self._nin
-
-class ModelRunner():
-    def __init__(self, dut, model):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-
-        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
-                                          dut.valid_i, dut.ready_o)
-        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
-                                           dut.valid_o, dut.ready_i)
-
-        self._model = model
-        self._coro_run_input = None
-        self._coro_run_output = None
-
-    def start(self):
-        if self._coro_run_input is not None:
-            raise RuntimeError("Model already started")
-        self._coro_run_input = cocotb.start_soon(self._run_input(self._model))
-        self._coro_run_output = cocotb.start_soon(self._run_output(self._model))
-
-    async def _run_input(self, model):
-        while True:
-            await self._rv_in.handshake(None)
-            self._model.consume()
-
-    async def _run_output(self, model):
-        while True:
-            await self._rv_out.handshake(None)
-            self._model.produce()
-
-    def stop(self):
-        if self._coro_run_input is None or self._coro_run_output is None:
-            raise RuntimeError("Monitor never started")
-        self._coro_run_input.kill()
-        self._coro_run_output.kill()
-        self._coro_run_input = None
-        self._coro_run_output = None
 
 @cocotb.test
 async def reset_test(dut):

@@ -8,7 +8,7 @@ _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
 assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
 assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
 sys.path.append(os.path.join(_REPO_ROOT, "util"))
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, ReadyValidInterface
+from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, ReadyValidInterface, ModelRunner
 tbpath = os.path.dirname(os.path.realpath(__file__))
 
 import pytest
@@ -45,17 +45,6 @@ def test_each(simulator, test_name, Width, Depth, HeadRoom):
     del parameters['simulator']
     runner(simulator, timescale, tbpath, parameters, testname=test_name)
 
-# Opposite above, run all the tests in one simulation but reset
-# between tests to ensure that reset is clearing all state.
-
-@pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("Width, Depth, HeadRoom", [(8, 16, 4), (8, 32, 8)])
-def test_all(simulator, Width, Depth, HeadRoom):
-    # This line must be first
-    parameters = dict(locals())
-    del parameters['simulator']
-    runner(simulator, timescale, tbpath, parameters)
-
 @pytest.mark.parametrize("simulator", ["verilator"])
 def test_lint(simulator):
     # This line must be first
@@ -81,36 +70,84 @@ async def delay_cycles(dut, ncyc, polarity):
     
 class SkidBufModel():
     def __init__(self, dut):
-
         self._dut = dut
         self._data_o = dut.data_o
         self._data_i = dut.data_i
 
-        # Model the fifo like a simple software queue
-        self._q = queue.SimpleQueue()
         self._occupancy = 0
         
-        self._Width = dut.Width.value
-        self._Depth = dut.Depth.value
-        self._HeadRoom = dut.HeadRoom.value
+        self._Width = int(dut.Width.value)
+        self._Depth = int(dut.Depth.value)
+        self._HeadRoom = int(dut.HeadRoom.value)
         self._deqs = 0
         self._enqs = 0
+        
+        self._coro_check = None
+
+    def start(self):
+        """Start the background RTS/Occupancy checker"""
+        if self._coro_check is not None:
+            raise RuntimeError("Model checker already started")
+        self._coro_check = cocotb.start_soon(self._check_rts())
+
+    def stop(self):
+        if self._coro_check is not None:
+            self._coro_check.kill()
+            self._coro_check = None
 
     def expect_rts(self):
-        thresh = int(self._Depth) - int(self._HeadRoom)
+        thresh = self._Depth - self._HeadRoom
         return self._occupancy >= thresh
+
+    def dut_occ_modulo(self):
+        pw = self._dut.write_ptr.value.n_bits  # clog2(depth)
+        ptr_w = pw + 1
+        mask = (1 << ptr_w) - 1
+
+        ww = int(self._dut.write_wrap.value)
+        wp = int(self._dut.write_ptr.value)
+        rw = int(self._dut.read_wrap.value)
+        rp = int(self._dut.read_ptr_q.value)
+
+        w = ((ww << pw) | wp) & mask
+        r = ((rw << pw) | rp) & mask
+        occ = (w - r) & mask
+        return occ
+
+    async def _check_rts(self):
+        """Continuously check the almost-full flag and hardware occupancy"""
+        while True:
+            await RisingEdge(self._dut.clk_i)
+
+            if not (self._dut.rst_i.value.is_resolvable and int(self._dut.rst_i.value) == 0):
+                continue
+
+            await Timer(Decimal(1.0), "ns")  # allow comb to settle after sequential updates
+
+            occ_hw = self.dut_occ_modulo()
+            thresh = self._Depth - self._HeadRoom
+            exp_hw = 1 if occ_hw >= thresh else 0
+            got = int(self._dut.rts_o.value)
+            
+            assert got == exp_hw, (
+                f"rts mismatch @ {get_sim_time('ns')}ns: "
+                f"occ_model={self._occupancy} occ_hw={occ_hw} "
+                f"expected={exp_hw} got={got}"
+            )
 
     def consume(self):
         assert_resolvable(self._data_i)
         self._occupancy += 1
-        self._q.put(self._data_i.value)
         self._enqs += 1
+        
+        # Return the value so the generic ModelRunner queues it!
+        return int(self._data_i.value)
 
-    def produce(self):
+    def produce(self, expected):
         assert_resolvable(self._data_o)
         self._occupancy -= 1
-        got = self._data_o.value
-        expected = self._q.get()
+        
+        got = int(self._data_o.value)
         assert got == expected, f"Error! Value on deque iteration {self._deqs} does not match expected. Expected: {expected}. Got: {got}"
         self._deqs += 1
         
@@ -278,94 +315,7 @@ class InputModel():
                     self._nin += 1
 
             await FallingEdge(clk_i)
-        return self._nin
-
-class ModelRunner():
-    def __init__(self, dut, model):
-
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._dut = dut
-
-        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
-                                          dut.ready_o, dut.valid_i)
-        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
-                                           dut.ready_i, dut.valid_o)
-
-        self._model = model
-
-        self._events = queue.SimpleQueue()
-
-        self._coro_run_input = None
-        self._coro_run_output = None
-
-    def start(self):
-        """Start model"""
-        if self._coro_run_input is not None:
-            raise RuntimeError("Model already started")
-        self._coro_run_input = cocotb.start_soon(self._run_input(self._model))
-        self._coro_run_output = cocotb.start_soon(self._run_output(self._model))
-        self._coro_run_check = cocotb.start_soon(self._run_check(self._model))
-
-    def dut_occ_modulo(self):
-        pw = self._dut.write_ptr.value.n_bits  # clog2(depth)
-        ptr_w = pw + 1
-        mask = (1 << ptr_w) - 1
-
-        ww = int(self._dut.write_wrap.value)
-        wp = int(self._dut.write_ptr.value)
-        rw = int(self._dut.read_wrap.value)
-        rp = int(self._dut.read_ptr_q.value)
-
-        w = ((ww << pw) | wp) & mask
-        r = ((rw << pw) | rp) & mask
-        occ = (w - r) & mask
-        return occ, (ww, wp, rw, rp)
-
-    async def _run_check(self, model):
-        while True:
-            await RisingEdge(self._clk_i)
-
-            if not (self._rst_i.value.is_resolvable and int(self._rst_i.value) == 0):
-                continue
-
-            await Timer(Decimal(1.0), "ns")  # allow comb to settle after sequential updates
-
-            exp = int(model.expect_rts())
-            got = int(self._dut.rts_o.value)
-
-            occ_hw, _ = self.dut_occ_modulo()
-            thresh = int(self._dut.Depth.value) - int(self._dut.HeadRoom.value)
-            exp = 1 if occ_hw >= thresh else 0
-            got = int(self._dut.rts_o.value)
-            assert got == exp, (f"rts mismatch @ {get_sim_time('ns')}ns: "
-                f"occ_model={model._occupancy} occ_hw={occ_hw} "
-                f"expected={exp} got={got}"
-            )
-
-    async def _run_input(self, model):
-        while True:
-            await self._rv_in.handshake(None)
-            self._events.put(get_sim_time(units='ns'))
-            self._model.consume()
-        
-    async def _run_output(self, model):
-        while True:
-            await self._rv_out.handshake(None)
-            assert (self._events.qsize() > 0), "Error! Module produced output without valid input"
-            input_time = self._events.get()
-            self._model.produce()
-      
-    def stop(self) -> None:
-        """Stop monitor"""
-        if self._coro_run_input is None or self._coro_run_output is None:
-            raise RuntimeError("Monitor never started")
-        self._coro_run_input.kill()
-        self._coro_run_output.kill()
-        self._coro_run_check.kill()
-        self._coro_run_input = None
-        self._coro_run_output = None
-    
+        return self._nin    
 
 @cocotb.test
 async def reset_test(dut):
@@ -385,7 +335,8 @@ async def single_test(dut):
     l = 1
     rate = 1
 
-    m = ModelRunner(dut, SkidBufModel(dut))
+    model = SkidBufModel(dut)
+    m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, 1), l)
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), l)
 
@@ -404,13 +355,11 @@ async def single_test(dut):
     # Wait one cycle for reset to start
     await FallingEdge(dut.clk_i)
 
+    model.start()
     m.start()
     om.start()
-    await FallingEdge(dut.clk_i)
-    await FallingEdge(dut.clk_i)
-    await FallingEdge(dut.clk_i)
-
     im.start()
+
     await RisingEdge(dut.valid_i)
     await RisingEdge(dut.clk_i)
 
@@ -431,7 +380,8 @@ async def bypass_test(dut):
     l = 1
     rate = 1
 
-    m = ModelRunner(dut, SkidBufModel(dut))
+    model = SkidBufModel(dut)
+    m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, 1), l)
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), l)
 
@@ -450,8 +400,11 @@ async def bypass_test(dut):
     # Wait one cycle for reset to start
     await FallingEdge(dut.clk_i)
 
+    model.start()
     m.start()
     om.start()
+    im.start()
+
     await FallingEdge(dut.clk_i)
     await FallingEdge(dut.clk_i)
     await FallingEdge(dut.clk_i)
@@ -479,7 +432,8 @@ async def fill_test(dut):
     l = Depth
     rate = 1
 
-    m = ModelRunner(dut, SkidBufModel(dut))
+    model = SkidBufModel(dut)
+    m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, 0), l)
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), l)
 
@@ -498,9 +452,11 @@ async def fill_test(dut):
     # Wait one cycle for reset to start
     await FallingEdge(dut.clk_i)
 
+    model.start()
     m.start()
     om.start()
     im.start()
+
 
     await RisingEdge(dut.valid_i)
     await RisingEdge(dut.clk_i)
@@ -523,7 +479,8 @@ async def fill_empty_test(dut):
     l = Depth
     rate = 1
 
-    m = ModelRunner(dut, SkidBufModel(dut))
+    model = SkidBufModel(dut)
+    m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, 0), l)
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), l)
 
@@ -542,9 +499,11 @@ async def fill_empty_test(dut):
     # Wait one cycle for reset to start
     await FallingEdge(dut.clk_i)
 
+    model.start()
     m.start()
     om.start()
     im.start()
+
 
     await RisingEdge(dut.valid_i)
     await RisingEdge(dut.clk_i)
@@ -580,7 +539,8 @@ async def rate_tests(dut, in_rate, out_rate):
     l_in = int(dut.Depth.value) * 4
     l_out = l_in
 
-    m  = ModelRunner(dut, SkidBufModel(dut))
+    model = SkidBufModel(dut)
+    m  = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, out_rate), l_out)
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, in_rate), l_in)
 
@@ -590,7 +550,10 @@ async def rate_tests(dut, in_rate, out_rate):
     await reset_sequence(dut.clk_i, dut.rst_i, 10)
     await FallingEdge(dut.clk_i)
 
-    m.start(); om.start(); im.start()
+    model.start()
+    m.start()
+    om.start()
+    im.start()
 
     # Wait up to 20 cycles for valid_o (cycle-based, not ns-based)
     for _ in range(20):

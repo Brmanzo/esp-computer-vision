@@ -14,7 +14,7 @@ assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
 _UTIL_PATH = os.path.join(_REPO_ROOT, "sim", "util")
 assert os.path.exists(_UTIL_PATH), f"Utilities path does not exist: {_UTIL_PATH}"
 sys.path.insert(0, _UTIL_PATH)
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
+from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface, ModelRunner, sign_extend
 tbpath = os.path.dirname(os.path.realpath(__file__))
 
 import pytest
@@ -70,10 +70,6 @@ def pack_weights_in(weights_4d, width, kernel_area, IC):
                 shift = width * (k + kernel_area * (ic + IC * oc))
                 out |= (w & mask) << shift
     return out
-
-def sign_extend(val: int, bits: int) -> int:
-    sign = 1 << (bits - 1)
-    return (val ^ sign) - sign
 
 def gen_kernels(WW: int, OC: int, IC: int, K: int, seed: int | None = None):
     rng = random.Random(seed)
@@ -522,43 +518,6 @@ class ConvLayerModel():
             if self._r >= self._OH:
                 self._r = 0
 
-class ReadyValidInterface():
-    def __init__(self, clk, reset, ready, valid):
-        self._clk_i = clk
-        self._rst_i = reset
-        self._ready = ready
-        self._valid = valid
-
-    def is_in_reset(self):
-        if((not self._rst_i.value.is_resolvable) or self._rst_i.value  == 1):
-            return True
-        
-    def assert_resolvable(self):
-        if(not self.is_in_reset()):
-            assert_resolvable(self._valid)
-            assert_resolvable(self._ready)
-
-    def is_handshake(self):
-        return ((self._valid.value == 1) and (self._ready.value == 1))
-
-    async def _handshake(self):
-        while True:
-            await RisingEdge(self._clk_i)
-            if (not self.is_in_reset()):
-                self.assert_resolvable()
-                if(self.is_handshake()):
-                    break
-
-    async def handshake(self, ns):
-        """Wait for a handshake, raising an exception if it hasn't
-        happened after ns nanoseconds of simulation time"""
-
-        # If ns is none, wait indefinitely
-        if(ns):
-            await with_timeout(self._handshake(), ns, 'ns')
-        else:
-            await self._handshake()    
-
 class CountingDataGenerator():
     def __init__(self, dut):
         self._dut = dut
@@ -794,56 +753,7 @@ class InputModel():
 
         # Stop driving
         valid_i.value = 0
-        return self._nin
-
-class ModelRunner():
-    def __init__(self, dut, model):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-
-        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
-                                          dut.valid_i, dut.ready_o)
-        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
-                                           dut.valid_o, dut.ready_i)
-
-        self._model = model
-        self._events = queue.SimpleQueue()
-
-        self._coro_run_in = None
-        self._coro_run_out = None
-
-    def start(self):
-        """Start model"""
-        if self._coro_run_in is not None or self._coro_run_out is not None:
-            raise RuntimeError("Model already started")
-        self._coro_run_in  = cocotb.start_soon(self._run_input())
-        self._coro_run_out = cocotb.start_soon(self._run_output())
-
-    async def _run_input(self):
-        while True:
-            await self._rv_in.handshake(None)
-            exp = self._model.consume()     # exp is None or int
-            if exp is not None:
-                self._events.put(exp)
-
-    async def _run_output(self):
-        while True:
-            await self._rv_out.handshake(None)
-            assert self._events.qsize() > 0, "Error! Module produced output without expected input"
-            expected = self._events.get()
-            self._model.produce(expected)
-
-    def stop(self):
-        """Stop model"""
-        if self._coro_run_in is None and self._coro_run_out is None:
-            raise RuntimeError("Model never started")
-        if self._coro_run_in is not None:
-            self._coro_run_in.kill()
-            self._coro_run_in = None
-        if self._coro_run_out is not None:
-            self._coro_run_out.kill()
-            self._coro_run_out = None
-    
+        return self._nin    
 
 @cocotb.test
 async def reset_test(dut):

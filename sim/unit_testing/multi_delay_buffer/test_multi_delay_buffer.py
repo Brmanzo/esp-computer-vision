@@ -3,15 +3,18 @@ import os
 import sys
 import git
 import queue
-from collections import deque
 
 _REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
 assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
 assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
 _UTIL_PATH = os.path.join(_REPO_ROOT, "sim", "util")
+_MODEL_PATH = os.path.join(_REPO_ROOT, "sim", "models")
 assert os.path.exists(_UTIL_PATH), f"Utilities path does not exist: {_UTIL_PATH}"
+assert os.path.exists(_MODEL_PATH), f"Models path does not exist: {_MODEL_PATH}"
 sys.path.insert(0, _UTIL_PATH)
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface
+sys.path.insert(0, _MODEL_PATH)
+from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface, ModelRunner
+from models import MultiDelayBufferModel
 tbpath = os.path.dirname(os.path.realpath(__file__))
 
 import pytest
@@ -20,8 +23,6 @@ import cocotb
 
 from cocotb.triggers import RisingEdge, FallingEdge, with_timeout
 from cocotb.result import SimTimeoutError
-
-from cocotb_test.simulator import run
    
 import random
 random.seed(50)
@@ -35,18 +36,6 @@ tests = ['reset_test'
         ,'in_fuzz_test'
         ,'out_fuzz_test'
         ,'full_bw_test']
-
-def safe_int_from_value(val, *, x_as=0):
-    """
-    Convert a cocotb BinaryValue/LogicArray to int even if it contains X/Z.
-    x_as=0 -> treat X/Z as 0
-    x_as=1 -> treat X/Z as 1
-    """
-    s = val.binstr.lower()  # e.g. '00x1'
-    if 'x' in s or 'z' in s:
-        repl = '1' if x_as else '0'
-        s = s.replace('x', repl).replace('z', repl)
-    return int(s, 2)
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
@@ -84,116 +73,6 @@ def test_style(simulator, BufferWidth, Delay, BufferRows, InputChannels):
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"])
-
-def unpack_data_o(BufferWidth, BufferRows, InputChannels, packed_o):
-    mask = (1 << BufferWidth) - 1
-    out = [[0]*BufferRows for _ in range(InputChannels)]
-    for ch in range(InputChannels):
-        for r in range(BufferRows):
-            bitpos = (ch * BufferRows + r) * BufferWidth
-            out[ch][r] = (packed_o >> bitpos) & mask
-    return out
-
-class MultiDelayBufferModel():
-
-    def __init__(self, dut):
-        self._dut = dut
-        self._data_i = dut.data_i
-        self._data_o = dut.data_o
-
-        self._q = queue.SimpleQueue()
-
-        self._Delay         = int(dut.Delay.value)
-        self._BufferRows    = int(dut.BufferRows.value)
-        self._InputChannels = int(dut.InputChannels.value)
-        self._BufferWidth   = int(dut.BufferWidth.value)
-
-        self._mask = (1 << self._BufferWidth) - 1
-        # Model the single cycle output delay
-        self._warmup = self._Delay * self._BufferRows + 1
-
-        # We're going to initialize _buf with zeros so that we can
-        # detect when the output should be not an X in simulation
-        self._deqs = 0
-        self._enqs = 0
-
-        # Deques representing vertical partitions within RAM
-        zero_init = [0] * self._BufferRows
-
-        self._ram = [
-            deque([zero_init.copy() for _ in range(self._Delay)], maxlen=self._Delay)
-            for _ in range(self._InputChannels)
-        ]
-        
-        self._rd_pipe = None
-        self._wr_pipe = [0 for _ in range(self._InputChannels)]  # delayed write data
-        self._wr_valid = False
-
-        self._fires = 0
-
-        # Variables represent regs to provide single cycle delay between output
-        # of buffer and input to the next buffer
-        self._regs = [
-            [0 for _ in range(self._BufferRows - 1)]
-            for _ in range(self._InputChannels)
-        ]
-
-    def step(self, data_i_words, in_fire=True):
-        assert len(data_i_words) == self._InputChannels
-
-        # If not firing, return None (or handle as needed based on interface)
-        if not in_fire:
-            return None
-
-        self._fires += 1
-
-        rd_now = None  # word exiting delay line this cycle
-
-        if self._wr_valid:
-            rd_now = []
-
-            for ch in range(self._InputChannels):
-                # 1) Pop oldest word (this is what exits the delay line)
-                old = self._ram[ch].popleft()
-                rd_now.append(old.copy())
-
-                # 2) Compute new row heads
-                new_word0 = int(self._wr_pipe[ch]) & self._mask
-
-                row_heads = [0] * self._BufferRows
-                row_heads[0] = new_word0
-
-                for r in range(1, self._BufferRows):
-                    row_heads[r] = self._regs[ch][r - 1]
-
-                # 3) Update inter-row regs from *current* old word
-                for r in range(self._BufferRows - 1):
-                    self._regs[ch][r] = old[r]
-
-                # 4) Append new word to end of delay line
-                self._ram[ch].append(row_heads)
-
-        else:
-            # Before first valid write, nothing meaningful leaves
-            rd_now = [self._ram[ch][0].copy() for ch in range(self._InputChannels)]
-
-        # 5) Update write pipeline
-        self._wr_pipe = [int(w) & self._mask for w in data_i_words]
-        self._wr_valid = True
-
-        # 6) Output directly (Removed 1-cycle _rd_pipe delay)
-        out = None
-        
-        # Adjusted threshold: Reduced (+2) to (+1) because we removed the pipeline stage.
-        # If your hardware has 0-cycle output latency relative to the RAM read, 
-        # you might need to adjust this constant further (e.g., to +0).
-        latency_threshold = (self._Delay * self._BufferRows) + 1
-        
-        if self._fires >= latency_threshold:
-            out = rd_now
-
-        # Note: self._rd_pipe is removed entirely
-        return out
     
 class RandomDataGenerator():
     def __init__(self, dut):
@@ -388,132 +267,6 @@ class InputModel():
 
             await FallingEdge(clk_i)
         return self._nin
-    
-class ModelRunner():
-    def unpack_data_i(self, packed_i: int):
-        """Unpack packed [InputChannels-1:0][BufferWidth-1:0] into list of per-channel words."""
-        C = int(self._dut.InputChannels.value)
-        W = int(self._dut.BufferWidth.value)
-        mask = (1 << W) - 1
-
-        words = [0] * C
-        for ch in range(C):
-            words[ch] = (packed_i >> (ch * W)) & mask
-        return words
-
-    def __init__(self, dut, model):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._dut = dut
-
-        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
-                                          dut.valid_i, dut.ready_o)
-        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
-                                           dut.valid_o, dut.ready_i)
-
-        self._model = model
-        self._events = queue.SimpleQueue()
-
-        self._coro_run_in = None
-        self._coro_run_out = None
-        self._seen_expected = False
-
-    def start(self):
-        """Start model"""
-        if self._coro_run_in is not None or self._coro_run_out is not None:
-            raise RuntimeError("Model already started")
-        self._coro_run_in  = cocotb.start_soon(self._run_input())
-        self._coro_run_out = cocotb.start_soon(self._run_output())
-
-    def stop(self):
-        """Stop the model runner and kill background coroutines"""
-        if self._coro_run_in is not None:
-            self._coro_run_in.kill()
-            self._coro_run_in = None
-            
-        if self._coro_run_out is not None:
-            self._coro_run_out.kill()
-            self._coro_run_out = None
-
-    async def _run_input(self):
-        while True:
-            await self._rv_in.handshake(None)
-
-            packed_in = int(self._dut.data_i.value)  # capture at handshake
-            words = self.unpack_data_i(packed_in)    # ✅ list[int] length InputChannels
-            expected = self._model.step(words, in_fire=True)
-            if expected is not None:
-                self._events.put(expected)
-                self._seen_expected = True
-    
-    async def _run_output(self):
-        while True:
-            await self._rv_out.handshake(None)
-
-            print(f"Output observed before expected: fire count {self._model._fires}, expected at least {self._model._warmup}")
-            print(f"Input Channels: {self._model._InputChannels}, Buffer Rows: {self._model._BufferRows}, Delay: {self._model._Delay}")
-
-            bw = self._model._BufferWidth
-            mask = (1 << bw) - 1
-
-            # Debug dump: model RAM vs DUT RAM
-            for ch in range(self._model._InputChannels):
-                for r in range(self._model._BufferRows):
-                    ram_unpack = [0 for _ in range(self._model._Delay)]
-                    data_o = self._model._dut.data_o.value
-
-                    print(f"ch{ch}, br{r}:   ", end="")
-                    for d in range(self._model._Delay):
-                        print(f"{self._model._ram[ch][d][r]}", end="")
-                    print("")
-
-                    # show the corresponding output bit for that buffer row (your original view)
-                    print(f"  mem     {data_o[self._model._BufferRows - r - 1]} ", end="")
-
-                    # unpack DUT RAM taps
-                    for d in range(self._model._Delay):
-                        rowvec = safe_int_from_value(self._model._dut.embedded_block_ram_inst.mem[d].value, x_as=0)
-                        word_idx = r + ch * self._model._BufferRows
-                        dut_word = (rowvec >> (word_idx * bw)) & mask
-                        ram_unpack[d] = dut_word
-
-                    # rotate for visual alignment (your original rotate)
-                    for d in range(len(ram_unpack)):
-                        print(f"{ram_unpack[(d + self._model._fires - 1) % self._model._Delay]}", end="")
-                    print("")
-                print("")
-
-            # ---- Scoreboard ----
-            if self._events.qsize() == 0:
-                # Ignore early output handshakes until we've ever produced an expected output
-                # (ready/valid decoupling can allow this during warmup/drain)
-                if not getattr(self, "_seen_expected", False):
-                    continue
-
-                raise AssertionError(
-                    f"Output without expected input: fires={self._model._fires} "
-                    f"warmup={self._model._warmup} qsize=0"
-                )
-
-            expected_words = self._events.get()
-
-            val = self._dut.data_o.value
-            if not val.is_resolvable:
-                raise AssertionError(
-                    f"data_o contains X/Z on output handshake at fires={self._model._fires}. "
-                    f"data_o.binstr={val.binstr}"
-                )
-
-            got_packed = int(self._dut.data_o.value)
-            got = unpack_data_o(
-                self._dut.BufferWidth.value,
-                self._dut.BufferRows.value,
-                self._dut.InputChannels.value,
-                got_packed
-            )
-
-            print(f"Output observed got={got} expected={expected_words}")
-            assert got == expected_words, f"Mismatch: got={got} expected={expected_words}"
 
 async def flush_dut(dut, duration):
     """
