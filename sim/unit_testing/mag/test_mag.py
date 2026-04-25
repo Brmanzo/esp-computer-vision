@@ -3,7 +3,8 @@ from   pathlib import Path
 import pytest
 
 from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
-from util.utilities import ModelRunner
+from util.components import ModelRunner, RateGenerator
+from util.gen_inputs import gen_input_channels
 tbpath = Path(__file__).parent
 
 import cocotb
@@ -102,21 +103,10 @@ class MagModel():
 class RandomDataGenerator():
     def __init__(self, dut):
         self._dut = dut
+        self._width_p = dut.WidthIn.value
 
     def generate(self):
-        a_i = random.randint(0, (1 << self._dut.WidthIn.value) - 1)
-        b_i = random.randint(0, (1 << self._dut.WidthIn.value) - 1)
-        return (a_i, b_i)
-
-class RateGenerator():
-    def __init__(self, dut, r):
-        self._rate = r
-
-    def generate(self):
-        if(self._rate == 0):
-            return False
-        else:
-            return (random.randint(1,int(1/self._rate)) == 1)
+        return gen_input_channels(self._width_p, 2)
 
 class OutputModel():
     def __init__(self, dut, g, l):

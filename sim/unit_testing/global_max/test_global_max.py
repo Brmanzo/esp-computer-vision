@@ -2,8 +2,10 @@
 from   pathlib import Path
 import pytest
 
-from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, sign_extend
-from util.utilities import ModelRunner
+from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
+from util.bitwise   import pack_terms, unpack_terms
+from util.components import ModelRunner, RateGenerator
+from util.gen_inputs import gen_input_channels
 tbpath = Path(__file__).parent
 
 import cocotb
@@ -15,26 +17,6 @@ import random
 random.seed(42)
 
 timescale = "1ps/1ps"
-
-def pack(inputs, in_bits):
-    packed = 0
-    mask = (1 << in_bits) - 1
-    for i, x in enumerate(inputs):
-        packed |= (x & mask) << (i * in_bits)
-    return packed
-
-def unpack(packed, in_bits, input_count):
-    unpacked = []
-    mask = (1 << in_bits) - 1
-    for i in range(input_count):
-        raw = (packed >> (i * in_bits)) & mask
-        
-        if in_bits == 1:
-            unpacked.append(raw)
-        else:
-            unpacked.append(sign_extend(raw, in_bits))
-            
-    return unpacked
 
 tests = ['reset_test'
         ,'single_test'
@@ -100,7 +82,7 @@ class GlobalMaxModel():
         assert_resolvable(self._data_i)
 
         packed_in = self._data_i.value.integer
-        x = unpack(packed_in, self._in_bits, self._in_channels)
+        x = unpack_terms(packed_in, self._in_bits, self._in_channels)
 
         if self._term_counter == 0:
             self._current_max = x[:]
@@ -125,7 +107,7 @@ class GlobalMaxModel():
         assert_resolvable(self._data_o)
 
         packed_out = self._data_o.value.integer
-        got = unpack(packed_out, self._out_bits, self._in_channels)
+        got = unpack_terms(packed_out, self._out_bits, self._in_channels)
 
         expected_list = list(expected)
 
@@ -137,29 +119,11 @@ class GlobalMaxModel():
 class RandomDataGenerator:
     def __init__(self, dut):
         self._dut = dut
+        self._in_bits = int(self._dut.InBits.value)
+        self._in_channels = int(self._dut.InChannels.value)
 
     def generate(self):
-        in_bits = int(self._dut.InBits.value)
-        in_channels = int(self._dut.InChannels.value)
-
-        if in_bits == 1:
-            lo, hi = 0, 1
-        else:
-            lo = -(1 << (in_bits - 1))
-            hi =  (1 << (in_bits - 1)) - 1
-
-        vals = [random.randint(lo, hi) for _ in range(in_channels)]
-        return pack(vals, in_bits)
-
-class RateGenerator():
-    def __init__(self, dut, r):
-        self._rate = r
-
-    def generate(self):
-        if(self._rate == 0):
-            return False
-        else:
-            return (random.randint(1,int(1/self._rate)) == 1)
+        return gen_input_channels(self._in_bits, self._in_channels)
 
 class OutputModel():
     def __init__(self, dut, g, l):
@@ -232,6 +196,7 @@ class InputModel():
     def __init__(self, dut, data, rate, l):
         self._clk_i = dut.clk_i
         self._rst_i = dut.rst_i
+        self._input_width = int(dut.InBits.value)
         self._dut = dut
 
         self._rate = rate
@@ -285,9 +250,9 @@ class InputModel():
             produce = self._rate.generate()
             success = 0
             valid_i.value = produce
-            data = self._data.generate()
+            raw_data_list = self._data.generate()
 
-            data_i.value = data if produce else 0
+            data_i.value = pack_terms(raw_data_list, self._input_width) if produce else 0
 
             # Wait until ready
             while(produce and not success):

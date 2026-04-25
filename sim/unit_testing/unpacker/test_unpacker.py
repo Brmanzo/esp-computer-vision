@@ -3,7 +3,8 @@ from   pathlib import Path
 import pytest
 
 from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
-from util.utilities import ReadyValidInterface, ModelRunner
+from util.components import ReadyValidInterface, ModelRunner, RateGenerator
+from util.gen_inputs import gen_random_unsigned
 tbpath = Path(__file__).parent
 
 import cocotb
@@ -96,18 +97,7 @@ class RandomDataGenerator():
         self._width_p = dut.PackedWidth.value
 
     def generate(self):
-        x_i = random.randint(0, (1 << self._width_p) - 1)
-        return (x_i)
-
-class RateGenerator():
-    def __init__(self, dut, r):
-        self._rate = r
-
-    def generate(self):
-        if(self._rate == 0):
-            return False
-        else:
-            return (random.randint(1,int(1/self._rate)) == 1)
+        return gen_random_unsigned(self._width_p, random)
 
 class OutputModel():
     def __init__(self, dut, g, l):

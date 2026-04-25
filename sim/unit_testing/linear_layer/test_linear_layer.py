@@ -8,8 +8,10 @@ import torch
 from   torch import nn
 from   typing import List
 
-from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, sign_extend
-from util.utilities import ReadyValidInterface, ModelRunner
+from util.utilities  import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
+from util.components  import ReadyValidInterface, ModelRunner, RateGenerator
+from util.bitwise    import sign_extend, pack_terms, unpack_terms
+from util.gen_inputs import gen_weights, gen_biases, gen_input_channels
 tbpath = Path(__file__).parent
 
 import cocotb
@@ -39,67 +41,6 @@ def output_width(width_in: int, weight_width: int, in_channels: int=1) -> str:
     max_sum = terms * max_val * max_weight
     abs_bits = max_sum.bit_length()
     return str(abs_bits + 1)   # +1 for sign bit
-
-def gen_weights(WW: int, OC: int, IC: int, seed: int | None = None):
-    rng = random.Random(seed)
-    if WW < 2:
-        raise ValueError("Weight width must be at least 2 to include negative values in test kernels.")
-    elif WW == 2:
-        rand_weight_value = lambda: rng.choice([-1, 0, 1])
-    else:
-        max_val = (1 << (WW - 1)) - 1
-        min_val = -(1 << (WW - 1))
-        rand_weight_value = lambda: rng.randint(min_val, max_val)
-
-    # Generate the 2D matrix
-    weights2 = [[rand_weight_value() for _ in range(IC)] for _ in range(OC)]
-
-    # Pack the 2D matrix into a single integer for the Verilog Parameter
-    packed_weights = 0
-    bit_shift = 0
-    mask = (1 << WW) - 1
-
-    # Iterate from LSB to MSB: cols -> rows -> InChannels -> OutChannels
-    for oc in range(OC):
-        for ic in range(IC):
-            w = weights2[oc][ic]
-
-            w_bits = w if w >= 0 else (1 << WW) + w
-            w_bits = w_bits & mask # Ensure it fits within WW bits
-            
-            # Shift and combine into the main bit vector
-            packed_weights |= (w_bits << bit_shift)
-            bit_shift += WW
-
-    return packed_weights
-
-def gen_biases(BW: int, OC: int, seed: int | None = None):
-    rng = random.Random(seed)
-
-    max_val = (1 << (BW - 1)) - 1
-    min_val = -(1 << (BW - 1))
-    rand_bias_value = lambda: rng.randint(min_val, max_val)
-
-    # Generate the 2D matrix
-    biases1 = [rand_bias_value()  for _ in range(OC)]
-
-    # Pack the 2D matrix into a single integer for the Verilog Parameter
-    packed_biases = 0
-    bit_shift = 0
-    mask = (1 << BW) - 1
-
-    # Iterate from LSB to MSB: cols -> rows -> InChannels -> OutChannels
-    for oc in range(OC):
-        w = biases1[oc]
-
-        w_bits = w if w >= 0 else (1 << BW) + w
-        w_bits = w_bits & mask # Ensure it fits within BW bits
-        
-        # Shift and combine into the main bit vector
-        packed_biases |= (w_bits << bit_shift)
-        bit_shift += BW
-
-    return packed_biases
 
 def unpack_weights(packed_val: int, WW: int, OC: int, IC: int):
     """Reconstructs the 4D weights matrix from the Verilog parameter integer."""
@@ -152,18 +93,6 @@ def unpack_biases(packed_val: int, BW: int, OC: int):
         
     return biases1
 
-def pack_data_i(samples, width):
-    """
-    samples: list[int] length = InChannels
-    width: InBits
-    Returns packed int: sum(samples[ic] << (ic*width))
-    """
-    mask = (1 << width) - 1
-    out = 0
-    for ic, v in enumerate(samples):
-        out |= (int(v) & mask) << (ic * width)
-    return out
-
 def linear_reference(weights_2d, biases_1d, InChannels, OutChannels):
     # One output channel instantiates a single neuron
     linear = nn.Linear(in_features=InChannels, out_features=OutChannels, bias=True)
@@ -177,17 +106,6 @@ def linear_reference(weights_2d, biases_1d, InChannels, OutChannels):
     linear.bias.data   = torch.tensor(biases_1d, dtype=torch.float32)
 
     return linear
-
-def unpack_data_i(packed, width_in, IC):
-    mask = (1 << width_in) - 1
-    
-    # 1-bit data should stay unsigned (0 or 1) so the bipolar mapper works!
-    if width_in == 1:
-        return [ (packed >> (ic * width_in)) & mask for ic in range(IC) ]
-        
-    # Multi-bit data must be sign-extended!
-    else:
-        return [ sign_extend((packed >> (ic * width_in)) & mask, width_in) for ic in range(IC) ]
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
@@ -257,7 +175,7 @@ def test_width(test_name, simulator, InBits, WeightBits, InChannels, OutBits, Ou
 @pytest.mark.parametrize(
     "InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases",
     [
-        (1, 2,  1, output_width(1, 2, 1),    1, gen_weights(2,  1,  1, seed=1234), 2, gen_biases(2, 1)),
+        (1, 2,  2, output_width(1, 2, 1),    1, gen_weights(2,  1,  1, seed=1234), 2, gen_biases(2, 1)),
         (2, 3,  2, output_width(2, 3, 2),    2, gen_weights(3,  2,  2, seed=1234), 3, gen_biases(3, 2)),
         (4, 5,  4, output_width(4, 5, 4),    4, gen_weights(5,  4,  4, seed=1234), 5, gen_biases(5, 4)),
         (8, 8, 32, output_width(8, 8, 32),  32, gen_weights(8, 32, 32, seed=1234), 8, gen_biases(8, 32)),
@@ -368,37 +286,41 @@ class LinearLayerModel():
         self._b = torch.tensor(biases, dtype=torch.int64)    # [OC]
 
     def consume(self):
-        """Called on each INPUT handshake.
-        Returns:
-          - None if this input position should NOT produce an output
-          - int expected value if it SHOULD produce an output
-        """
         assert_resolvable(self._data_i)
-        packed_data_i = []
         packed = int(self._data_i.value.integer)
-        packed_data_i = unpack_data_i(packed, int(self._dut.InBits.value), self._InChannels)
+        
+        # Use your now-unified and safe unpack_terms
+        raw_inputs = unpack_terms(packed, self._InBits, self._InChannels)
 
-        # load data_i into buffer for all channels
-        for ic, inp in enumerate(packed_data_i):
-            self._buf[ic] = inp
-        self._enqs += 1
+        # Handle the BNN {-1, 1} vs Standard Fixed-point drift
+        if self._InBits == 1:
+            # Mirror the RTL gen_binary: 1 -> +1, 0 -> -1
+            input_vals = [1 if x == 1 else -1 for x in raw_inputs]
+            # For the PyTorch reference, we must match this bipolar mapping
+            data_i_ref = torch.tensor(input_vals, dtype=torch.int64)
+        else:
+            input_vals = raw_inputs
+            data_i_ref = torch.tensor(raw_inputs, dtype=torch.int64)
 
-        # compute expected this cycle, while _buf matches this accepted input position
-        expected = [0 for _ in range(self._OutChannels)]
+        # compute expected (Reference Python Model)
+        expected = []
         for oc in range(self._OutChannels):
-            acc = self.b[oc]
+            acc = int(self.b[oc])
             for ic in range(self._InChannels):
-                acc += self.w[oc][ic] * self._buf[ic]
-            expected[oc] = acc
+                acc += int(self.w[oc][ic]) * input_vals[ic]
+            expected.append(acc)
 
-        data_i_ref = torch.tensor(packed_data_i, dtype=torch.int64)
+        # compute expected (PyTorch Reference)
         data_o_ref = (self._W @ data_i_ref) + self._b
+        
+        # Wrapping logic to match RTL overflow
         mask = (1 << self._OutBits) - 1
-
         exp_wrapped = [sign_extend(int(v) & mask, self._OutBits) for v in expected]
-        ref_wrapped = [sign_extend(int(data_o_ref[oc].item()) & mask, self._OutBits) for oc in range(self._OutChannels)]
-        # Check that Pytorch is equal to our reference python model
-        assert exp_wrapped == ref_wrapped, f"Expected {exp_wrapped}, got {ref_wrapped}"
+        ref_wrapped = [sign_extend(int(v.item()) & mask, self._OutBits) for v in data_o_ref]
+        
+        # This assertion now guards against model drift!
+        assert exp_wrapped == ref_wrapped, f"Model Drift! Python: {exp_wrapped}, Torch: {ref_wrapped}"
+        
         return tuple(expected)
 
     def produce(self, expected):
@@ -419,16 +341,6 @@ class LinearLayerModel():
             )
 
         self._deqs += 1
-
-class CountingDataGenerator():
-    def __init__(self, dut):
-        self._dut = dut
-        self._cur = 0
-
-    def generate(self):
-        value = self._cur
-        self._cur += 1
-        return value
     
 class RandomDataGenerator:
     def __init__(self, dut):
@@ -436,39 +348,7 @@ class RandomDataGenerator:
         self._InChannels = int(dut.InChannels.value)
 
     def generate(self):
-        if self._width_p == 1:
-            din = [1 for _ in range(self._InChannels)] # Test all ones
-            din_math = [1.0 if x == 1 else -1.0 for x in din]
-        else:
-            min_val = -(1 << (self._width_p - 1))
-            max_val =  (1 << (self._width_p - 1)) - 1
-            din = [random.randint(min_val, max_val) for _ in range(self._InChannels)]
-
-            din_math = din
-        return din_math
-
-class CountingGenerator():
-    def __init__(self, dut, r):
-        self._rate = int(1/r)
-        self._init = 0
-
-    def generate(self):
-        if(self._rate == 0):
-            return False
-        else:
-            retval = (self._init == 1)
-            self._init = (self._init + 1) % self._rate
-            return retval
-
-class RateGenerator():
-    def __init__(self, dut, r):
-        self._rate = r
-
-    def generate(self):
-        if(self._rate == 0):
-            return False
-        else:
-            return (random.randint(1,int(1/self._rate)) == 1)
+        return gen_input_channels(self._width_p, self._InChannels)
 
 class OutputModel():
     def __init__(self, dut, g, l):
@@ -609,7 +489,7 @@ class InputModel():
             valid_i.value = int(produce)
 
             # Drive current sample (hold stable until handshake)
-            data_i.value = pack_data_i(din, w)
+            data_i.value = pack_terms(din, w)
 
             # Wait for handshake if producing, otherwise just advance a cycle
             success = False

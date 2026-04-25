@@ -1,15 +1,15 @@
 # test_framer.py
-from   decimal import Decimal
 from   pathlib import Path
 import pytest
 import queue
 
 from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
-from util.utilities import ReadyValidInterface, ModelRunner
+from util.components import ReadyValidInterface, ModelRunner, RateGenerator
+from util.gen_inputs import gen_random_unsigned
 tbpath = Path(__file__).parent
 
 import cocotb
-from   cocotb.triggers import Timer, RisingEdge, FallingEdge, with_timeout
+from   cocotb.triggers import Decimal, Timer, RisingEdge, FallingEdge, with_timeout
 from   cocotb.result import SimTimeoutError
    
 import random
@@ -145,18 +145,7 @@ class RandomDataGenerator():
         self._width_p = dut.UnpackedWidth.value
 
     def generate(self):
-        x_i = random.randint(0, (1 << self._width_p) - 1)
-        return (x_i)
-
-class RateGenerator():
-    def __init__(self, dut, r):
-        self._rate = r
-
-    def generate(self):
-        if(self._rate == 0):
-            return False
-        else:
-            return (random.randint(1,int(1/self._rate)) == 1)
+        return gen_random_unsigned(self._width_p, rng=random)
 
 class OutputModel():
     def __init__(self, dut, g, l):

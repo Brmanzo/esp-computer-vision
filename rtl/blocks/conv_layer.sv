@@ -45,7 +45,7 @@ module conv_layer #(
     input int unsigned kernel_area, input_bits, weight_bits, in_channels;
     longint unsigned max_input, max_weight, worst_case_sum;
     begin
-      max_input      = (64'd1 << input_bits) - 1;
+      max_input      = (64'd1 << (input_bits - 1));
       max_weight     = (64'd1 << (weight_bits - 1)) - 1;
       worst_case_sum = longint'(kernel_area) * max_input * max_weight * longint'(in_channels);
 
@@ -142,7 +142,7 @@ module conv_layer #(
   logic signed [InChannels-1:0][KernelWidth-1:1][InBits-1:0] row_buffer_taps;
   generate
     for (genvar ch = 0; ch < InChannels; ch++) begin : gen_data_input
-      assign row_buffers[ch][0] = data_i[ch]; // Row buffer 0 is current data input
+      assign row_buffers[ch][0] = $signed(data_i[ch]); // Row buffer 0 is current data input
       assign row_buffers[ch][KernelWidth-1:1] = row_buffer_taps[ch];
     end
   endgenerate

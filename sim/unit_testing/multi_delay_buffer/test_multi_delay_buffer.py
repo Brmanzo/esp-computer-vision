@@ -3,8 +3,9 @@ from   pathlib import Path
 import pytest
 
 from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
-from util.utilities import ReadyValidInterface, ModelRunner
-from models import MultiDelayBufferModel
+from util.components import ReadyValidInterface, ModelRunner, RateGenerator
+from util.gen_inputs import gen_input_channels
+from functional_models.models import MultiDelayBufferModel
 tbpath = Path(__file__).parent
 
 import cocotb
@@ -64,35 +65,19 @@ def test_style(simulator, BufferWidth, Delay, BufferRows, InputChannels):
 class RandomDataGenerator():
     def __init__(self, dut):
         self._dut = dut
-        self._data = [0] * int(self._dut.InputChannels.value)
+        self._bw = int(dut.BufferWidth.value)
+        self._ic = int(dut.InputChannels.value)
         self._first_high = False
 
     def generate(self):
-        bw = int(self._dut.BufferWidth.value)
+        # 1. Handle the "all-ones" edge case logic
+        if not self._first_high:
+            self._first_high = True
+            # Hardware -1 (all ones) is the most common boundary failure
+            return [-1] * self._ic 
         
-        # Calculate signed bounds
-        min_val = -(1 << (bw - 1))
-        max_val = (1 << (bw - 1)) - 1
-
-        for ch in range(int(self._dut.InputChannels.value)):
-            if not self._first_high:
-                # Test the all-ones case (which is -1 in two's complement)
-                self._data[ch] = -1 
-                self._first_high = True
-            else:
-                self._data[ch] = random.randint(min_val, max_val)
-                
-        return self._data
-
-class RateGenerator():
-    def __init__(self, dut, r):
-        self._rate = r
-
-    def generate(self):
-        if(self._rate == 0):
-            return False
-        else:
-            return (random.randint(1,int(1/self._rate)) == 1)
+        # 2. Otherwise, use the atomic generator function
+        return gen_input_channels(self._bw, self._ic)
 
 class OutputModel():
     def __init__(self, dut, g, l):

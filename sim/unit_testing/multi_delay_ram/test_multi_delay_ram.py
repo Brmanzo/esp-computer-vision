@@ -4,7 +4,9 @@ import pytest
 import queue
 
 from util.utilities import runner, lint, clock_start_sequence, reset_sequence, delay_cycles
-from models.models import MultiDelayBufferModel
+from functional_models.models import MultiDelayBufferModel
+from util.gen_inputs import gen_input_channels
+from util.components import RateGenerator
 tbpath = Path(__file__).parent
 
 import cocotb
@@ -23,18 +25,6 @@ tests = ['reset_test'
         ,'in_fuzz_test'
         ,'out_fuzz_test'
         ,'full_bw_test']
-
-def safe_int_from_value(val, *, x_as=0):
-    """
-    Convert a cocotb BinaryValue/LogicArray to int even if it contains X/Z.
-    x_as=0 -> treat X/Z as 0
-    x_as=1 -> treat X/Z as 1
-    """
-    s = val.binstr.lower()  # e.g. '00x1'
-    if 'x' in s or 'z' in s:
-        repl = '1' if x_as else '0'
-        s = s.replace('x', repl).replace('z', repl)
-    return int(s, 2)
 
 def channels_per_ram(InBits: int, LineWidthPx: int, KernelWidth: int):
     if (LineWidthPx - 1) <= 256: TargetRamBits = 16
@@ -164,41 +154,23 @@ class MultiDelayRamModel():
 
         return full_out if any_valid else None
     
-class RandomDataGenerator():
-    def __init__(self, dut):
+class RandomDataGenerator:
+    def __init__(self, dut, seed=None):
         self._dut = dut
-        self._data = [0] * int(self._dut.InChannels.value)
+        # Using a seeded RNG instance for better CI reproducibility
+        self._in_bits = int(dut.InBits.value)
+        self._ic = int(dut.InChannels.value)
         self._first_high = False
 
     def generate(self):
-        w = int(self._dut.InBits.value)
-
-        # 1. Calculate the true signed bounds
-        # Example for 8 bits: min_val = -128, max_val = 127
-        min_val = -(1 << (w - 1))
-        max_val =  (1 << (w - 1)) - 1
-
-        for ch in range(int(self._dut.InChannels.value)):
-            if not self._first_high:
-                # 2. In two's complement, all-ones is simply -1
-                self._data[ch] = -1 
-            else:
-                # 3. Generate a true negative or positive Python integer
-                self._data[ch] = random.randint(min_val, max_val)
-
-        self._first_high = True 
-
-        return self._data
-
-class RateGenerator():
-    def __init__(self, dut, r):
-        self._rate = r
-
-    def generate(self):
-        if(self._rate == 0):
-            return False
-        else:
-            return (random.randint(1,int(1/self._rate)) == 1)
+        # 1. Handle the "all-ones" (-1) edge case for the first cycle
+        if not self._first_high:
+            self._first_high = True
+            return [-1] * self._ic
+        
+        # 2. Use the atomic generalization for all subsequent cycles
+        # We pass self._rng to ensure the seed is respected
+        return gen_input_channels(self._in_bits, self._ic)
 
 class OutputModel():
     def __init__(self, dut, model, l):

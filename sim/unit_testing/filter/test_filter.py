@@ -2,8 +2,10 @@
 from   pathlib import Path
 import pytest
 
-from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, sign_extend
-from util.utilities import ModelRunner
+from util.gen_inputs import gen_random_signed
+from util.bitwise    import sign_extend
+from util.utilities  import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
+from util.components import ModelRunner, RateGenerator
 tbpath = Path(__file__).parent
 
 import cocotb
@@ -14,18 +16,6 @@ import random
 random.seed(50)
 
 timescale = "1ps/1ps"
-
-def pack_data_i(samples, width):
-    """
-    samples: list[int] length = InChannels
-    width: InBits
-    Returns packed int: sum(samples[ic] << (ic*width))
-    """
-    mask = (1 << width) - 1
-    out = 0
-    for ic, v in enumerate(samples):
-        out |= (int(v) & mask) << (ic * width)
-    return out
 
 def pack_inputs(values, bits, in_channels, term_count):
     packed = 0
@@ -50,7 +40,7 @@ def unpack_unsigned_inputs(packed, in_bits, in_channels, term_count):
     for ch in range(in_channels):
         for i in range(term_count):
             raw = (packed >> ((ch * term_count + i) * in_bits)) & mask
-            terms[ch].append(raw) # NO sign extension!
+            terms[ch].append(raw)
     return terms    
 
 def trunc_signed(value: int, width: int) -> int:
@@ -331,16 +321,6 @@ class InputModel():
             
         valid_i.value = 0
         return self._nin
-
-class RateGenerator():
-    def __init__(self, dut, r):
-        self._rate = r
-
-    def generate(self):
-        if(self._rate == 0):
-            return False
-        else:
-            return (random.randint(1,int(1/self._rate)) == 1)
         
 class RandomDataGenerator:
     def __init__(self, dut):
@@ -350,20 +330,9 @@ class RandomDataGenerator:
         self._term_count  = int(dut.KernelWidth.value) * int(dut.KernelWidth.value)
 
     def generate(self):
-        # Generates a clean list of ints, one for each channel
-        if self._in_bits == 1:
-            window_lo, window_hi = 0, 1
-        # If multi-bit inputs, generate full range of signed values
-        else:
-            window_lo = -(1 << (self._in_bits - 1))
-            window_hi =  (1 << (self._in_bits - 1)) - 1
 
-        # Weights are signed two's complement (Min to Max)
-        weight_hi =  (1 << (self._weight_bits - 1)) - 1
-        weight_lo = -(1 << (self._weight_bits - 1))
-
-        windows = [[random.randint(window_lo, window_hi) for _ in range(self._term_count)] for _ in range(self._InChannels)]
-        weights = [[random.randint(weight_lo, weight_hi) for _ in range(self._term_count)] for _ in range(self._InChannels)]
+        windows = [[gen_random_signed(self._in_bits, random)     for _ in range(self._term_count)] for _ in range(self._InChannels)]
+        weights = [[gen_random_signed(self._weight_bits, random) for _ in range(self._term_count)] for _ in range(self._InChannels)]
 
         return windows, weights
     

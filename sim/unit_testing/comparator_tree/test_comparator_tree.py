@@ -4,7 +4,9 @@ import math
 import pytest
 from   pathlib import Path
 
-from util.utilities import runner, lint, assert_resolvable, sign_extend
+from util.utilities import runner, lint, assert_resolvable
+from util.bitwise   import sign_extend, pack_terms, unpack_terms
+from util.gen_inputs import gen_input_channels
 tbpath = Path(__file__).parent
 
 import cocotb
@@ -18,32 +20,11 @@ timescale = "1ps/1ps"
 tests = ['single_test'
         ,'full_bw_test']
 
-def pack_classes(classes, in_bits):
-    packed = 0
-    mask = (1 << in_bits) - 1
-    for i, x in enumerate(classes):
-        packed |= (x & mask) << (i * in_bits)
-    return packed
-
-def unpack_classes(packed, in_bits, class_count):
-    classes = []
-    mask = (1 << in_bits) - 1
-    for i in range(class_count):
-        raw = (packed >> (i * in_bits)) & mask
-        classes.append(sign_extend(raw, in_bits))
-    return classes
-
-def acc_width(class_count, in_width):
-    return math.ceil(math.log2(class_count)) + in_width
-
-def trunc_signed(value: int, width: int) -> int:
-    return sign_extend(value, width)
-
 # Test that binary tree can accomodate 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize("InBits, ClassCount",
-    [( 2,  2),
+    [( 2,  2), # TODO: Test InBits=1
      ( 2,  3),
      ( 4,  5),
      ( 8,  8),
@@ -91,8 +72,8 @@ class ComparatorTreeModel():
 
     def consume(self):
         packed = int(self._classes_i.value.integer)
-        classes = unpack_classes(packed, self._InBits, self._ClassCount)
-        return (trunc_signed(max(classes), self._OutBits), classes.index(max(classes)))
+        classes = unpack_terms(packed, self._InBits, self._ClassCount)
+        return (sign_extend(max(classes), self._OutBits), classes.index(max(classes)))
 
     def produce(self, expected):
         assert_resolvable(self._max_o)
@@ -102,7 +83,7 @@ class ComparatorTreeModel():
         got_id = int(self._id_o.value.integer)
         exp_id = int(expected[1])
 
-        print(f"Expected: {exp_max}, Got: {got_max}, Classes: {unpack_classes(int(self._classes_i.value.integer), self._InBits, self._ClassCount)}")
+        print(f"Expected: {exp_max}, Got: {got_max}, Classes: {unpack_terms(int(self._classes_i.value.integer), self._InBits, self._ClassCount)}")
         print(f"Expected ID: {exp_id}, Got ID: {int(self._id_o.value.integer)}")
         assert got_max == exp_max, (
             f"Mismatch. Exp_maxected {exp_max}, got {got_max}"
@@ -113,7 +94,7 @@ class ComparatorTreeModel():
     
 async def comb_step(dut, model, classes):
     in_bits = int(dut.InBits.value)
-    dut.classes_i.value = pack_classes(classes, in_bits)
+    dut.classes_i.value = pack_terms(classes, in_bits)
 
     await Timer(Decimal(1), units="step")
 
@@ -135,10 +116,6 @@ async def full_bw_test(dut):
     in_bits = int(dut.InBits.value)
     class_count = int(dut.ClassCount.value)
     model = ComparatorTreeModel(dut)
-
-    lo = -(1 << (in_bits - 1))
-    hi = (1 << (in_bits - 1)) - 1
-
+    
     for _ in range(10):
-        classes = [random.randint(lo, hi) for _ in range(class_count)]
-        await comb_step(dut, model, classes)
+        await comb_step(dut, model, gen_input_channels(in_bits, class_count))

@@ -22,7 +22,7 @@ from cocotb_test.simulator import run
 from cocotb.clock import Clock
 from cocotb.utils import get_sim_time
 from cocotb.triggers import Decimal, Timer, ClockCycles, RisingEdge, FallingEdge, with_timeout
-from cocotb.types import LogicArray
+from cocotb.types import Logic
 from cocotb.utils import get_sim_time
 
 def runner(simulator, timescale, tbpath, params, defs=[], testname=None, pymodule=None, jsonpath=None, jsonname="filelist.json", root=None, work_dir=None, sim_build=None, includes=None, toplevel_override=None, extra_sources=None):
@@ -52,7 +52,8 @@ def runner(simulator, timescale, tbpath, params, defs=[], testname=None, pymodul
     if(root is None):
         root = git.Repo(search_parent_directories=True).working_tree_dir
 
-    assert (os.path.exists(root)), "root directory path must exist"
+    assert root is not None, "root directory path must exist"
+    assert os.path.exists(root), "root directory path must exist"
 
     sources = get_sources(root, tbpath)
     
@@ -120,7 +121,7 @@ def lint(simulator, timescale, tbpath, params, defs=[], compile_args=[], pymodul
     if(root is None):
         root = git.Repo(search_parent_directories=True).working_tree_dir
 
-    assert (os.path.exists(root)), "root directory path must exist"
+    assert root is not None and os.path.exists(root), "root directory path must exist"
     sources = get_sources(root, tbpath)
 
     # if pymodule is none, assume that the python module name is test+<name of the top module>.
@@ -211,15 +212,15 @@ def get_param_string(parameters):
 def assert_resolvable(s):
     assert s.value.is_resolvable, f"Unresolvable value in {s._path} (x or z in some or all bits) at Time {get_sim_time(units='ns')}ns."
 
-async def clock_start_sequence(clk_i, period=1, unit='ns'):
+async def clock_start_sequence(clk_i, period=1, unit="ns"):
     # Set the clock to Z for 10 ns. This helps separate tests.
-    clk_i.value = LogicArray(['z'])
-    await Timer(10, 'ns')
+    clk_i.value = Logic("Z")
+    await Timer(Decimal(10.0), units="ns")
 
     # Unrealistically fast clock, but nice for mental math (1 GHz)
     c = Clock(clk_i, period, unit)
 
-    # Start the clock (soon). Start it low to avoid issues on the first RisingEdge
+    # Start the clock low to avoid issues on the first RisingEdge
     cocotb.start_soon(c.start(start_high=False))
 
 async def reset_sequence(clk_i, reset_i, cycles, FinishClkFalling=True, active_level=True):
@@ -250,127 +251,3 @@ async def delay_cycles(dut, ncyc, polarity):
 
 def assert_passerror(s):
     assert s.value.is_resolvable, f"Testbench pass/fail output ({s._path}) is set to x or z, but must be explicitly set to 0 at start of simulation.."
-
-class ReadyValidInterface():
-    def __init__(self, clk, reset, valid, ready):
-        self._clk_i = clk
-        self._rst_i = reset
-        self._ready = ready
-        self._valid = valid
-
-    def is_in_reset(self):
-        if((not self._rst_i.value.is_resolvable) or self._rst_i.value  == 1):
-            return True
-        
-    def assert_resolvable(self):
-        if(not self.is_in_reset()):
-            assert_resolvable(self._valid)
-            assert_resolvable(self._ready)
-
-    def is_handshake(self):
-        return (int(self._valid.value) == 1) and (int(self._ready.value) == 1)
-
-    async def _handshake(self):
-        while True:
-            await RisingEdge(self._clk_i)
-            if (not self.is_in_reset()):
-                self.assert_resolvable()
-                if(self.is_handshake()):
-                    break
-
-    async def handshake(self, ns):
-        """Wait for a handshake, raising an exception if it hasn't
-        happened after ns nanoseconds of simulation time"""
-
-        # If ns is none, wait indefinitely
-        if(ns):
-            await with_timeout(self._handshake(), ns, 'ns')
-        else:
-            await self._handshake()
-
-class ModelRunner:
-    def __init__(self, dut, model):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-
-        self._rv_in = ReadyValidInterface(
-            self._clk_i, self._rst_i,
-            dut.valid_i, dut.ready_o
-        )
-
-        self._rv_out = ReadyValidInterface(
-            self._clk_i, self._rst_i,
-            dut.valid_o, dut.ready_i
-        )
-
-        self._model = model
-        self._events = queue.SimpleQueue()
-
-        self._coro_run_input = None
-        self._coro_run_output = None
-        
-        # NEW: Flag to track when the pipeline is officially primed
-        self._seen_expected = False
-
-    def start(self):
-        if self._coro_run_input is not None or self._coro_run_output is not None:
-            raise RuntimeError("Model already started")
-
-        self._coro_run_input = cocotb.start_soon(self._run_input())
-        self._coro_run_output = cocotb.start_soon(self._run_output())
-
-    async def _run_input(self):
-        while True:
-            await self._rv_in.handshake(None)
-
-            expected = self._model.consume()
-
-            if expected is not None:
-                if isinstance(expected, list):
-                    expected = tuple(expected)
-                    for item in expected:
-                        self._events.put(item)
-                else:
-                    self._events.put(expected)
-
-    async def _run_output(self):
-        from cocotb.triggers import Timer
-        from decimal import Decimal
-        
-        while True:
-            await self._rv_out.handshake(None)
-            
-            # 1. Resolve same-cycle Cocotb scheduling races
-            if self._events.qsize() == 0:
-                await Timer(Decimal(0), units="ns")
-                
-            # 2. NEW: Ignore warmup garbage from deep pipelines
-            if self._events.qsize() > 0:
-                self._seen_expected = True # Lock in strict checking!
-            elif not self._seen_expected:
-                continue # Ignore valid outputs until the model is primed
-
-            assert self._events.qsize() > 0, (
-                "Error! Module produced output without expected input"
-            )
-
-            expected = self._events.get()
-            self._model.produce(expected)
-
-    def stop(self):
-        if self._coro_run_input is None and self._coro_run_output is None:
-            raise RuntimeError("Model never started")
-
-        if self._coro_run_input is not None:
-            self._coro_run_input.kill()
-            self._coro_run_input = None
-
-        if self._coro_run_output is not None:
-            self._coro_run_output.kill()
-            self._coro_run_output = None
-
-def sign_extend(value: int, width: int) -> int:
-    mask = (1 << width) - 1
-    value &= mask
-    sign_bit = 1 << (width - 1)
-    return (value ^ sign_bit) - sign_bit

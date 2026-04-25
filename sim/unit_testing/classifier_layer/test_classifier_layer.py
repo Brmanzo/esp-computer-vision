@@ -6,8 +6,10 @@ import pytest
 import shutil
 from   typing import List
 
-from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, sign_extend
-from util.utilities import ModelRunner
+from util.utilities  import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
+from util.components import ModelRunner, RateGenerator
+from util.bitwise    import unpack_terms, pack_terms
+from util.gen_inputs import gen_weights, gen_biases, gen_input_channels
 tbpath = Path(__file__).parent
 
 import cocotb
@@ -19,91 +21,6 @@ import random
 random.seed(42)
 
 timescale = "1ps/1ps"
-
-def pack(inputs, term_bits):
-    packed = 0
-    mask = (1 << term_bits) - 1
-    for i, x in enumerate(inputs):
-        packed |= (x & mask) << (i * term_bits)
-    return packed
-
-def unpack(packed, term_bits, input_count):
-    unpacked = []
-    mask = (1 << term_bits) - 1
-    for i in range(input_count):
-        raw = (packed >> (i * term_bits)) & mask
-        
-        # FIX: Skip sign extension for 1-bit bipolar flags
-        if term_bits == 1:
-            unpacked.append(raw)
-        else:
-            unpacked.append(sign_extend(raw, term_bits))
-            
-    return unpacked
-
-def trunc_signed(value: int, width: int) -> int:
-    return sign_extend(value, width)
-
-def gen_weights(IC: int, OC: int, WW: int, seed: int | None = None):
-    rng = random.Random(seed)
-    if WW < 2:
-        raise ValueError("Weight width must be at least 2 to include negative values in test kernels.")
-    elif WW == 2:
-        rand_weight_value = lambda: rng.choice([-1, 0, 1])
-    else:
-        max_val = (1 << (WW - 1)) - 1
-        min_val = -(1 << (WW - 1))
-        rand_weight_value = lambda: rng.randint(min_val, max_val)
-
-    # Generate the 2D matrix
-    weights2 = [[rand_weight_value() for _ in range(IC)] for _ in range(OC)]
-
-    # Pack the 2D matrix into a single integer for the Verilog Parameter
-    packed_weights = 0
-    bit_shift = 0
-    mask = (1 << WW) - 1
-
-    # Iterate from LSB to MSB: cols -> rows -> InChannels -> OutChannels
-    for oc in range(OC):
-        for ic in range(IC):
-            w = weights2[oc][ic]
-
-            w_bits = w if w >= 0 else (1 << WW) + w
-            w_bits = w_bits & mask # Ensure it fits within WW bits
-            
-            # Shift and combine into the main bit vector
-            packed_weights |= (w_bits << bit_shift)
-            bit_shift += WW
-
-    return packed_weights
-
-def gen_biases(BW: int, OC: int, seed: int | None = None):
-    rng = random.Random(seed)
-
-    max_val = (1 << (BW - 1)) - 1
-    min_val = -(1 << (BW - 1))
-    rand_bias_value = lambda: rng.randint(min_val, max_val)
-
-    # Generate the 2D matrix
-    biases1 = [rand_bias_value()  for _ in range(OC)]
-
-    # Pack the 2D matrix into a single integer for the Verilog Parameter
-    packed_biases = 0
-    bit_shift = 0
-    mask = (1 << BW) - 1
-
-    # Iterate from LSB to MSB: cols -> rows -> InChannels -> OutChannels
-    for oc in range(OC):
-        w = biases1[oc]
-
-        w_bits = w if w >= 0 else (1 << BW) + w
-        w_bits = w_bits & mask # Ensure it fits within BW bits
-        
-        # Shift and combine into the main bit vector
-        packed_biases |= (w_bits << bit_shift)
-        bit_shift += BW
-
-    return packed_biases
 
 def unpack_weights(packed_val: int, WW: int, OC: int, IC: int):
     """Reconstructs the 4D weights matrix from the Verilog parameter integer."""
@@ -155,18 +72,6 @@ def unpack_biases(packed_val: int, BW: int, OC: int):
         bit_shift += BW
         
     return biases1
-
-def pack_data_i(samples, width):
-    """
-    samples: list[int] length = InChannels
-    width: InBits
-    Returns packed int: sum(samples[ic] << (ic*width))
-    """
-    mask = (1 << width) - 1
-    out = 0
-    for ic, v in enumerate(samples):
-        out |= (int(v) & mask) << (ic * width)
-    return out
 
 tests = ['reset_test'
         ,'single_test'
@@ -297,7 +202,7 @@ class ClassifierLayerModel:
         packed_in = int(self._data_i.value.integer)
         
         # 1. Unpack incoming feature map (InChannels wide)
-        x = unpack(packed_in, self._term_bits, self._in_channels)
+        x = unpack_terms(packed_in, self._term_bits, self._in_channels)
 
         # 2. Global Max Pooling (across spatial TermCount)
         if self._term_counter == 0 or self._current_max is None:
@@ -355,25 +260,7 @@ class RandomDataGenerator:
         self._InChannels = int(dut.InChannels.value)
 
     def generate(self):
-        # 1. 1-bit inputs are strictly 0 and 1
-        if self._width_p == 1:
-            min_val, max_val = 0, 1
-        # 2. Multi-bit inputs are true signed bounds (e.g. -128 to 127)
-        else:
-            min_val = -(1 << (self._width_p - 1))
-            max_val =  (1 << (self._width_p - 1)) - 1
-
-        return [random.randint(min_val, max_val) for _ in range(self._InChannels)]
-
-class RateGenerator():
-    def __init__(self, dut, r):
-        self._rate = r
-
-    def generate(self):
-        if(self._rate == 0):
-            return False
-        else:
-            return (random.randint(1,int(1/self._rate)) == 1)
+        return gen_input_channels(self._width_p, self._InChannels)
 
 class OutputModel():
     def __init__(self, dut, g, l):
@@ -487,7 +374,7 @@ class InputModel():
         valid_i = self._dut.valid_i
         data_i = self._dut.data_i
         
-        # 1. FIX: Grab the bit width from the DUT (assuming TermBits for classifier)
+        # Grab the bit width from the DUT (assuming TermBits for classifier)
         w = int(self._dut.TermBits.value)
 
         await delay_cycles(self._dut, 1, False)
@@ -497,7 +384,7 @@ class InputModel():
 
         await delay_cycles(self._dut, 2, False)
 
-        # 2. FIX: Generate the very first data sample before entering the loop
+        # Generate the very first data sample before entering the loop
         din = self._data.generate()
 
         # Precondition: Falling Edge of Clock
@@ -505,10 +392,10 @@ class InputModel():
             produce = bool(self._rate.generate())
             valid_i.value = int(produce)
 
-            # 1. Pack the list of integers into a single big integer
-            packed_din = pack_data_i(din, w)
+            # Pack the list of integers into a single big integer
+            packed_din = pack_terms(din, w)
 
-            # 2. Assign the packed integer to the pin!
+            # Assign the packed integer to the pin!
             data_i.value = packed_din if produce else 0
 
             # Wait for handshake if producing, otherwise just advance a cycle

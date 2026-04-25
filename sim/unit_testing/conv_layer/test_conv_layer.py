@@ -7,8 +7,10 @@ import torch
 import torch.nn.functional as F
 from   typing import List, Optional
 
-from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, sign_extend
-from util.utilities import ReadyValidInterface, ModelRunner
+from util.utilities  import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
+from util.bitwise    import sign_extend, pack_terms, unpack_terms
+from util.gen_inputs import gen_kernels, gen_input_channels
+from util.components import ReadyValidInterface, ModelRunner, RateGenerator
 
 tbpath = Path(__file__).parent
 
@@ -30,16 +32,16 @@ tests = ['reset_test'
         ,'full_bw_test']
 
 def output_width(width_in: int, weight_width: int, kernel_width: int=3, in_channels: int=1) -> str:
-    '''Calculates proper output width for given input width amount of accumulations.'''
-    kernel_area = kernel_width * kernel_width
-    terms = kernel_area * in_channels
+    terms = kernel_width * kernel_width * in_channels
 
-    max_val    = (1 << width_in) - 1       # Unsigned``
-    max_weight = (1 << (weight_width - 1)) # Signed
+    # For signed inputs, the max magnitude is 2^(width-1)
+    # e.g., for 2 bits, range is -2 to 1. Max magnitude is 2.
+    max_val    = (1 << (width_in - 1)) 
+    max_weight = (1 << (weight_width - 1))
 
     max_sum = terms * max_val * max_weight
     abs_bits = max_sum.bit_length()
-    return str(abs_bits + 1)   # +1 for sign bit
+    return str(abs_bits + 1)
 
 def pack_weights_in(weights_4d, width, kernel_area, IC):
     """
@@ -60,50 +62,6 @@ def pack_weights_in(weights_4d, width, kernel_area, IC):
                 shift = width * (k + kernel_area * (ic + IC * oc))
                 out |= (w & mask) << shift
     return out
-
-def gen_kernels(WW: int, OC: int, IC: int, K: int, seed: int | None = None):
-    rng = random.Random(seed)
-    if WW < 2:
-        raise ValueError("Weight width must be at least 2 to include negative values in test kernels.")
-    elif WW == 2:
-        rand_kernel_value = lambda: rng.choice([-1, 0, 1])
-    else:
-        max_val = (1 << (WW - 1)) - 1
-        min_val = -(1 << (WW - 1))
-        rand_kernel_value = lambda: rng.randint(min_val, max_val)
-
-    # 1. Generate the 4D matrix
-    kernels4 = [
-        [
-            [[rand_kernel_value() for _ in range(K)] for _ in range(K)]
-            for _ in range(IC)
-        ]
-        for _ in range(OC)
-    ]
-
-    # 2. Pack the 4D matrix into a single integer for the Verilog Parameter
-    packed_weights = 0
-    bit_shift = 0
-    mask = (1 << WW) - 1
-
-    # Iterate from LSB to MSB: cols -> rows -> InChannels -> OutChannels
-    for oc in range(OC):
-        for ic in range(IC):
-            for r in range(K):
-                for c in range(K):
-                    w = kernels4[oc][ic][r][c]
-                    
-                    # Convert negative values to two's complement representation
-                    w_bits = w if w >= 0 else (1 << WW) + w
-                    w_bits = w_bits & mask # Ensure it fits within WW bits
-                    
-                    # Shift and combine into the main bit vector
-                    packed_weights |= (w_bits << bit_shift)
-                    bit_shift += WW
-
-    # Return as an integer (cocotb-runner handles integer parameters well)
-    # We no longer need kernels_flat unless you use it elsewhere
-    return packed_weights
 
 def unpack_weights(packed_val: int, WW: int, OC: int, IC: int, K: int):
     """Reconstructs the 4D weights matrix from the Verilog parameter integer."""
@@ -138,18 +96,6 @@ def unpack_weights(packed_val: int, WW: int, OC: int, IC: int, K: int):
         
     return kernels4
 
-def pack_data_i(samples, width):
-    """
-    samples: list[int] length = InChannels
-    width: InBits
-    Returns packed int: sum(samples[ic] << (ic*width))
-    """
-    mask = (1 << width) - 1
-    out = 0
-    for ic, v in enumerate(samples):
-        out |= (int(v) & mask) << (ic * width)
-    return out
-
 def to_torch_input(input_activation):
     # input_activation: [IC][H][W]
     x = torch.tensor(input_activation, dtype=torch.int32)   # (IC,H,W)
@@ -175,16 +121,6 @@ def torch_conv_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1):
         y = (y > 0).to(torch.int32)
 
     return y
-
-def unpack_data_i(packed, width_in, IC):
-    mask = (1 << width_in) - 1
-    
-    # 1-bit data stays unsigned (0 or 1) for the bipolar mapper
-    if width_in == 1:
-        return [ (packed >> (ic * width_in)) & mask for ic in range(IC) ]
-    # Multi-bit data must be sign-extended!
-    else:
-        return [ sign_extend((packed >> (ic * width_in)) & mask, width_in) for ic in range(IC) ]
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
@@ -422,7 +358,6 @@ class ConvLayerModel():
 
     def apply_kernel(self, bufs):
         result = np.zeros(self._OutChannels, dtype=int)
-
         windows = [b[:, -self._kernel_width:].astype(int, copy=False) for b in bufs]
 
         for oc in range(self._OutChannels):
@@ -431,10 +366,12 @@ class ConvLayerModel():
                 win = windows[ic]
 
                 if self._InBits == 1:
-                    # Binary input encoding used by RTL MAC
+                    # BNN Mode: 0 -> -1, 1 -> +1
                     win_enc = np.where(win == 1, 1, -1)
                 else:
-                    win_enc = win
+                    # Multi-bit Mode: Ensure Python treats these as signed
+                    # If 'win' contains raw bits from the DUT, sign-extend them
+                    win_enc = np.vectorize(sign_extend)(win, self._InBits)
 
                 acc += int((self.k[oc, ic] * win_enc).sum())
 
@@ -454,7 +391,7 @@ class ConvLayerModel():
         assert_resolvable(self._data_i)
         packed_data_i = []
         packed = int(self._data_i.value.integer)
-        packed_data_i = unpack_data_i(packed, int(self._dut.InBits.value), self._InChannels)
+        packed_data_i = unpack_terms(packed, int(self._dut.InBits.value), self._InChannels)
 
         # advance windows on EVERY accepted input
         for ic, inp in enumerate(packed_data_i):
@@ -507,16 +444,6 @@ class ConvLayerModel():
             self._r += 1
             if self._r >= self._OH:
                 self._r = 0
-
-class CountingDataGenerator():
-    def __init__(self, dut):
-        self._dut = dut
-        self._cur = 0
-
-    def generate(self):
-        value = self._cur
-        self._cur += 1
-        return value
     
 class RandomDataGenerator:
     def __init__(self, dut):
@@ -524,41 +451,7 @@ class RandomDataGenerator:
         self._InChannels = int(dut.InChannels.value)
 
     def generate(self):
-        # 1. Handle the 1-bit bipolar edge case cleanly
-        if self._width_p == 1:
-            min_val = 0
-            max_val = 1
-        # 2. Calculate true signed bounds for multi-bit inputs
-        else:
-            # Example for 8-bit: min_val = -128, max_val = 127
-            min_val = -(1 << (self._width_p - 1))
-            max_val =  (1 << (self._width_p - 1)) - 1
-
-        # 3. Generate the list of true negative/positive Python integers
-        return [random.randint(min_val, max_val) for _ in range(self._InChannels)]
-
-class CountingGenerator():
-    def __init__(self, dut, r):
-        self._rate = int(1/r)
-        self._init = 0
-
-    def generate(self):
-        if(self._rate == 0):
-            return False
-        else:
-            retval = (self._init == 1)
-            self._init = (self._init + 1) % self._rate
-            return retval
-
-class RateGenerator():
-    def __init__(self, dut, r):
-        self._rate = r
-
-    def generate(self):
-        if(self._rate == 0):
-            return False
-        else:
-            return (random.randint(1,int(1/self._rate)) == 1)
+        return gen_input_channels(self._width_p, self._InChannels)
 
 class OutputModel():
     def __init__(self, dut, g, l):
@@ -708,7 +601,7 @@ class InputModel():
             valid_i.value = int(produce)
 
             # Drive current sample (hold stable until handshake)
-            data_i.value = pack_data_i(din, w)
+            data_i.value = pack_terms(din, w)
 
             # Wait for handshake if producing, otherwise just advance a cycle
             success = False

@@ -3,7 +3,9 @@ from   decimal import Decimal
 from   pathlib import Path
 import pytest
 
-from util.utilities import runner, lint, assert_resolvable, sign_extend
+from util.utilities import runner, lint, assert_resolvable
+from util.bitwise   import sign_extend, pack_terms, unpack_terms
+from util.gen_inputs import gen_input_channels
 tbpath = Path(__file__).parent
 
 import cocotb
@@ -16,32 +18,6 @@ timescale = "1ps/1ps"
 
 tests = ['single_test'
         ,'full_bw_test']
-
-def pack_inputs(input, in_bits):
-    packed = 0
-    mask = (1 << in_bits) - 1
-    for i, x in enumerate(input):
-        packed |= (x & mask) << (i * in_bits)
-    return packed
-
-def unpack_inputs(packed, in_bits, term_count):
-    terms = []
-    mask = (1 << in_bits) - 1
-    for i in range(term_count):
-        raw = (packed >> (i * in_bits)) & mask
-        terms.append(sign_extend(raw, in_bits))
-    return terms
-
-def unpack_unsigned_inputs(packed, in_bits, term_count):
-    terms = []
-    mask = (1 << in_bits) - 1
-    for i in range(term_count):
-        raw = (packed >> (i * in_bits)) & mask
-        terms.append(raw) # NO sign extension!
-    return terms
-
-def trunc_signed(value: int, width: int) -> int:
-    return sign_extend(value, width)
 
 def output_width(in_width: int, weight_width: int, term_count: int) -> str:
     '''Calculates proper output width for mixed signed/unsigned MAC.'''
@@ -103,26 +79,25 @@ class MacModel():
         self._weights = [0] * self._TermCount
         self._window  = [0] * self._TermCount
 
-    def consume(self): # Remove arguments here!
-        # Read the packed integers directly from the DUT pins
+    def consume(self):
         packed_windows = int(self._window_i.value.integer)
         packed_weights = int(self._weights_i.value.integer)
 
-        # Weights are always signed
-        self._weights = unpack_inputs(packed_weights, self._WeightBits, self._TermCount)
+        # Weights are always signed, unpack_terms handles this correctly
+        self._weights = unpack_terms(packed_weights, self._WeightBits, self._TermCount)
         
-        # Apply {-1,1} encoding if single bit input
+        # Windows: Use the same helper! 
+        # If InBits == 1, it returns [0, 1...]. If > 1, it returns signed ints.
+        self._window = unpack_terms(packed_windows, self._InBits, self._TermCount)
+
+        # Apply Bipolar mapping ONLY if 1-bit
         if self._InBits == 1:
-            # Unpack as unsigned (0 or 1) so the bipolar list comprehension works
-            self._window = unpack_unsigned_inputs(packed_windows, self._InBits, self._TermCount)
             window_vals = [1 if x == 1 else -1 for x in self._window]
         else:
-            # Multi-bit windows are SIGNED in hardware, must be signed in Python!
-            self._window = unpack_inputs(packed_windows, self._InBits, self._TermCount)
             window_vals = self._window
             
         addends = [w * x for w, x in zip(self._weights, window_vals)]
-        return trunc_signed(sum(addends), self._OutBits)
+        return sign_extend(sum(addends), self._OutBits)
 
     def produce(self, expected):
         assert_resolvable(self._sum_o)
@@ -137,8 +112,8 @@ class MacModel():
 async def comb_step(dut, model, windows, weights):
     in_bits     = int(dut.InBits.value)
     weight_bits = int(dut.WeightBits.value)
-    dut.window_i.value  = pack_inputs(windows, in_bits)
-    dut.weights_i.value = pack_inputs(weights, weight_bits)
+    dut.window_i.value  = pack_terms(windows, in_bits)
+    dut.weights_i.value = pack_terms(weights, weight_bits)
 
     await Timer(Decimal(1), units="step")
 
@@ -155,7 +130,6 @@ async def single_test(dut):
     weights = [1] * term_count
     await comb_step(dut, model, windows, weights)
 
-
 @cocotb.test
 async def full_bw_test(dut):
     '''Test windows and weights of random signed values.'''
@@ -164,19 +138,7 @@ async def full_bw_test(dut):
     term_count  = int(dut.TermCount.value)
     model       = MacModel(dut)
 
-    # If 1 bit inputs, generate just zeros and ones
-    if in_bits == 1:
-        window_lo, window_hi = 0, 1
-    # If multi-bit inputs, generate full range of signed values
-    else:
-        window_lo = -(1 << (in_bits - 1))
-        window_hi =  (1 << (in_bits - 1)) - 1
-
-    # Weights are signed two's complement (Min to Max)
-    weight_hi =  (1 << (weight_bits - 1)) - 1
-    weight_lo = -(1 << (weight_bits - 1))
-
     for _ in range(10):
-        windows = [random.randint(window_lo, window_hi) for _ in range(term_count)]
-        weights = [random.randint(weight_lo, weight_hi) for _ in range(term_count)]
+        windows = gen_input_channels(in_bits, term_count)
+        weights = gen_input_channels(weight_bits, term_count)
         await comb_step(dut, model, windows, weights)

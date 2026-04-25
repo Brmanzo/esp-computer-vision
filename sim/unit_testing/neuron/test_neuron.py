@@ -11,11 +11,13 @@ import torch
 import torch.nn as nn
 from   typing import List
 
-from util.utilities import runner, lint, assert_resolvable, sign_extend
+from util.utilities import runner, lint, assert_resolvable
+from util.bitwise   import sign_extend, pack_terms, unpack_terms
+from util.gen_inputs import gen_weights, gen_biases, gen_input_channels
 tbpath = Path(__file__).parent
 
 import cocotb
-from cocotb.triggers import Timer
+from   cocotb.triggers import Timer
    
 import random
 random.seed(50)
@@ -36,47 +38,6 @@ def output_width(width_in: int, weight_width: int, in_channels: int=1, bias_widt
     max_sum = terms * max_val * max_weight + max_bias
     abs_bits = max_sum.bit_length()
     return str(abs_bits + 1)   # +1 for sign bit
-
-def gen_weights(WW: int, IC: int, seed: int | None = None):
-    rng = random.Random(seed)
-    if WW < 2:
-        raise ValueError("Weight width must be at least 2 to include negative values in test kernels.")
-    elif WW == 2:
-        rand_weight_value = lambda: rng.choice([-1, 0, 1])
-    else:
-        max_val = (1 << (WW - 1)) - 1
-        min_val = -(1 << (WW - 1))
-        rand_weight_value = lambda: rng.randint(min_val, max_val)
-
-    # Generate the 4D matrix
-    weights1 = [rand_weight_value() for _ in range(IC)]
-
-    # Pack the 2D weights into a single integer for the Verilog Parameter
-    packed_weights = 0
-    bit_shift = 0
-    mask = (1 << WW) - 1
-
-    # Iterate from LSB to MSB: cols -> rows -> InChannels -> OutChannels
-    for ic in range(IC):
-        w = weights1[ic]
-
-        w_bits = w if w >= 0 else (1 << WW) + w
-        w_bits = w_bits & mask
-        
-        # Shift and combine into the main bit vector
-        packed_weights |= (w_bits << bit_shift)
-        bit_shift += WW
-
-    return packed_weights
-
-def gen_bias(BW: int, seed: int | None = None):
-    rng = random.Random(seed)
-
-    max_val = (1 << (BW - 1)) - 1
-    min_val = -(1 << (BW - 1))
-    rand_bias_value = lambda: rng.randint(min_val, max_val)
-
-    return rand_bias_value()
 
 def unpack_weights(packed_val: int, WW: int, IC: int):
     """Reconstructs the 4D weights matrix from the Verilog parameter integer."""
@@ -103,18 +64,6 @@ def unpack_weights(packed_val: int, WW: int, IC: int):
         
     return weights1
 
-def pack_data_i(samples, width):
-    """
-    samples: list[int] length = InChannels
-    width: InBits
-    Returns packed int: sum(samples[ic] << (ic*width))
-    """
-    mask = (1 << width) - 1
-    out = 0
-    for ic, v in enumerate(samples):
-        out |= (int(v) & mask) << (ic * width)
-    return out
-
 def twos_complement(val: int, bits: int) -> int:
     mask = (1 << bits) - 1
     return val & mask
@@ -132,26 +81,16 @@ def fc_reference(weights_1d, bias, InChannels):
     fc.bias.data   = torch.tensor([bias], dtype=torch.float32)
 
     return fc
-def unpack_data_i(packed, width_in, IC):
-    mask = (1 << width_in) - 1
-    
-    # 1-bit data should stay unsigned (0 or 1) so the bipolar mapper works!
-    if width_in == 1:
-        return [ (packed >> (ic * width_in)) & mask for ic in range(IC) ]
-        
-    # Multi-bit data must be sign-extended!
-    else:
-        return [ sign_extend((packed >> (ic * width_in)) & mask, width_in) for ic in range(IC) ]
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @pytest.mark.parametrize(
     "InBits, WeightBits, InChannels, OutBits, Weights, BiasBits, Bias",
     [
-        (1, 2, 1, output_width(1, 2, 1), gen_weights(2, 1, seed=1234), 2, gen_bias(2)),
-        (2, 3, 1, output_width(2, 3, 1), gen_weights(3, 1, seed=1234), 3, gen_bias(3)),
-        (4, 5, 1, output_width(4, 5, 1), gen_weights(5, 1, seed=1234), 5, gen_bias(5)),
-        (8, 8, 1, output_width(8, 8, 1), gen_weights(8, 1, seed=1234), 8, gen_bias(8)),
+        (1, 2, 1, output_width(1, 2, 1), gen_weights(2, 1, seed=1234), 2, gen_biases(2)),
+        (2, 3, 1, output_width(2, 3, 1), gen_weights(3, 1, seed=1234), 3, gen_biases(3)),
+        (4, 5, 1, output_width(4, 5, 1), gen_weights(5, 1, seed=1234), 5, gen_biases(5)),
+        (8, 8, 1, output_width(8, 8, 1), gen_weights(8, 1, seed=1234), 8, gen_biases(8)),
     ],
 )
 def test_width(test_name, simulator, InBits, WeightBits, InChannels, OutBits, Weights, BiasBits, Bias):
@@ -213,10 +152,10 @@ def test_width(test_name, simulator, InBits, WeightBits, InChannels, OutBits, We
 @pytest.mark.parametrize(
     "InBits, WeightBits, InChannels, OutBits, Weights, BiasBits, Bias",
     [
-        (1, 2, 1,  output_width(1, 2, 1),  gen_weights(2, 1, seed=1234),  8, gen_bias(8)),
-        (1, 2, 2,  output_width(1, 2, 2),  gen_weights(2, 2, seed=1234),  8, gen_bias(8)),
-        (1, 2, 4,  output_width(1, 2, 4),  gen_weights(2, 4, seed=1234),  8, gen_bias(8)),
-        (1, 2, 32, output_width(1, 2, 32), gen_weights(2, 32, seed=1234), 8, gen_bias(8)),
+        (1, 2, 1,  output_width(1, 2, 1),  gen_weights(2, 1, seed=1234),  8, gen_biases(8)),
+        (1, 2, 2,  output_width(1, 2, 2),  gen_weights(2, 2, seed=1234),  8, gen_biases(8)),
+        (1, 2, 4,  output_width(1, 2, 4),  gen_weights(2, 4, seed=1234),  8, gen_biases(8)),
+        (1, 2, 32, output_width(1, 2, 32), gen_weights(2, 32, seed=1234), 8, gen_biases(8)),
     ],
 )
 def test_channels(test_name, simulator, InBits, WeightBits, InChannels, OutBits, Weights, BiasBits, Bias):
@@ -284,7 +223,7 @@ def test_lint(simulator, InBits, WeightBits, InChannels, OutBits):
 
 @pytest.mark.parametrize("simulator", ["verilator"])
 @pytest.mark.parametrize("InBits, WeightBits, InChannels, OutBits, Weights, BiasBits, Bias", 
-                         [(1, 2, 1, output_width(1, 2, 1), gen_weights(2, 1, seed=1234), 2, gen_bias(2))])
+                         [(1, 2, 1, output_width(1, 2, 1), gen_weights(2, 1, seed=1234), 2, gen_biases(2))])
 def test_style(simulator, InBits, WeightBits, InChannels, OutBits, Weights, BiasBits, Bias):
     # This line must be first
     parameters = dict(locals())
@@ -315,8 +254,7 @@ class NeuronModel():
     def consume(self):
         packed = int(self._data_i.value.integer)
         
-        # NOTE: Make sure unpack_data_i is properly SIGN-EXTENDING multi-bit numbers!
-        din = unpack_data_i(packed, int(self._dut.InBits.value), self._InChannels)
+        din = unpack_terms(packed, int(self._dut.InBits.value), self._InChannels)
         
         # compute expected NOW, while _buf matches this accepted input position    
         acc = self.b
@@ -352,7 +290,7 @@ class NeuronModel():
 async def comb_step(dut, model, din_list, ref):
     # Drive packed input
     w = int(dut.InBits.value)
-    dut.data_i.value = pack_data_i(din_list, w)
+    dut.data_i.value = pack_terms(din_list, w)
 
     # Compute expected from the *driven input* (your existing consume reads dut.data_i)
     await Timer(Decimal(1), units="step")
@@ -367,46 +305,56 @@ async def single_test(dut):
     WW = int(dut.WeightBits.value)
     in_bits = int(dut.InBits.value)
 
-    dut.data_i.value = 0  # Initialize to avoid X's in consume()
+    dut.data_i.value = 0
     await Timer(Decimal(1), units="step")
 
-    weights_1d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_INT"]), WW, IC)
-    bias = int(os.environ["INJECTED_BIAS_INT"])
+    weights_1d = unpack_weights(
+        int(os.environ["INJECTED_WEIGHTS_INT"]),
+        WW,
+        IC,
+    )
+    bias_raw = int(os.environ["INJECTED_BIAS_INT"])
+    bias = sign_extend(bias_raw, int(dut.BiasBits.value))
 
-    # Instantiate PyTorch Reference Model
     fc = fc_reference(weights_1d, bias, IC)
     print(f"Testing with Weights: {weights_1d}, Bias: {bias}")
+
     model = NeuronModel(dut, weights_1d, bias)
 
-    # 1. Generate signed bounds and mapped PyTorch values
-    if in_bits == 1:
-        din = [1 for _ in range(IC)] # Test all ones
-        din_math = [1.0 if x == 1 else -1.0 for x in din]
-    else:
-        min_val = -(1 << (in_bits - 1))
-        max_val =  (1 << (in_bits - 1)) - 1
-        din = [random.randint(min_val, max_val) for _ in range(IC)]
+    # Generate DUT-encoded input values
+    din = gen_input_channels(in_bits, IC, seed=1234)
 
-        din_math = din
+    # Convert only for the PyTorch/math reference
+    din_math = [
+        1.0 if x == 1 else -1.0
+        for x in din
+    ] if in_bits == 1 else din
 
-    # Convert data_i to tensor and compute Pytorch Reference Activation
     tensor = torch.tensor([din_math], dtype=torch.float32)
     ref = fc(tensor).item()
-    await comb_step(dut, model, din, ref)
 
+    await comb_step(dut, model, din, ref)
+    
 @cocotb.test
 async def full_bw_test(dut):
     IC = int(dut.InChannels.value)
     WW = int(dut.WeightBits.value)
+    BW = int(dut.BiasBits.value)
     in_bits = int(dut.InBits.value)
 
     dut.data_i.value = 0  # Initialize to avoid X's in consume()
     await Timer(Decimal(1), units="step")
 
-    weights_1d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_INT"]), WW, IC)
-    bias = int(os.environ["INJECTED_BIAS_INT"])
+    weights_1d = unpack_weights(
+        int(os.environ["INJECTED_WEIGHTS_INT"]),
+        WW,
+        IC,
+    )
 
-    # Instantiate PyTorch Reference Model
+    bias_raw = int(os.environ["INJECTED_BIAS_INT"])
+    bias = sign_extend(bias_raw, BW)
+
+    # Instantiate PyTorch Reference Model using the signed bias
     fc = fc_reference(weights_1d, bias, IC)
     model = NeuronModel(dut, weights_1d, bias)
 
@@ -417,17 +365,18 @@ async def full_bw_test(dut):
         max_val =  (1 << (in_bits - 1)) - 1
 
     for _ in range(500):
-        # 1. Generate random inputs
+        # 1. Generate DUT-encoded random inputs
         din = [random.randint(min_val, max_val) for _ in range(IC)]
-        
-        # 2. Map for PyTorch if needed
-        if in_bits == 1:
-            din_math = [1.0 if x == 1 else -1.0 for x in din]
-        else:
-            din_math = din
 
-        # Convert to tensor and compute Pytorch Reference Activation
+        # 2. Convert only for PyTorch/reference math
+        din_math = (
+            [1.0 if x == 1 else -1.0 for x in din]
+            if in_bits == 1
+            else din
+        )
+
+        # 3. Compute PyTorch reference
         tensor = torch.tensor([din_math], dtype=torch.float32)
         ref = fc(tensor).item()
-        
+
         await comb_step(dut, model, din, ref)

@@ -7,8 +7,10 @@ import torch
 import torch.nn.functional as F
 from   typing import List, Optional
 
-from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, sign_extend
-from util.utilities import ReadyValidInterface, ModelRunner
+from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
+from util.bitwise   import sign_extend, pack_terms, unpack_terms
+from util.gen_inputs import gen_input_channels
+from util.components import ReadyValidInterface, ModelRunner, RateGenerator
 tbpath = Path(__file__).parent
 
 import cocotb
@@ -29,18 +31,6 @@ tests = ['reset_test'
         ,'out_fuzz_test'
         ,'full_bw_test']
 
-def pack_data_i(samples, width):
-    """
-    samples: list[int] length = InChannels
-    width: InBits
-    Returns packed int: sum(samples[ic] << (ic*width))
-    """
-    mask = (1 << width) - 1
-    out = 0
-    for ic, v in enumerate(samples):
-        out |= (int(v) & mask) << (ic * width)
-    return out
-
 def to_torch_input(input_activation):
     # input_activation: [IC][H][W]
     x = torch.tensor(input_activation, dtype=torch.int32)   # (IC,H,W)
@@ -54,16 +44,6 @@ def torch_pool_ref(input_activation, kernel_size, stride=None, mode=0):
     elif mode == 1:
         y = F.avg_pool2d(x, kernel_size=kernel_size, stride=stride, padding=0)
     return y.squeeze(0) 
-
-def unpack_data_i(packed, width_in, IC):
-    mask = (1 << width_in) - 1
-    
-    # 1-bit data stays unsigned
-    if width_in == 1:
-        return [ (packed >> (ic * width_in)) & mask for ic in range(IC) ]
-    # Multi-bit data must be sign-extended
-    else:
-        return [ sign_extend((packed >> (ic * width_in)) & mask, width_in) for ic in range(IC) ]
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
@@ -216,7 +196,7 @@ class PoolLayerModel():
         assert_resolvable(self._data_i)
         packed_data_i = []
         packed = int(self._data_i.value.integer)
-        packed_data_i = unpack_data_i(packed, int(self._dut.InBits.value), self._InChannels)
+        packed_data_i = unpack_terms(packed, int(self._dut.InBits.value), self._InChannels)
 
         # advance windows on EVERY accepted input
         for ic, inp in enumerate(packed_data_i):
@@ -270,16 +250,6 @@ class PoolLayerModel():
             self._r += 1
             if self._r >= self._OH:
                 self._r = 0
-
-class CountingDataGenerator():
-    def __init__(self, dut):
-        self._dut = dut
-        self._cur = 0
-
-    def generate(self):
-        value = self._cur
-        self._cur += 1
-        return value
     
 class RandomDataGenerator:
     def __init__(self, dut):
@@ -287,41 +257,7 @@ class RandomDataGenerator:
         self._InChannels = int(dut.InChannels.value)
 
     def generate(self):
-        # 1. Handle the 1-bit bipolar edge case cleanly
-        if self._width_p == 1:
-            min_val = 0
-            max_val = 1
-        # 2. Calculate true signed bounds for multi-bit inputs
-        else:
-            # Example for 8-bit: min_val = -128, max_val = 127
-            min_val = -(1 << (self._width_p - 1))
-            max_val =  (1 << (self._width_p - 1)) - 1
-
-        # 3. Generate the list of true negative/positive Python integers
-        return [random.randint(min_val, max_val) for _ in range(self._InChannels)]
-
-class CountingGenerator():
-    def __init__(self, dut, r):
-        self._rate = int(1/r)
-        self._init = 0
-
-    def generate(self):
-        if(self._rate == 0):
-            return False
-        else:
-            retval = (self._init == 1)
-            self._init = (self._init + 1) % self._rate
-            return retval
-
-class RateGenerator():
-    def __init__(self, dut, r):
-        self._rate = r
-
-    def generate(self):
-        if(self._rate == 0):
-            return False
-        else:
-            return (random.randint(1,int(1/self._rate)) == 1)
+        return gen_input_channels(self._width_p, self._InChannels)
 
 class OutputModel():
     def __init__(self, dut, g, l):
@@ -471,7 +407,7 @@ class InputModel():
             valid_i.value = int(produce)
 
             # Drive current sample (hold stable until handshake)
-            data_i.value = pack_data_i(din, w)
+            data_i.value = pack_terms(din, w)
 
             # Wait for handshake if producing, otherwise just advance a cycle
             success = False

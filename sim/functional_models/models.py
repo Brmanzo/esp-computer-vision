@@ -1,18 +1,6 @@
 
 from collections import deque
-from utilities import assert_resolvable
-
-def safe_int_from_value(val, *, x_as=0):
-    """
-    Convert a cocotb BinaryValue/LogicArray to int even if it contains X/Z.
-    x_as=0 -> treat X/Z as 0
-    x_as=1 -> treat X/Z as 1
-    """
-    s = val.binstr.lower()  # e.g. '00x1'
-    if 'x' in s or 'z' in s:
-        repl = '1' if x_as else '0'
-        s = s.replace('x', repl).replace('z', repl)
-    return int(s, 2)
+from typing import Optional
 
 def unpack_data_o_buffer(BufferWidth, BufferRows, InputChannels, packed_o):
     mask = (1 << BufferWidth) - 1
@@ -23,41 +11,64 @@ def unpack_data_o_buffer(BufferWidth, BufferRows, InputChannels, packed_o):
             out[ch][r] = (packed_o >> bitpos) & mask
     return out
 
-class MultiDelayBufferModel():
-    def __init__(self, dut=None, Delay=None, BufferRows=None, InputChannels=None, BufferWidth=None):
+class MultiDelayBufferModel:
+    def __init__(
+        self,
+        dut=None,
+        Delay: Optional[int] = None,
+        BufferRows: Optional[int] = None,
+        InputChannels: Optional[int] = None,
+        BufferWidth: Optional[int] = None,
+    ):
         self._dut = dut
-        
-        # Pull parameters from DUT if provided, otherwise use explicit kwargs
+
         if dut is not None:
             self._data_i = dut.data_i
             self._data_o = dut.data_o
-            self._Delay         = int(dut.Delay.value)
-            self._BufferRows    = int(dut.BufferRows.value)
-            self._InputChannels = int(dut.InputChannels.value)
-            self._BufferWidth   = int(dut.BufferWidth.value)
-        else:
-            self._Delay         = Delay
-            self._BufferRows    = BufferRows
-            self._InputChannels = InputChannels
-            self._BufferWidth   = BufferWidth
-            if self._BufferWidth is None or self._Delay is None or self._BufferRows is None or self._InputChannels is None:
-                raise ValueError("All parameters must be provided")
 
-        self._BufferWidth = int(self._BufferWidth)
-        self._mask = (1 << self._BufferWidth) - 1
-        self._warmup = self._Delay * self._BufferRows + 1
-        self._fires = 0
+            delay = int(dut.Delay.value)
+            buffer_rows = int(dut.BufferRows.value)
+            input_channels = int(dut.InputChannels.value)
+            buffer_width = int(dut.BufferWidth.value)
+
+        else:
+            if Delay is None:
+                raise ValueError("Delay must be provided")
+            if BufferRows is None:
+                raise ValueError("BufferRows must be provided")
+            if InputChannels is None:
+                raise ValueError("InputChannels must be provided")
+            if BufferWidth is None:
+                raise ValueError("BufferWidth must be provided")
+
+            delay = int(Delay)
+            buffer_rows = int(BufferRows)
+            input_channels = int(InputChannels)
+            buffer_width = int(BufferWidth)
+
+        self._Delay: int = delay
+        self._BufferRows: int = buffer_rows
+        self._InputChannels: int = input_channels
+        self._BufferWidth: int = buffer_width
+
+        self._mask: int = (1 << self._BufferWidth) - 1
+        self._warmup: int = self._Delay * self._BufferRows + 1
+        self._fires: int = 0
 
         zero_init = [0] * self._BufferRows
+
         self._ram = [
-            deque([zero_init.copy() for _ in range(self._Delay)], maxlen=self._Delay)
+            deque(
+                [zero_init.copy() for _ in range(self._Delay)],
+                maxlen=self._Delay,
+            )
             for _ in range(self._InputChannels)
         ]
-        
-        self._wr_pipe = [0 for _ in range(self._InputChannels)]
-        self._wr_valid = False
 
-        self._regs = [
+        self._wr_pipe: list[int] = [0 for _ in range(self._InputChannels)]
+        self._wr_valid: bool = False
+
+        self._regs: list[list[int]] = [
             [0 for _ in range(self._BufferRows - 1)]
             for _ in range(self._InputChannels)
         ]

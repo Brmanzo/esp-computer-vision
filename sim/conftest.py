@@ -7,5 +7,4 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 
 # Add paths once for the entire session
-sys.path.insert(0, str(REPO_ROOT / "sim" / "util"))
-sys.path.insert(0, str(REPO_ROOT / "sim" / "models"))
+sys.path.insert(0, str(REPO_ROOT / "sim"))
