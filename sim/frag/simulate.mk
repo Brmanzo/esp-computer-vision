@@ -3,7 +3,7 @@ REPO_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
 
 # Include user overrides from repo root (works no matter current directory)
 -include $(REPO_ROOT)/sim/frag/config.mk
-export PYTHONPATH := $(REPO_ROOT)/sim/util:$(PYTHONPATH)
+export PYTHONPATH := $(REPO_ROOT)/sim:$(PYTHONPATH)
 
 # Default tool locations (can be overridden in environment or config.mk)
 IVERILOG  ?= iverilog

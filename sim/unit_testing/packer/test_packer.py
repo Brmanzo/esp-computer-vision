@@ -1,24 +1,14 @@
 # test_packer.py
-import git
-import os
-import sys
-import git
-import queue
-from itertools import product
-
-_REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
-assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
-assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
-sys.path.append(os.path.join(_REPO_ROOT, "util"))
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface, ModelRunner
-tbpath = os.path.dirname(os.path.realpath(__file__))
-
+from   pathlib import Path
 import pytest
 
-import cocotb
+from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
+from util.utilities import ReadyValidInterface, ModelRunner
+tbpath = Path(__file__).parent
 
-from cocotb.triggers import RisingEdge, FallingEdge, with_timeout
-from cocotb.result import SimTimeoutError
+import cocotb
+from   cocotb.triggers import RisingEdge, FallingEdge, with_timeout
+from   cocotb.result import SimTimeoutError
    
 import random
 random.seed(42)
@@ -133,46 +123,7 @@ class RandomDataGenerator():
             else:
                 flush_i = 0
             return (x_i, flush_i)
-    
-class EdgeCaseGenerator():
-
-    def __init__(self, dut):
-        self._dut = dut
-        limits = [0, 1, (1 << self._dut.width_p.value) - 1]
-        self._pairs = list(product(limits, limits))
-        self._loc = 0
-
-    def ninputs(self):
-        return len(self._pairs)
-
-    def generate(self):
-        val = self._pairs[self._loc]
-        self._loc += 1
-        return val
-
-class CountingDataGenerator():
-    def __init__(self, dut):
-        self._dut = dut
-        self._cur = 0
-
-    def generate(self):
-        value = self._cur
-        self._cur += 1
-        return value
-
-class CountingGenerator():
-    def __init__(self, dut, r):
-        self._rate = int(1/r)
-        self._init = 0
-
-    def generate(self):
-        if(self._rate == 0):
-            return False
-        else:
-            retval = (self._init == 1)
-            self._init = (self._init + 1) % self._rate
-            return retval
-
+        
 class RateGenerator():
     def __init__(self, dut, r):
         self._rate = r

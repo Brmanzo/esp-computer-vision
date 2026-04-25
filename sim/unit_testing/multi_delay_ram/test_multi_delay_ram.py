@@ -1,30 +1,16 @@
-import git
-import os
-import sys
-import git
-import queue
-from collections import deque
-
-_REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
-assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
-assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
-_UTIL_PATH = os.path.join(_REPO_ROOT, "sim", "util")
-_MODEL_PATH = os.path.join(_REPO_ROOT, "sim", "models")
-assert os.path.exists(_UTIL_PATH), f"Utilities path does not exist: {_UTIL_PATH}"
-assert os.path.exists(_MODEL_PATH), f"Models path does not exist: {_MODEL_PATH}"
-sys.path.insert(0, _UTIL_PATH)
-sys.path.insert(0, _MODEL_PATH)
-tbpath = os.path.dirname(os.path.realpath(__file__))
-
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface
-from models import MultiDelayBufferModel
-
+# test_multi_delay_ram.py
+from   pathlib import Path
 import pytest
+import queue
+
+from util.utilities import runner, lint, clock_start_sequence, reset_sequence, delay_cycles
+from models.models import MultiDelayBufferModel
+tbpath = Path(__file__).parent
 
 import cocotb
+from   cocotb.triggers import RisingEdge, FallingEdge, with_timeout
+from   cocotb.result import SimTimeoutError
 
-from cocotb.triggers import RisingEdge, FallingEdge, with_timeout
-from cocotb.result import SimTimeoutError
 import random
 random.seed(50)
 

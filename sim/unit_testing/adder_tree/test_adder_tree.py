@@ -1,25 +1,12 @@
-import os
-import sys
-import git
-import queue
+# test_adder_tree.py
+from   decimal import Decimal
 import math
-import numpy as np
-from typing import List
-from decimal import Decimal
-import torch
-import torch.nn as nn
-import shutil
-
-_REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
-assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
-assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
-_UTIL_PATH = os.path.join(_REPO_ROOT, "sim", "util")
-assert os.path.exists(_UTIL_PATH), f"Utilities path does not exist: {_UTIL_PATH}"
-sys.path.insert(0, _UTIL_PATH)
-from utilities import runner, lint, assert_resolvable, sign_extend
-tbpath = os.path.dirname(os.path.realpath(__file__))
-
+from   pathlib import Path
 import pytest
+
+from util.utilities import runner, lint, assert_resolvable, sign_extend
+tbpath = Path(__file__).parent
+
 import cocotb
 from cocotb.triggers import Timer
    

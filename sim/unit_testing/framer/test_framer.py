@@ -1,28 +1,16 @@
 # test_framer.py
-import git
-import os
-import sys
-import git
+from   decimal import Decimal
+from   pathlib import Path
+import pytest
 import queue
 
-_REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
-assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
-assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
-sys.path.append(os.path.join(_REPO_ROOT, "util"))
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ReadyValidInterface, ModelRunner
-tbpath = os.path.dirname(os.path.realpath(__file__))
-
-import pytest
+from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
+from util.utilities import ReadyValidInterface, ModelRunner
+tbpath = Path(__file__).parent
 
 import cocotb
-
-from cocotb.utils import get_sim_time
-from cocotb.triggers import Timer, RisingEdge, FallingEdge, with_timeout
-from cocotb.result import SimTimeoutError
-from decimal import Decimal
-
-from cocotb_test.simulator import run
-
+from   cocotb.triggers import Timer, RisingEdge, FallingEdge, with_timeout
+from   cocotb.result import SimTimeoutError
    
 import random
 random.seed(42)

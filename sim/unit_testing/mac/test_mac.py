@@ -1,27 +1,13 @@
-import os
-import sys
-import git
-import queue
-import math
-import numpy as np
-from typing import List
-from decimal import Decimal
-import torch
-import torch.nn as nn
-import shutil
-
-# I don't like this, but it's convenient.
-_REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
-assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
-assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
-sys.path.append(os.path.join(_REPO_ROOT, "util"))
-from utilities import runner, lint, assert_resolvable, sign_extend
-tbpath = os.path.dirname(os.path.realpath(__file__))
-
+# test_mac.py
+from   decimal import Decimal
+from   pathlib import Path
 import pytest
 
+from util.utilities import runner, lint, assert_resolvable, sign_extend
+tbpath = Path(__file__).parent
+
 import cocotb
-from cocotb.triggers import Timer
+from   cocotb.triggers import Timer
    
 import random
 random.seed(50)

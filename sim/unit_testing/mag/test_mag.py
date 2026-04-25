@@ -1,27 +1,14 @@
 # test_mag.py
-import git
-import os
-import sys
-import numpy as np
-import queue
-from itertools import product
-from decimal import Decimal
-
-# I don't like this, but it's convenient.
-_REPO_ROOT = git.Repo(search_parent_directories=True).working_tree_dir
-assert _REPO_ROOT is not None, "REPO_ROOT path must not be None"
-assert (os.path.exists(_REPO_ROOT)), "REPO_ROOT path must exist"
-sys.path.append(os.path.join(_REPO_ROOT, "util"))
-from utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles, ModelRunner
-tbpath = os.path.dirname(os.path.realpath(__file__))
-
+from   pathlib import Path
 import pytest
 
-import cocotb
+from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
+from util.utilities import ModelRunner
+tbpath = Path(__file__).parent
 
-from cocotb.utils import get_sim_time
-from cocotb.triggers import RisingEdge, FallingEdge, with_timeout
-from cocotb.result import SimTimeoutError
+import cocotb
+from   cocotb.triggers import RisingEdge, FallingEdge, with_timeout
+from   cocotb.result import SimTimeoutError
    
 import random
 random.seed(42)
