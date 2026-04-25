@@ -3,7 +3,7 @@ from   pathlib import Path
 import pytest
 
 from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
-from util.components import ReadyValidInterface, ModelRunner, RateGenerator
+from util.components import ReadyValidInterface, ModelRunner, RateGenerator, InputModel
 from util.gen_inputs import gen_random_unsigned
 tbpath = Path(__file__).parent
 
@@ -89,6 +89,7 @@ class DeframerModel():
     def consume(self):
         assert_resolvable(self._data_i)
         b = int(self._data_i.value) & ((1 << (self._PackedWidth)) - 1)
+        
         # Detecting first byte
         if self._state == self.HEADER0:
             if b == self._HeaderByte0:
@@ -150,37 +151,30 @@ class RandomHeaderGenerator():
         
     def generate(self):
         mask = (1 << self._width_p) - 1
+        val = 0
 
-        # Countdown before header (random output)
+        # Countdown logic
         if self._header_delay > 0:
             self._header_delay -= 1
-            return random.randint(0, mask)
-
-        # Header byte 0
-        if self._header_delay == 0:
+            val = random.randint(0, mask)
+        elif self._header_delay == 0:
             self._header_delay = -1
-            return int(self._dut.HeaderByte0.value) & mask
-
-        # Header byte 1
-        if self._header_delay == -1:
+            val = int(self._dut.HeaderByte0.value) & mask
+        elif self._header_delay == -1:
             self._header_delay = -2
             self._period_remaining = self._period
-            return int(self._dut.HeaderByte1.value) & mask
+            val = int(self._dut.HeaderByte1.value) & mask
+        else:
+            # Payload logic
+            val = random.randint(0, mask)
+            if self._period_remaining > 0:
+                self._period_remaining -= 1
+            if self._period_remaining == 0:
+                self._repetitions -= 1
+                if self._repetitions > 0:
+                    self._header_delay = self._initial_delay
 
-        # Payload period (random output)
-        x_i = random.randint(0, mask)
-
-        if self._period_remaining > 0:
-            self._period_remaining -= 1
-
-        if self._period_remaining == 0:
-            self._repetitions -= 1
-            if self._repetitions > 0:
-                # wait initial_delay random bytes before next header sequence
-                self._header_delay = self._initial_delay
-                self._period_remaining = self._period  # pre-init; will be reset at -1->-2 anyway
-
-        return x_i
+        return val, val
     
 class RandomDataGenerator():
     def __init__(self, dut):
@@ -188,7 +182,8 @@ class RandomDataGenerator():
         self._width_p = dut.PackedWidth.value
 
     def generate(self):
-        return gen_random_unsigned(self._width_p, random)
+        din = gen_random_unsigned(self._width_p, random)
+        return din, din
 
 class OutputModel():
     def __init__(self, dut, g, l):
@@ -262,82 +257,6 @@ class OutputModel():
 
             await FallingEdge(clk_i)
         return self._nout
-
-class InputModel():
-    def __init__(self, dut, data, rate, l):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._dut = dut
-        
-        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
-                                          dut.valid_i, dut.ready_o)
-
-        self._rate = rate
-        self._data = data
-        self._length = l
-
-        self._coro = None
-
-        self._nin = 0
-
-    def start(self):
-        """ Start Input Model """
-        if self._coro is not None:
-            raise RuntimeError("Input Model already started")
-        self._coro = cocotb.start_soon(self._run())
-
-    def stop(self) -> None:
-        """ Stop Input Model """
-        if self._coro is None:
-            raise RuntimeError("Input Model never started")
-        self._coro.kill()
-        self._coro = None
-
-    async def wait(self, t):
-        if self._coro is None:
-            raise RuntimeError("Input Model never started")
-        await with_timeout(self._coro, t, 'ns')
-
-    def nconsumed(self):
-        return self._nin
-
-    async def _run(self):
-        """ Input Model Coroutine"""
-
-        self._nin = 0
-        clk_i = self._clk_i
-        rst_i = self._dut.rst_i
-        ready_o = self._dut.ready_o
-        valid_i = self._dut.valid_i
-        data_i = self._dut.data_i
-
-        await delay_cycles(self._dut, 1, False)
-
-        if(not (rst_i.value.is_resolvable and rst_i.value == 0)):
-            await FallingEdge(rst_i)
-
-        await delay_cycles(self._dut, 2, False)
-
-        data = self._data.generate()
-
-        # Precondition: Falling Edge of Clock
-        while self._nin < self._length:
-            produce = self._rate.generate()
-            valid_i.value = produce
-            data_i.value = data
-
-            
-            await RisingEdge(clk_i)
-            assert_resolvable(ready_o)
-
-            fire_in = (int(valid_i.value) == 1) and (int(ready_o.value) == 1)
-            if(fire_in):
-                self._nin += 1
-                data = self._data.generate()
-
-            await FallingEdge(clk_i)
-            
-        return self._nin
 
 @cocotb.test
 async def reset_test(dut):

@@ -3,7 +3,7 @@ from   pathlib import Path
 import pytest
 
 from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
-from util.components import ModelRunner, RateGenerator
+from util.components import ModelRunner, RateGenerator, InputModel
 from util.gen_inputs import gen_input_channels
 tbpath = Path(__file__).parent
 
@@ -106,7 +106,8 @@ class RandomDataGenerator():
         self._width_p = dut.WidthIn.value
 
     def generate(self):
-        return gen_input_channels(self._width_p, 2)
+        din = gen_input_channels(self._width_p, 2)
+        return din, din
 
 class OutputModel():
     def __init__(self, dut, g, l):
@@ -174,83 +175,7 @@ class OutputModel():
 
             await FallingEdge(clk_i)
         return self._nout
-
-class InputModel():
-    def __init__(self, dut, data, rate, l):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._dut = dut
-
-        self._rate = rate
-        self._data = data
-        self._length = l
-
-        self._coro = None
-
-        self._nin = 0
-
-    def start(self):
-        """ Start Input Model """
-        if self._coro is not None:
-            raise RuntimeError("Input Model already started")
-        self._coro = cocotb.start_soon(self._run())
-
-    def stop(self) -> None:
-        """ Stop Input Model """
-        if self._coro is None:
-            raise RuntimeError("Input Model never started")
-        self._coro.kill()
-        self._coro = None
-
-    async def wait(self, t):
-        if self._coro is None:
-            raise RuntimeError("Input Model never started")
-        await with_timeout(self._coro, t, 'ns')
-
-    def nconsumed(self):
-        return self._nin
-
-    async def _run(self):
-        """ Input Model Coroutine"""
-
-        self._nin = 0
-        clk_i = self._clk_i
-        rst_i = self._dut.rst_i
-        ready_o = self._dut.ready_o
-        valid_i = self._dut.valid_i
-        gx_i = self._dut.gx_i
-        gy_i = self._dut.gy_i
-
-        await delay_cycles(self._dut, 1, False)
-
-        if(not (rst_i.value.is_resolvable and rst_i.value == 0)):
-            await FallingEdge(rst_i)
-
-        await delay_cycles(self._dut, 2, False)
-
-        data = self._data.generate()
-
-        # Precondition: Falling Edge of Clock
-        while self._nin < self._length:
-            produce = self._rate.generate()
-            success = 0
-            valid_i.value = produce
-            gx_i.value = data[0]
-            gy_i.value = data[1]
-
-            # Wait until ready
-            while(produce and not success):
-                await RisingEdge(clk_i)
-                assert_resolvable(ready_o)
-                #assert ready_o.value.is_resolvable, f"Unresolvable value in ready_o (x or z in some or all bits) at Time {get_sim_time(units='ns')}ns."
-
-                success = True if (ready_o.value == 1) else False
-                if (success):
-                    self._nin += 1
-
-            await FallingEdge(clk_i)
-        return self._nin
-
+    
 @cocotb.test
 async def reset_test(dut):
     """Test for Initialization"""
@@ -271,7 +196,7 @@ async def single_test(dut):
     model = MagModel(dut)
     m = ModelRunner(dut, model)
     om = OutputModel(dut, RateGenerator(dut, 1), l)
-    im = InputModel(dut, eg, RateGenerator(dut, rate), l)
+    im = InputModel(dut, eg, RateGenerator(dut, rate), l, data_pins=[dut.gx_i, dut.gy_i])
 
     clk_i = dut.clk_i
     rst_i = dut.rst_i
@@ -316,7 +241,7 @@ async def rate_tests(dut, in_rate, out_rate):
 
     m = ModelRunner(dut, MagModel(dut))
     om = OutputModel(dut, RateGenerator(dut, out_rate), l_out)
-    im = InputModel(dut, eg, RateGenerator(dut, in_rate), l_in)
+    im = InputModel(dut, eg, RateGenerator(dut, in_rate), l_in, data_pins=[dut.gx_i, dut.gy_i])
 
     clk_i = dut.clk_i
     rst_i = dut.rst_i

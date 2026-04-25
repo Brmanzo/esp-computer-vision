@@ -10,7 +10,7 @@ from   typing import List, Optional
 from util.utilities  import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
 from util.bitwise    import sign_extend, pack_terms, unpack_terms
 from util.gen_inputs import gen_kernels, gen_input_channels
-from util.components import ReadyValidInterface, ModelRunner, RateGenerator
+from util.components import ReadyValidInterface, ModelRunner, RateGenerator, InputModel
 
 tbpath = Path(__file__).parent
 
@@ -285,9 +285,15 @@ def test_style(simulator, LineWidthPx, InBits, OutBits):
     lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"])
 
 class ConvLayerModel():
-    def __init__(self, dut, weights: List[List[List[List[int]]]], output_activation: Optional[List[List[List[int]]]] = None):
+    def __init__(self, dut, weights: List[List[List[List[int]]]], 
+                 output_activation: Optional[List[List[List[int]]]] = None,
+                 input_activation: Optional[List[List[List[int]]]] = None):
+        
         self._kernel_width = int(dut.KernelWidth.value)
         self._f = np.ones((self._kernel_width,self._kernel_width), dtype=int)
+        self._input_activation = input_activation 
+        self._output_activation = output_activation
+
         self._dut = dut
         self._data_o = dut.data_o
         self._data_i = dut.data_i
@@ -383,34 +389,36 @@ class ConvLayerModel():
         return result
 
     def consume(self):
-        """Called on each INPUT handshake.
-        Returns:
-          - None if this input position should NOT produce an output
-          - int expected value if it SHOULD produce an output
         """
-        assert_resolvable(self._data_i)
-        packed_data_i = []
-        packed = int(self._data_i.value.integer)
-        packed_data_i = unpack_terms(packed, int(self._dut.InBits.value), self._InChannels)
+        The ModelRunner calls this every time it sees a handshake on the INPUT side.
+        Because your ModelRunner doesn't know about the 'raw_val' yet, 
+        we unpack it here ONE LAST TIME, or update your ModelRunner to handle raw_vals.
+        """
+        # Get bits from pins
+        packed = int(self._dut.data_i.value.integer)
+        raw_val = unpack_terms(packed, int(self._dut.InBits.value), self._InChannels)
 
-        # advance windows on EVERY accepted input
-        for ic, inp in enumerate(packed_data_i):
+        # 1. Record input activation if requested
+        if self._input_activation is not None:
+            y_in = self._enqs // self._input_width
+            x_in = self._enqs % self._input_width
+            for ic in range(self._InChannels):
+                self._input_activation[ic][y_in][x_in] = raw_val[ic]
+
+        # 2. Update sliding windows
+        for ic, inp in enumerate(raw_val):
             self._buf[ic] = self.update_window(self._buf[ic], inp)
 
+        # 3. Determine if output is expected
         idx = self._enqs
-        x = idx % int(self._input_width)
-        y = idx // int(self._input_width)
+        x = idx % self._input_width
+        y = idx // self._input_width
         self._enqs += 1
 
-        if y >= int(self._input_height):
+        if y >= self._input_height or not self._valid_cycles[y, x]:
             return None
 
-        if not self._valid_cycles[y, x]:
-            return None
-
-        # compute expected NOW, while _buf matches this accepted input position
-        expected = self.apply_kernel(self._buf)
-        return expected
+        return self.apply_kernel(self._buf)
 
     def produce(self, expected):
         assert_resolvable(self._data_o)
@@ -451,7 +459,9 @@ class RandomDataGenerator:
         self._InChannels = int(dut.InChannels.value)
 
     def generate(self):
-        return gen_input_channels(self._width_p, self._InChannels)
+        raw_din = gen_input_channels(self._width_p, self._InChannels)
+        packed_din = pack_terms(raw_din, self._width_p)
+        return (packed_din, raw_din)
 
 class OutputModel():
     def __init__(self, dut, g, l):
@@ -524,119 +534,6 @@ class OutputModel():
 
             await FallingEdge(clk_i)
         return self._nout
-
-class InputModel():
-    def __init__(self, dut, data, rate, l, input_activation=None):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._dut = dut
-        
-        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
-                                          dut.valid_i, dut.ready_o)
-
-        self._rate = rate
-        self._data = data
-        self._length = l
-        self._input_activation = input_activation
-
-        self._coro = None
-
-        self._nin = 0
-
-    def start(self):
-        """ Start Input Model """
-        if self._coro is not None:
-            raise RuntimeError("Input Model already started")
-        self._coro = cocotb.start_soon(self._run())
-
-    def stop(self) -> None:
-        """ Stop Input Model """
-        if self._coro is None:
-            raise RuntimeError("Input Model never started")
-        self._coro.kill()
-        self._coro = None
-
-    async def wait(self, t):
-        if self._coro is not None:
-            await with_timeout(self._coro, t, 'ns')
-
-    def nconsumed(self):
-        return self._nin
-
-    async def _run(self):
-        """Input Model Coroutine (records input_activation on handshake)."""
-
-        self._nin = 0
-        clk_i   = self._clk_i
-        rst_i   = self._dut.rst_i
-        ready_o = self._dut.ready_o
-        valid_i = self._dut.valid_i
-        data_i  = self._dut.data_i
-
-        # Geometry + channel count
-        W  = int(self._dut.LineWidthPx.value)
-        H  = int(self._dut.LineCountPx.value)
-        IC = int(self._dut.InChannels.value)
-        w  = int(self._dut.InBits.value)
-
-        # Cursor for activation matrix (y,x)
-        y = 0
-        x = 0
-
-        valid_i.value = 0
-        data_i.value  = 0
-
-        await delay_cycles(self._dut, 1, False)
-
-        if not (rst_i.value.is_resolvable and rst_i.value == 0):
-            await FallingEdge(rst_i)
-
-        await delay_cycles(self._dut, 2, False)
-
-        # Precondition: Falling edge of clock
-        din = self._data.generate()  # list length IC
-
-        while self._nin < self._length:
-            produce = bool(self._rate.generate())
-            valid_i.value = int(produce)
-
-            # Drive current sample (hold stable until handshake)
-            data_i.value = pack_terms(din, w)
-
-            # Wait for handshake if producing, otherwise just advance a cycle
-            success = False
-            while produce and not success:
-                await RisingEdge(clk_i)
-                assert_resolvable(ready_o)
-                success = bool(valid_i.value) and bool(ready_o.value)
-
-                if success:
-                    # Record ONLY on accepted input
-                    if self._input_activation is not None:
-                        # Optional safety checks
-                        assert len(din) == IC, f"din has {len(din)} chans, expected {IC}"
-                        assert y < H and x < W, f"Activation cursor out of bounds (y={y}, x={x}, H={H}, W={W})"
-
-                        for ic in range(IC):
-                            self._input_activation[ic][y][x] = int(din[ic])
-
-                    # Advance pixel cursor once per accepted input
-                    x += 1
-                    if x >= W:
-                        x = 0
-                        y += 1
-                        if y >= H:
-                            y = 0  # wrap (or raise if you expect exactly one frame)
-
-                    # Next sample
-                    din = self._data.generate()
-                    self._nin += 1
-
-            await FallingEdge(clk_i)
-
-        # Stop driving
-        valid_i.value = 0
-        return self._nin    
 
 @cocotb.test
 async def reset_test(dut):
@@ -732,12 +629,12 @@ async def rate_tests(dut, in_rate, out_rate):
     packed_weights = int(os.environ["INJECTED_WEIGHTS_INT"])
     kernels_4d = unpack_weights(packed_weights, WW, OC, IC, K)
 
-    model = ConvLayerModel(dut, kernels_4d, output_activation)
+    model = ConvLayerModel(dut, kernels_4d, output_activation, input_activation)
     m = ModelRunner(dut, model)
 
     # Consumer fuzzed; producer always drives valid
     om = OutputModel(dut, RateGenerator(dut, out_rate), l_out)
-    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, in_rate), N_in, input_activation)
+    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, in_rate), N_in)
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0

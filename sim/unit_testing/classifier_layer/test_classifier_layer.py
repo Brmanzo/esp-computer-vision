@@ -7,7 +7,7 @@ import shutil
 from   typing import List
 
 from util.utilities  import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
-from util.components import ModelRunner, RateGenerator
+from util.components import ModelRunner, RateGenerator, InputModel 
 from util.bitwise    import unpack_terms, pack_terms
 from util.gen_inputs import gen_weights, gen_biases, gen_input_channels
 tbpath = Path(__file__).parent
@@ -260,7 +260,9 @@ class RandomDataGenerator:
         self._InChannels = int(dut.InChannels.value)
 
     def generate(self):
-        return gen_input_channels(self._width_p, self._InChannels)
+        raw_din = gen_input_channels(self._width_p, self._InChannels)
+        packed_din = pack_terms(raw_din, self._width_p)
+        return (packed_din, raw_din)
 
 class OutputModel():
     def __init__(self, dut, g, l):
@@ -328,96 +330,6 @@ class OutputModel():
 
             await FallingEdge(clk_i)
         return self._nout
-
-class InputModel():
-    def __init__(self, dut, data, rate, l):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._dut = dut
-
-        self._rate = rate
-        self._data = data
-        self._length = l
-
-        self._coro = None
-
-        self._nin = 0
-
-    def start(self):
-        """ Start Input Model """
-        if self._coro is not None:
-            raise RuntimeError("Input Model already started")
-        self._coro = cocotb.start_soon(self._run())
-
-    def stop(self) -> None:
-        """ Stop Input Model """
-        if self._coro is None:
-            raise RuntimeError("Input Model never started")
-        self._coro.kill()
-        self._coro = None
-
-    async def wait(self, t):
-        if self._coro is None:
-            raise RuntimeError("Input Model never started")
-        await with_timeout(self._coro, t, 'ns')
-
-    def nconsumed(self):
-        return self._nin
-
-    async def _run(self):
-        """ Input Model Coroutine"""
-
-        self._nin = 0
-        clk_i = self._clk_i
-        rst_i = self._dut.rst_i
-        ready_o = self._dut.ready_o
-        valid_i = self._dut.valid_i
-        data_i = self._dut.data_i
-        
-        # Grab the bit width from the DUT (assuming TermBits for classifier)
-        w = int(self._dut.TermBits.value)
-
-        await delay_cycles(self._dut, 1, False)
-
-        if(not (rst_i.value.is_resolvable and rst_i.value == 0)):
-            await FallingEdge(rst_i)
-
-        await delay_cycles(self._dut, 2, False)
-
-        # Generate the very first data sample before entering the loop
-        din = self._data.generate()
-
-        # Precondition: Falling Edge of Clock
-        while self._nin < self._length:
-            produce = bool(self._rate.generate())
-            valid_i.value = int(produce)
-
-            # Pack the list of integers into a single big integer
-            packed_din = pack_terms(din, w)
-
-            # Assign the packed integer to the pin!
-            data_i.value = packed_din if produce else 0
-
-            # Wait for handshake if producing, otherwise just advance a cycle
-            success = False
-
-            # Wait until ready
-            while(produce and not success):
-                await RisingEdge(clk_i)
-                assert_resolvable(ready_o)
-
-                success = True if (ready_o.value == 1) else False
-                if (success):
-                    self._nin += 1
-                    
-                    # 3. FIX: Generate the NEXT data sample only after a successful transfer!
-                    din = self._data.generate()
-
-            await FallingEdge(clk_i)
-            
-        # Optional but recommended: Drop valid to 0 when finished
-        valid_i.value = 0
-        return self._nin
 
 @cocotb.test
 async def reset_test(dut):

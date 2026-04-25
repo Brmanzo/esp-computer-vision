@@ -5,11 +5,13 @@ import queue
 
 from util.utilities import runner, lint, clock_start_sequence, reset_sequence, delay_cycles
 from functional_models.models import MultiDelayBufferModel
+from util.bitwise import pack_terms
 from util.gen_inputs import gen_input_channels
-from util.components import RateGenerator
+from util.components import RateGenerator, InputModel
 tbpath = Path(__file__).parent
 
 import cocotb
+from   cocotb.types import Logic
 from   cocotb.triggers import RisingEdge, FallingEdge, with_timeout
 from   cocotb.result import SimTimeoutError
 
@@ -129,10 +131,7 @@ class MultiDelayRamModel():
 
     def step(self, data_i_words, in_fire=True):
         assert len(data_i_words) == self._InChannels
-
-        if not in_fire:
-            return None
-
+        
         full_out: list[list[int] | None] = [None] * self._InChannels
         any_valid = False
 
@@ -155,22 +154,22 @@ class MultiDelayRamModel():
         return full_out if any_valid else None
     
 class RandomDataGenerator:
-    def __init__(self, dut, seed=None):
-        self._dut = dut
-        # Using a seeded RNG instance for better CI reproducibility
-        self._in_bits = int(dut.InBits.value)
+    def __init__(self, dut):
+        self._bw = int(dut.InBits.value)
         self._ic = int(dut.InChannels.value)
         self._first_high = False
 
     def generate(self):
-        # 1. Handle the "all-ones" (-1) edge case for the first cycle
         if not self._first_high:
             self._first_high = True
-            return [-1] * self._ic
-        
-        # 2. Use the atomic generalization for all subsequent cycles
-        # We pass self._rng to ensure the seed is respected
-        return gen_input_channels(self._in_bits, self._ic)
+            raw = [-1] * self._ic 
+        else:
+            raw = gen_input_channels(self._bw, self._ic)
+
+        mask = (1 << (self._bw - 1)) - 1 if self._bw > 1 else 0x1
+        masked = [x & mask for x in raw]
+
+        return pack_terms(masked, self._bw), masked
 
 class OutputModel():
     def __init__(self, dut, model, l):
@@ -237,80 +236,6 @@ class OutputModel():
             await FallingEdge(clk_i)
 
         return self._nout
-
-class InputModel():
-    def pack_channels(self, words, w):
-        mask = (1 << w) - 1
-        packed = 0
-        for ch, word in enumerate(words):
-            packed |= (int(word) & mask) << (ch * w)
-        return packed
-
-    def __init__(self, dut, data, rate, l):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._dut = dut
-
-        self._rate = rate
-        self._data = data
-        self._length = l
-
-        self._coro = None
-        self._nin = 0
-
-    def start(self):
-        if self._coro is not None:
-            raise RuntimeError("Input Model already started")
-        self._coro = cocotb.start_soon(self._run())
-
-    def stop(self):
-        if self._coro is None:
-            raise RuntimeError("Input Model never started")
-        self._coro.kill()
-        self._coro = None
-
-    async def wait(self, t):
-        if self._coro is not None:
-            await with_timeout(self._coro, t, 'ns')
-
-    def nconsumed(self):
-        return self._nin
-
-    async def _run(self):
-        self._nin = 0
-        clk_i = self._clk_i
-        rst_i = self._dut.rst_i
-        in_fire = self._dut.in_fire
-        data_i = self._dut.data_i
-
-        await delay_cycles(self._dut, 1, False)
-
-        if not (rst_i.value.is_resolvable and rst_i.value == 0):
-            await FallingEdge(rst_i)
-
-        await delay_cycles(self._dut, 2, False)
-
-        din = self._data.generate()
-        w = int(self._dut.InBits.value)
-
-        while self._nin < self._length:
-            produce = self._rate.generate()
-            in_fire.value = 1 if produce else 0
-
-            if produce:
-                din_masked = [x & ((1 << w) - 1) for x in din]
-                data_i.value = self.pack_channels(din_masked, w)
-
-            await RisingEdge(clk_i)
-
-            if produce:
-                din = self._data.generate()
-                self._nin += 1
-
-            await FallingEdge(clk_i)
-
-        in_fire.value = 0
-        return self._nin
     
 class ModelRunner():
     def unpack_data_i(self, packed_i: int):
@@ -386,7 +311,7 @@ class ModelRunner():
                 packed_o=got_packed
             )
 
-            #print(f"OutputModel Check: got={got} expected={expected_words}")
+            print(f"OutputModel Check: got={got} expected={expected_words}")
             assert got == expected_words, f"Mismatch: got={got} expected={expected_words}"
             
 async def flush_dut(dut, duration):
@@ -429,7 +354,8 @@ async def single_test(dut):
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, m, N_out)
-    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), N_first)
+    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), N_first,
+                    data_pins=dut.data_i, valid_pin=dut.in_fire, ready_pin=Logic(1))
 
     dut.in_fire.value = 0
 
@@ -498,8 +424,8 @@ async def rate_tests(dut, in_rate, out_rate):
     N_out = N_in - model._warmup
 
     om = OutputModel(dut, m, N_out)             # consume N_out outputs
-    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, in_rate), N_in)  # produce N_in inputs
-
+    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, in_rate), N_in,
+                    data_pins=dut.data_i, valid_pin=dut.in_fire, ready_pin=Logic(1))
     dut.in_fire.value = 0
 
     await clock_start_sequence(dut.clk_i)

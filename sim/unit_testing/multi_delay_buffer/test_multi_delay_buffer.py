@@ -3,8 +3,9 @@ from   pathlib import Path
 import pytest
 
 from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
-from util.components import ReadyValidInterface, ModelRunner, RateGenerator
+from util.components import ReadyValidInterface, ModelRunner, RateGenerator, InputModel
 from util.gen_inputs import gen_input_channels
+from util.bitwise import pack_terms
 from functional_models.models import MultiDelayBufferModel
 tbpath = Path(__file__).parent
 
@@ -64,21 +65,24 @@ def test_style(simulator, BufferWidth, Delay, BufferRows, InputChannels):
     
 class RandomDataGenerator():
     def __init__(self, dut):
-        self._dut = dut
         self._bw = int(dut.BufferWidth.value)
         self._ic = int(dut.InputChannels.value)
         self._first_high = False
 
     def generate(self):
-        # 1. Handle the "all-ones" edge case logic
         if not self._first_high:
             self._first_high = True
-            # Hardware -1 (all ones) is the most common boundary failure
-            return [-1] * self._ic 
-        
-        # 2. Otherwise, use the atomic generator function
-        return gen_input_channels(self._bw, self._ic)
+            raw = [-1] * self._ic 
+        else:
+            raw = gen_input_channels(self._bw, self._ic)
 
+        if self._bw == 1:
+            masked = [x & 0x1 for x in raw]
+        else:
+            masked = [x & ((1 << (self._bw - 1)) - 1) for x in raw]
+
+        return pack_terms(masked, self._bw), masked
+    
 class OutputModel():
     def __init__(self, dut, g, l):
         self._clk_i = dut.clk_i
@@ -147,98 +151,6 @@ class OutputModel():
 
             await FallingEdge(clk_i)
         return self._nout
-
-class InputModel():
-    def pack_channels(self, words, w):
-        mask = (1 << w) - 1
-        packed = 0
-        for ch, word in enumerate(words):
-            packed |= (int(word) & mask) << (ch * w)
-        return packed
-
-    def __init__(self, dut, data, rate, l):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._dut = dut
-        
-        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
-                                          dut.valid_i, dut.ready_o)
-
-        self._rate = rate
-        self._data = data
-        self._length = l
-
-        self._coro = None
-
-        self._nin = 0
-
-    def start(self):
-        """ Start Input Model """
-        if self._coro is not None:
-            raise RuntimeError("Input Model already started")
-        self._coro = cocotb.start_soon(self._run())
-
-    def stop(self) -> None:
-        """ Stop Input Model """
-        if self._coro is None:
-            raise RuntimeError("Input Model never started")
-        self._coro.kill()
-        self._coro = None
-
-    async def wait(self, t):
-        if self._coro is not None:
-            await with_timeout(self._coro, t, 'ns')
-
-    def nconsumed(self):
-        return self._nin
-
-    async def _run(self):
-        """ Input Model Coroutine"""
-
-        self._nin = 0
-        clk_i = self._clk_i
-        rst_i = self._dut.rst_i
-        ready_o = self._dut.ready_o
-        valid_i = self._dut.valid_i
-        data_i = self._dut.data_i
-
-        await delay_cycles(self._dut, 1, False)
-
-        if(not (rst_i.value.is_resolvable and rst_i.value == 0)):
-            await FallingEdge(rst_i)
-
-        await delay_cycles(self._dut, 2, False)
-
-        # Precondition: Falling Edge of Clock
-        din = self._data.generate()
-
-        while self._nin < self._length:
-            produce = self._rate.generate()
-            valid_i.value = produce
-
-            w = int(self._dut.BufferWidth.value)
-
-            if produce:
-                if w == 1:
-                    # 1-bit data: allow 0/1
-                    din_masked = [x & 0x1 for x in din]
-                else:
-                    # Keep MSB clear -> only non-negative signed values (0 .. 2^(w-1)-1)
-                    din_masked = [x & ((1 << (w - 1)) - 1) for x in din]
-
-                data_i.value = self.pack_channels(din_masked, w)
-
-            success = False
-            while produce and not success:
-                await RisingEdge(clk_i)
-                assert_resolvable(ready_o)
-                success = bool(valid_i.value) and bool(ready_o.value)
-                if success:
-                    din = self._data.generate()
-                    self._nin += 1
-
-            await FallingEdge(clk_i)
-        return self._nin
 
 async def flush_dut(dut, duration):
     """

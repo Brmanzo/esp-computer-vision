@@ -10,7 +10,7 @@ from   typing import List, Optional
 from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
 from util.bitwise   import sign_extend, pack_terms, unpack_terms
 from util.gen_inputs import gen_input_channels
-from util.components import ReadyValidInterface, ModelRunner, RateGenerator
+from util.components import ReadyValidInterface, ModelRunner, RateGenerator, InputModel
 tbpath = Path(__file__).parent
 
 import cocotb
@@ -100,7 +100,10 @@ def test_style(simulator, LineWidthPx, LineCountPx, KernelWidth, InBits):
     lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"])
 
 class PoolLayerModel():
-    def __init__(self, dut, output_activation: Optional[List[List[List[int]]]] = None):
+    def __init__(self, dut, 
+                 output_activation: Optional[List[List[List[int]]]] = None,
+                 input_activation: Optional[List[List[List[int]]]] = None):
+       
         self._kernel_width = int(dut.KernelWidth.value)
         self._f = np.ones((self._kernel_width,self._kernel_width), dtype=int)
         self._dut = dut
@@ -115,7 +118,8 @@ class PoolLayerModel():
         self._Stride = int(dut.Stride.value)
         self._PoolMode = int(dut.PoolMode.value)
 
-        self._output_activation = output_activation 
+        self._output_activation = output_activation
+        self._input_activation = input_activation
         self._r = 0
         self._c = 0
         self._OW = (self._input_width - self._kernel_width) // self._Stride + 1
@@ -151,8 +155,6 @@ class PoolLayerModel():
                     if ((r - invalid_region) % S) != 0 or ((c - invalid_region) % S) != 0:
                         self._valid_cycles[r, c] = False
 
-    # Now let's scale this up a little bit
-    # You can define functions to do the steps in convolution
     def update_window(self, buf, inp):
         temp = buf.flatten()
 
@@ -188,15 +190,16 @@ class PoolLayerModel():
         return result
 
     def consume(self):
-        """Called on each INPUT handshake.
-        Returns:
-          - None if this input position should NOT produce an output
-          - int expected value if it SHOULD produce an output
-        """
         assert_resolvable(self._data_i)
-        packed_data_i = []
         packed = int(self._data_i.value.integer)
         packed_data_i = unpack_terms(packed, int(self._dut.InBits.value), self._InChannels)
+
+        # 1. Record input activation if requested
+        if self._input_activation is not None:
+            y_in = self._enqs // self._input_width
+            x_in = self._enqs % self._input_width
+            for ic in range(self._InChannels):
+                self._input_activation[ic][y_in][x_in] = packed_data_i[ic]
 
         # advance windows on EVERY accepted input
         for ic, inp in enumerate(packed_data_i):
@@ -226,7 +229,6 @@ class PoolLayerModel():
         for ch in range(self._OutChannels):
             got_raw = (packed >> (ch * w)) & ((1 << w) - 1)
             
-            # FIX: Sign-extend the hardware output if multi-bit!
             if w == 1:
                 got = got_raw
             else:
@@ -257,7 +259,9 @@ class RandomDataGenerator:
         self._InChannels = int(dut.InChannels.value)
 
     def generate(self):
-        return gen_input_channels(self._width_p, self._InChannels)
+        raw_din = gen_input_channels(self._width_p, self._InChannels)
+        packed_din = pack_terms(raw_din, self._width_p)
+        return (packed_din, raw_din)
 
 class OutputModel():
     def __init__(self, dut, g, l):
@@ -331,119 +335,6 @@ class OutputModel():
             await FallingEdge(clk_i)
         return self._nout
 
-class InputModel():
-    def __init__(self, dut, data, rate, l, input_activation=None):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._dut = dut
-        
-        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
-                                          dut.valid_i, dut.ready_o)
-
-        self._rate = rate
-        self._data = data
-        self._length = l
-        self._input_activation = input_activation
-
-        self._coro = None
-
-        self._nin = 0
-
-    def start(self):
-        """ Start Input Model """
-        if self._coro is not None:
-            raise RuntimeError("Input Model already started")
-        self._coro = cocotb.start_soon(self._run())
-
-    def stop(self) -> None:
-        """ Stop Input Model """
-        if self._coro is None:
-            raise RuntimeError("Input Model never started")
-        self._coro.kill()
-        self._coro = None
-
-    async def wait(self, t):
-        if self._coro is not None:
-            await with_timeout(self._coro, t, 'ns')
-
-    def nconsumed(self):
-        return self._nin
-
-    async def _run(self):
-        """Input Model Coroutine (records input_activation on handshake)."""
-
-        self._nin = 0
-        clk_i   = self._clk_i
-        rst_i   = self._dut.rst_i
-        ready_o = self._dut.ready_o
-        valid_i = self._dut.valid_i
-        data_i  = self._dut.data_i
-
-        # Geometry + channel count
-        W  = int(self._dut.LineWidthPx.value)
-        H  = int(self._dut.LineCountPx.value)
-        IC = int(self._dut.InChannels.value)
-        w  = int(self._dut.InBits.value)
-
-        # Cursor for activation matrix (y,x)
-        y = 0
-        x = 0
-
-        valid_i.value = 0
-        data_i.value  = 0
-
-        await delay_cycles(self._dut, 1, False)
-
-        if not (rst_i.value.is_resolvable and rst_i.value == 0):
-            await FallingEdge(rst_i)
-
-        await delay_cycles(self._dut, 2, False)
-
-        # Precondition: Falling edge of clock
-        din = self._data.generate()  # list length IC
-
-        while self._nin < self._length:
-            produce = bool(self._rate.generate())
-            valid_i.value = int(produce)
-
-            # Drive current sample (hold stable until handshake)
-            data_i.value = pack_terms(din, w)
-
-            # Wait for handshake if producing, otherwise just advance a cycle
-            success = False
-            while produce and not success:
-                await RisingEdge(clk_i)
-                assert_resolvable(ready_o)
-                success = bool(valid_i.value) and bool(ready_o.value)
-
-                if success:
-                    # Record ONLY on accepted input
-                    if self._input_activation is not None:
-                        # Optional safety checks
-                        assert len(din) == IC, f"din has {len(din)} chans, expected {IC}"
-                        assert y < H and x < W, f"Activation cursor out of bounds (y={y}, x={x}, H={H}, W={W})"
-
-                        for ic in range(IC):
-                            self._input_activation[ic][y][x] = int(din[ic])
-
-                    # Advance pixel cursor once per accepted input
-                    x += 1
-                    if x >= W:
-                        x = 0
-                        y += 1
-                        if y >= H:
-                            y = 0  # wrap (or raise if you expect exactly one frame)
-
-                    # Next sample
-                    din = self._data.generate()
-                    self._nin += 1
-
-            await FallingEdge(clk_i)
-
-        # Stop driving
-        valid_i.value = 0
-        return self._nin
-
 @cocotb.test
 async def reset_test(dut):
     """Test for Initialization"""
@@ -478,8 +369,7 @@ async def single_test(dut):
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, RateGenerator(dut, 1), N_out)               # consume 1 output
-    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), N_first)  # produce N_first inputs
-
+    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), N_first)
     dut.ready_i.value = 0
     dut.valid_i.value = 0
     dut.data_i.value = 0
@@ -537,14 +427,13 @@ async def rate_tests(dut, in_rate, out_rate):
 
     first_out_wait_ns = int((2 * (K - 1) * W + 2 * (K - 1) + 200) / slow)
     timeout_ns        = int((H_out * N_in + 500) / slow)
-
-    model = PoolLayerModel(dut, output_activation)
+    
+    model = PoolLayerModel(dut, output_activation, input_activation)
     m = ModelRunner(dut, model)
 
     # Consumer fuzzed; producer always drives valid
     om = OutputModel(dut, RateGenerator(dut, out_rate), l_out)
-    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, in_rate), N_in, input_activation)
-
+    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, in_rate), N_in)
     dut.ready_i.value = 0
     dut.valid_i.value = 0
 

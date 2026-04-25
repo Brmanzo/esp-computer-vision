@@ -4,7 +4,7 @@ from   pathlib import Path
 import pytest
 
 from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence
-from util.components import ReadyValidInterface, ModelRunner, RateGenerator
+from util.components import ReadyValidInterface, ModelRunner, RateGenerator, InputModel
 from util.gen_inputs import gen_random_unsigned
 tbpath = Path(__file__).parent
 
@@ -148,7 +148,9 @@ class RandomDataGenerator():
         self._dut = dut
 
     def generate(self):
-        return gen_random_unsigned(int(self._dut.Width.value), random)
+        # Update signature: StreamDriver expects (packed_vals, raw_vals)
+        val = gen_random_unsigned(int(self._dut.Width.value), random)
+        return (val, val)
 
 class OutputModel():
     def __init__(self, dut, g, l):
@@ -222,82 +224,6 @@ class OutputModel():
             await FallingEdge(clk_i)
         return self._nout
 
-class InputModel():
-    def __init__(self, dut, data, rate, l):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._dut = dut
-        
-        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
-                                          dut.ready_o, dut.valid_i)
-
-        self._rate = rate
-        self._data = data
-        self._length = l
-
-        self._coro = None
-
-        self._nin = 0
-
-    def start(self):
-        """ Start Input Model """
-        if self._coro is not None:
-            raise RuntimeError("Input Model already started")
-        self._coro = cocotb.start_soon(self._run())
-
-    def stop(self) -> None:
-        """ Stop Input Model """
-        if self._coro is None:
-            raise RuntimeError("Input Model never started")
-        self._coro.kill()
-        self._coro = None
-
-    async def wait(self, t):
-        if self._coro is None:
-            raise RuntimeError("Input Model never started")
-        await with_timeout(self._coro, t, 'ns')
-
-    def nconsumed(self):
-        return self._nin
-
-    async def _run(self):
-        """ Input Model Coroutine"""
-
-        self._nin = 0
-        clk_i = self._clk_i
-        rst_i = self._dut.rst_i
-        ready_o = self._dut.ready_o
-        valid_i = self._dut.valid_i
-        data_i = self._dut.data_i
-
-        await delay_cycles(self._dut, 1, False)
-
-        if(not (rst_i.value.is_resolvable and rst_i.value == 0)):
-            await FallingEdge(rst_i)
-
-        await delay_cycles(self._dut, 2, False)
-
-        # Precondition: Falling Edge of Clock
-        while self._nin < self._length:
-            produce = self._rate.generate()
-            din = self._data.generate()
-            success = 0
-            valid_i.value = produce
-            data_i.value = din
-
-            # Wait until ready
-            while(produce and not success):
-                await RisingEdge(clk_i)
-                assert_resolvable(ready_o)
-                #assert ready_o.value.is_resolvable, f"Unresolvable value in ready_o (x or z in some or all bits) at Time {get_sim_time(units='ns')}ns."
-
-                success = True if (ready_o.value == 1) else False
-                if (success):
-                    self._nin += 1
-
-            await FallingEdge(clk_i)
-        return self._nin    
-
 @cocotb.test
 async def reset_test(dut):
     """Test for Initialization"""
@@ -325,8 +251,6 @@ async def single_test(dut):
     rst_i = dut.rst_i
     ready_i = dut.ready_i
     valid_i = dut.valid_i
-    ready_o = dut.ready_o
-    valid_o = dut.valid_o
 
     ready_i.value = 0
     valid_i.value = 0    
@@ -370,8 +294,6 @@ async def bypass_test(dut):
     rst_i = dut.rst_i
     ready_i = dut.ready_i
     valid_i = dut.valid_i
-    ready_o = dut.ready_o
-    valid_o = dut.valid_o
 
     ready_i.value = 0
     valid_i.value = 0    
@@ -384,13 +306,15 @@ async def bypass_test(dut):
     model.start()
     m.start()
     om.start()
-    im.start()
-
+    
+    # Wait a few cycles before starting input
     await FallingEdge(dut.clk_i)
     await FallingEdge(dut.clk_i)
     await FallingEdge(dut.clk_i)
 
+    # Fix: Removed duplicate im.start() from above
     im.start()
+    
     await RisingEdge(dut.valid_i)
     await RisingEdge(dut.clk_i)
 
@@ -422,8 +346,6 @@ async def fill_test(dut):
     rst_i = dut.rst_i
     ready_i = dut.ready_i
     valid_i = dut.valid_i
-    ready_o = dut.ready_o
-    valid_o = dut.valid_o
 
     ready_i.value = 0
     valid_i.value = 0    
@@ -437,7 +359,6 @@ async def fill_test(dut):
     m.start()
     om.start()
     im.start()
-
 
     await RisingEdge(dut.valid_i)
     await RisingEdge(dut.clk_i)
@@ -454,7 +375,7 @@ async def fill_test(dut):
         
 @cocotb.test
 async def fill_empty_test(dut):
-    """Test if fifo_1r1w fills to Depth elements"""
+    """Test if fifo_1r1w fills to Depth elements and then empties"""
 
     Depth = dut.Depth.value
     l = Depth
@@ -469,8 +390,6 @@ async def fill_empty_test(dut):
     rst_i = dut.rst_i
     ready_i = dut.ready_i
     valid_i = dut.valid_i
-    ready_o = dut.ready_o
-    valid_o = dut.valid_o
 
     ready_i.value = 0
     valid_i.value = 0    
@@ -485,7 +404,6 @@ async def fill_empty_test(dut):
     om.start()
     im.start()
 
-
     await RisingEdge(dut.valid_i)
     await RisingEdge(dut.clk_i)
 
@@ -499,6 +417,8 @@ async def fill_empty_test(dut):
     if(not success):
         assert nconsumed != Depth, f"Error! Could not fill fifo with {Depth} elements in {Depth} cycles. Fifo consumed {nconsumed} elements."
 
+    # Fix: Stop the rate-0 OutputModel before overriding it so it doesn't fight over `ready_i`
+    om.stop()
     om = OutputModel(dut, RateGenerator(dut, 1), l)
     om.start()
 

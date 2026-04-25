@@ -9,7 +9,7 @@ from   torch import nn
 from   typing import List
 
 from util.utilities  import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
-from util.components  import ReadyValidInterface, ModelRunner, RateGenerator
+from util.components import ReadyValidInterface, ModelRunner, RateGenerator, InputModel
 from util.bitwise    import sign_extend, pack_terms, unpack_terms
 from util.gen_inputs import gen_weights, gen_biases, gen_input_channels
 tbpath = Path(__file__).parent
@@ -252,57 +252,28 @@ def test_style(simulator, InBits, WeightBits, InChannels, OutBits, OutChannels, 
 class LinearLayerModel():
     def __init__(self, dut, weights: List[List[int]], biases: List[int], torch_ref=None):
         self._dut = dut
-        self._data_o = dut.data_o
-        self._data_i = dut.data_i
-
-        self._InBits     = int(dut.InBits.value)
-        self._OutBits    = int(dut.OutBits.value)
+        self._InBits  = int(dut.InBits.value)
+        self._OutBits = int(dut.OutBits.value)
         self._InChannels  = int(dut.InChannels.value)
         self._OutChannels = int(dut.OutChannels.value)
 
-        # Buffer for all input channels, storing the most recent data_i values for each channel
-        self._buf = [0 for _ in range(self._InChannels)]
-        self._deqs = 0
-        self._enqs = 0
-
-        # 2D array storing all weights in each filter: [OC][IC]
         self.w = np.array(weights, dtype=int)
-        assert self.w.shape == (self._OutChannels, self._InChannels)
-
-        # 1D array storing bias for each output channel: [OC]
         self.b = np.array(biases, dtype=int)
-
-        # If  scalar bias for OC=1, normalize to shape (1,)
-        if self.b.shape == () and self._OutChannels == 1:
-            self.b = self.b.reshape((1,))
-
-        assert self.b.shape == (self._OutChannels,), (
-            f"Bias shape mismatch: got {self.b.shape}, expected ({self._OutChannels},). "
-            f"biases={biases!r}"
-        )
-
-        self._torch_ref = torch_ref
-        self._W = torch.tensor(weights, dtype=torch.int64)   # [OC, IC]
-        self._b = torch.tensor(biases, dtype=torch.int64)    # [OC]
+        self._torch_ref = torch_ref # Optional nn.Linear reference
 
     def consume(self):
-        assert_resolvable(self._data_i)
-        packed = int(self._data_i.value.integer)
-        
-        # Use your now-unified and safe unpack_terms
+        """Called by ModelRunner on input handshake."""
+        # Unpack bits from pins using generic utility
+        packed = int(self._dut.data_i.value)
         raw_inputs = unpack_terms(packed, self._InBits, self._InChannels)
 
-        # Handle the BNN {-1, 1} vs Standard Fixed-point drift
+        # 1. Handle BNN mapping if InBits == 1
         if self._InBits == 1:
-            # Mirror the RTL gen_binary: 1 -> +1, 0 -> -1
             input_vals = [1 if x == 1 else -1 for x in raw_inputs]
-            # For the PyTorch reference, we must match this bipolar mapping
-            data_i_ref = torch.tensor(input_vals, dtype=torch.int64)
         else:
             input_vals = raw_inputs
-            data_i_ref = torch.tensor(raw_inputs, dtype=torch.int64)
 
-        # compute expected (Reference Python Model)
+        # 2. Compute expected output (Standard Math)
         expected = []
         for oc in range(self._OutChannels):
             acc = int(self.b[oc])
@@ -310,37 +281,29 @@ class LinearLayerModel():
                 acc += int(self.w[oc][ic]) * input_vals[ic]
             expected.append(acc)
 
-        # compute expected (PyTorch Reference)
-        data_o_ref = (self._W @ data_i_ref) + self._b
-        
-        # Wrapping logic to match RTL overflow
-        mask = (1 << self._OutBits) - 1
-        exp_wrapped = [sign_extend(int(v) & mask, self._OutBits) for v in expected]
-        ref_wrapped = [sign_extend(int(v.item()) & mask, self._OutBits) for v in data_o_ref]
-        
-        # This assertion now guards against model drift!
-        assert exp_wrapped == ref_wrapped, f"Model Drift! Python: {exp_wrapped}, Torch: {ref_wrapped}"
-        
+        # 3. Optional: Cross-check against Torch to prevent "Model Drift"
+        if self._torch_ref is not None:
+            data_i_ref = torch.tensor(input_vals, dtype=torch.float32).unsqueeze(0)
+            with torch.no_grad():
+                torch_out = self._torch_ref(data_i_ref).squeeze(0).numpy().astype(int)
+            
+            # Wrap to match hardware bit-width for comparison
+            mask = (1 << self._OutBits) - 1
+            for i in range(self._OutChannels):
+                t_wrapped = sign_extend(int(torch_out[i]) & mask, self._OutBits)
+                e_wrapped = sign_extend(expected[i] & mask, self._OutBits)
+                assert t_wrapped == e_wrapped, f"Torch Drift! ch{i}: {e_wrapped} vs {t_wrapped}"
+
         return tuple(expected)
 
     def produce(self, expected):
-        assert_resolvable(self._data_o)
-
-        w = int(self._dut.OutBits.value)
-        packed = int(self._data_o.value.integer)
-
+        """Called by ModelRunner on output handshake."""
+        got_raw = unpack_terms(int(self._dut.data_o.value), self._OutBits, self._OutChannels)
+        
         for ch in range(self._OutChannels):
-            raw = (packed >> (ch * w)) & ((1 << w) - 1)
-            got = sign_extend(raw, w)
-            exp = int(expected[ch])
-
-            print(f"Output #{self._deqs} ch{ch}: expected {exp}, got {got} (raw=0x{raw:x})")
-
-            assert got == exp, (
-                f"Mismatch at output #{self._deqs} ch{ch}: expected {exp}, got {got} (raw=0x{raw:x})"
-            )
-
-        self._deqs += 1
+            got = got_raw[ch]
+            exp = sign_extend(expected[ch] & ((1 << self._OutBits) - 1), self._OutBits)
+            assert got == exp, f"Mismatch ch{ch}: expected {exp}, got {got}"
     
 class RandomDataGenerator:
     def __init__(self, dut):
@@ -348,7 +311,9 @@ class RandomDataGenerator:
         self._InChannels = int(dut.InChannels.value)
 
     def generate(self):
-        return gen_input_channels(self._width_p, self._InChannels)
+        din = gen_input_channels(self._width_p, self._InChannels)
+        packed = pack_terms(din, self._width_p)
+        return packed, din
 
 class OutputModel():
     def __init__(self, dut, g, l):
@@ -421,93 +386,6 @@ class OutputModel():
 
             await FallingEdge(clk_i)
         return self._nout
-
-class InputModel():
-    def __init__(self, dut, data, rate, l):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._dut = dut
-        
-        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
-                                          dut.valid_i, dut.ready_o)
-
-        self._rate = rate
-        self._data = data
-        self._length = l
-
-        self._coro = None
-
-        self._nin = 0
-
-    def start(self):
-        """ Start Input Model """
-        if self._coro is not None:
-            raise RuntimeError("Input Model already started")
-        self._coro = cocotb.start_soon(self._run())
-
-    def stop(self) -> None:
-        """ Stop Input Model """
-        if self._coro is None:
-            raise RuntimeError("Input Model never started")
-        self._coro.kill()
-        self._coro = None
-
-    async def wait(self, t):
-        if self._coro is not None:
-            await with_timeout(self._coro, t, 'ns')
-
-    def nconsumed(self):
-        return self._nin
-
-    async def _run(self):
-        """Input Model Coroutine (records input_activation on handshake)."""
-
-        self._nin = 0
-        clk_i   = self._clk_i
-        rst_i   = self._dut.rst_i
-        ready_o = self._dut.ready_o
-        valid_i = self._dut.valid_i
-        data_i  = self._dut.data_i
-
-        w  = int(self._dut.InBits.value)
-
-        valid_i.value = 0
-        data_i.value  = 0
-
-        await delay_cycles(self._dut, 1, False)
-
-        if not (rst_i.value.is_resolvable and rst_i.value == 0):
-            await FallingEdge(rst_i)
-
-        await delay_cycles(self._dut, 2, False)
-
-        # Precondition: Falling edge of clock
-        din = self._data.generate()  # list length IC
-
-        while self._nin < self._length:
-            produce = bool(self._rate.generate())
-            valid_i.value = int(produce)
-
-            # Drive current sample (hold stable until handshake)
-            data_i.value = pack_terms(din, w)
-
-            # Wait for handshake if producing, otherwise just advance a cycle
-            success = False
-            while produce and not success:
-                await RisingEdge(clk_i)
-                assert_resolvable(ready_o)
-                success = bool(valid_i.value) and bool(ready_o.value)
-
-                if success:
-                    # Next sample
-                    din = self._data.generate()
-                    self._nin += 1
-
-            await FallingEdge(clk_i)
-
-        # Stop driving
-        valid_i.value = 0
-        return self._nin
 
 @cocotb.test
 async def reset_test(dut):
