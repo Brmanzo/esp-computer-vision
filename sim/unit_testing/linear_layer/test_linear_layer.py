@@ -1,17 +1,15 @@
 # test_linear_layer.py
-import numpy as np
 import os
 from   pathlib import Path
 import pytest
 import shutil
-import torch
-from   torch import nn
-from   typing import List
 
-from util.utilities  import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence
+from util.utilities  import runner, lint, clock_start_sequence, reset_sequence
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
-from util.bitwise    import sign_extend, pack_terms, unpack_terms, unpack_weights, unpack_biases
-from util.gen_inputs import gen_weights, gen_biases, gen_input_channels
+from util.bitwise    import unpack_weights, unpack_biases
+from util.gen_inputs import gen_weights, gen_biases
+from functional_models.linear_layer import LinearLayerModel, RandomDataGenerator, output_width
+from util.torch_ref import torch_linear_ref
 tbpath = Path(__file__).parent
 
 import cocotb
@@ -30,31 +28,6 @@ tests = ['reset_test'
         ,'in_fuzz_test'
         ,'out_fuzz_test'
         ,'full_bw_test']
-
-def output_width(width_in: int, weight_width: int, in_channels: int=1) -> str:
-    '''Calculates proper output width for given input width amount of accumulations.'''
-    terms = in_channels
-
-    max_val    = (1 << width_in) - 1       # Unsigned
-    max_weight = (1 << (weight_width - 1))
-
-    max_sum = terms * max_val * max_weight
-    abs_bits = max_sum.bit_length()
-    return str(abs_bits + 1)   # +1 for sign bit
-
-def linear_reference(weights_2d, biases_1d, InChannels, OutChannels):
-    # One output channel instantiates a single neuron
-    linear = nn.Linear(in_features=InChannels, out_features=OutChannels, bias=True)
-
-    # Disable gradient tracking
-    linear.weight.requires_grad = False
-    linear.bias.requires_grad = False
-
-    # Convert to float32 for deterministic conv math
-    linear.weight.data = torch.tensor(weights_2d, dtype=torch.float32)
-    linear.bias.data   = torch.tensor(biases_1d, dtype=torch.float32)
-
-    return linear
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
@@ -198,72 +171,6 @@ def test_style(simulator, InBits, WeightBits, InChannels, OutBits, OutChannels, 
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"])
 
-class LinearLayerModel():
-    def __init__(self, dut, weights: List[List[int]], biases: List[int], torch_ref=None):
-        self._dut = dut
-        self._InBits  = int(dut.InBits.value)
-        self._OutBits = int(dut.OutBits.value)
-        self._InChannels  = int(dut.InChannels.value)
-        self._OutChannels = int(dut.OutChannels.value)
-
-        self.w = np.array(weights, dtype=int)
-        self.b = np.array(biases, dtype=int)
-        self._torch_ref = torch_ref # Optional nn.Linear reference
-
-    def consume(self):
-        """Called by ModelRunner on input handshake."""
-        # Unpack bits from pins using generic utility
-        packed = int(self._dut.data_i.value)
-        raw_inputs = unpack_terms(packed, self._InBits, self._InChannels)
-
-        # 1. Handle BNN mapping if InBits == 1
-        if self._InBits == 1:
-            input_vals = [1 if x == 1 else -1 for x in raw_inputs]
-        else:
-            input_vals = raw_inputs
-
-        # 2. Compute expected output (Standard Math)
-        expected = []
-        for oc in range(self._OutChannels):
-            acc = int(self.b[oc])
-            for ic in range(self._InChannels):
-                acc += int(self.w[oc][ic]) * input_vals[ic]
-            expected.append(acc)
-
-        # 3. Optional: Cross-check against Torch to prevent "Model Drift"
-        if self._torch_ref is not None:
-            data_i_ref = torch.tensor(input_vals, dtype=torch.float32).unsqueeze(0)
-            with torch.no_grad():
-                torch_out = self._torch_ref(data_i_ref).squeeze(0).numpy().astype(int)
-            
-            # Wrap to match hardware bit-width for comparison
-            mask = (1 << self._OutBits) - 1
-            for i in range(self._OutChannels):
-                t_wrapped = sign_extend(int(torch_out[i]) & mask, self._OutBits)
-                e_wrapped = sign_extend(expected[i] & mask, self._OutBits)
-                assert t_wrapped == e_wrapped, f"Torch Drift! ch{i}: {e_wrapped} vs {t_wrapped}"
-
-        return [expected]
-
-    def produce(self, expected):
-        """Called by ModelRunner on output handshake."""
-        got_raw = unpack_terms(int(self._dut.data_o.value), self._OutBits, self._OutChannels)
-        
-        for ch in range(self._OutChannels):
-            got = got_raw[ch]
-            exp = sign_extend(expected[ch] & ((1 << self._OutBits) - 1), self._OutBits)
-            assert got == exp, f"Mismatch ch{ch}: expected {exp}, got {got}"
-    
-class RandomDataGenerator:
-    def __init__(self, dut):
-        self._width_p = int(dut.InBits.value)
-        self._InChannels = int(dut.InChannels.value)
-
-    def generate(self):
-        din = gen_input_channels(self._width_p, self._InChannels)
-        packed = pack_terms(din, self._width_p)
-        return packed, din
-
 @cocotb.test
 async def reset_test(dut):
     """Test for Initialization"""
@@ -292,7 +199,7 @@ async def single_test(dut):
     biases_1d = unpack_biases(int(os.environ["INJECTED_BIASES_INT"]), BW, OC)
     
     # Instantiate PyTorch reference model
-    linear = linear_reference(weights_2d, biases_1d, IC, OC)
+    linear = torch_linear_ref(weights_2d, biases_1d, IC, OC)
     linear.eval()
 
     model = LinearLayerModel(dut, weights_2d, biases_1d)
@@ -353,7 +260,7 @@ async def rate_tests(dut, in_rate: float, out_rate: float, N_vec: int = 200):
     biases_1d  = unpack_biases(int(os.environ["INJECTED_BIASES_INT"]), BW, OC)
 
     # Instantiate PyTorch reference model
-    linear = linear_reference(weights_2d, biases_1d, IC, OC)
+    linear = torch_linear_ref(weights_2d, biases_1d, IC, OC)
     linear.eval()
 
     # --- Model + runner ---
