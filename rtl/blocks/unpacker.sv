@@ -82,7 +82,7 @@ module unpacker #(
   assign done_o = done;
   // Elastic Buffer to decouple unpacking from downstream logic
   elastic #(
-     .Width(ElasticWidth)
+     .InBits(ElasticWidth)
     ,.DatapathGate (1)
     ,.DatapathReset(1)
   ) elastic_inst (

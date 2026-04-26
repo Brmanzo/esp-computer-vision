@@ -188,7 +188,7 @@ module conv_layer #(
 
   // Delay between Window output and filter input
   elastic #(
-     .Width        (InChannels * KernelArea * InBits)
+     .InBits        (InChannels * KernelArea * InBits)
     ,.DatapathGate (1)
     ,.DatapathReset(1)
   ) elastic_inst (

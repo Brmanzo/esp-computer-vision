@@ -1,0 +1,6 @@
+{
+    "top": "elastic",
+    "files":
+    ["rtl/lib/elastic.sv"
+    ]
+}

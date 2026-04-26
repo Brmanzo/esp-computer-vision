@@ -1,0 +1,6 @@
+{
+    "top": "icestorm_ram",
+    "files":
+    ["rtl/lib/icestorm_ram.sv"
+    ]
+}

@@ -54,7 +54,7 @@ module skid_buffer #(
 
   // Elastic Head to latch input for bypass logic
   elastic #(
-     .Width(Width)
+     .InBits(Width)
   ) elastic_inst (
      .clk_i  (clk_i)
     ,.rst_i  (rst_i)

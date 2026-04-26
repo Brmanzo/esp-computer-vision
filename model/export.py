@@ -47,9 +47,8 @@ def fold_batchnorm_into_conv(conv_layer: QuantConv2d, bn_layer: torch.nn.BatchNo
     # 1. Calculate the standard folded bias (float)
     folded_bias = (conv_bias - mean) * bn_scale + beta
     
-    # 2. HARDWARE TRICK: Scale the bias into the integer domain!
-    # Because your hardware does (Input * q) + Bias, we divide the float bias 
-    # by the total mathematical scale so you can add it directly to your integer accumulator.
+    # 2. Scale the bias into the integer domain
+
     total_scale = w_scale * bn_scale
     hw_bias = folded_bias / total_scale
 

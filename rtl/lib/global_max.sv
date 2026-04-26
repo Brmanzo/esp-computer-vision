@@ -84,7 +84,7 @@ module global_max #(
   wire  [0:0] out_fire  = in_fire && last_term;
 
   elastic #(
-     .Width        (InChannels*OutBits)
+     .InBits        (InChannels*OutBits)
     ,.DatapathGate (1)
     ,.DatapathReset(1)
   ) elastic_inst (

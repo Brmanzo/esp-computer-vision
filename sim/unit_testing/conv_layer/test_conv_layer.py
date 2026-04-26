@@ -7,7 +7,7 @@ import torch
 import torch.nn.functional as F
 from   typing import List, Optional
 
-from util.utilities  import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
+from util.utilities  import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence
 from util.bitwise    import sign_extend, pack_terms, unpack_terms, unpack_kernel_weights
 from util.gen_inputs import gen_kernels, gen_input_channels
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel

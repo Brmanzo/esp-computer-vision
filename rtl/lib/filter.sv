@@ -45,7 +45,7 @@ module filter #(
   /* -------------------------------- Elastic Pipeline Stage -------------------------------- */
   wire [0:0] valid_o_internal, ready_i_internal;
   elastic #(
-     .Width        (InChannels * AccBits)
+     .InBits        (InChannels * AccBits)
     ,.DatapathGate (1)
     ,.DatapathReset(1)
   ) elastic_inst (
@@ -87,7 +87,7 @@ module filter #(
   end
 
   elastic #(
-     .Width        (OutBits)
+     .InBits        (OutBits)
     ,.DatapathGate (1)
     ,.DatapathReset(1)
   ) output_elastic_inst (

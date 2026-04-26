@@ -1,28 +1,29 @@
 // elastic.sv
 // Bradley Manzo, 2026
 
+/* verilator lint_off WIDTHTRUNC */
 `timescale 1ns / 1ps
 module elastic #(
-     parameter int unsigned Width = 8
-    ,parameter logic [0:0] DatapathGate = 0
-    ,parameter logic [0:0] DatapathReset = 0
+     parameter int unsigned InBits = 8
+    ,parameter logic [0:0] DatapathGate  = 1'b0
+    ,parameter logic [0:0] DatapathReset = 1'b0
 )  (
    input [0:0] clk_i
   ,input [0:0] rst_i
 
-  ,input  [Width - 1:0] data_i
-  ,input  [0:0]         valid_i
-  ,output [0:0]         ready_o
+  ,output [0:0]        ready_o
+  ,input  [0:0]        valid_i
+  ,input  [InBits-1:0] data_i
 
-  ,output [0:0]         valid_o
-  ,output [Width - 1:0] data_o
-  ,input  [0:0]         ready_i
+  ,input  [0:0]        ready_i
+  ,output [0:0]        valid_o
+  ,output [InBits-1:0] data_o
 );
 
   /* ------------------------------ FSM Logic ------------------------------ */
   typedef enum logic [0:0] {Idle, ValidData} fsm_e;
   fsm_e               state_q, state_d;
-  logic [Width - 1:0] data_q,  data_d;
+  logic [InBits - 1:0] data_q,  data_d;
   assign data_o  = data_q;
 
   /* -------------------------- Output Assignments -------------------------- */

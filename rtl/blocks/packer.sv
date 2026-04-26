@@ -85,7 +85,7 @@ module packer #(
   wire [PackedWidth-1:0] elastic_data = flush_partial ? packed_q : packed_d;
 
   elastic #(
-     .Width        (PackedWidth)
+     .InBits        (PackedWidth)
     ,.DatapathGate (1)
     ,.DatapathReset(1)
   ) elastic_inst (

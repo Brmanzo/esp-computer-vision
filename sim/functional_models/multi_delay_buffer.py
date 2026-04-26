@@ -1,15 +1,7 @@
 
 from collections import deque
 from typing import Optional
-
-def unpack_data_o_buffer(BufferWidth, BufferRows, InputChannels, packed_o):
-    mask = (1 << BufferWidth) - 1
-    out = [[0]*BufferRows for _ in range(InputChannels)]
-    for ch in range(InputChannels):
-        for r in range(BufferRows):
-            bitpos = (ch * BufferRows + r) * BufferWidth
-            out[ch][r] = (packed_o >> bitpos) & mask
-    return out
+from util.bitwise import unpack_channels
 
 class MultiDelayBufferModel:
     def __init__(
@@ -136,11 +128,12 @@ class MultiDelayBufferModel:
             )
 
         got_packed = int(val.integer)
-        got = unpack_data_o_buffer(
-            self._BufferWidth,
-            self._BufferRows,
-            self._InputChannels,
-            got_packed
+        got = unpack_channels(
+            packed=got_packed, 
+            bits=self._BufferWidth, 
+            in_channels=self._InputChannels, 
+            term_count=self._BufferRows, 
+            signed=False
         )
 
         expected_list = list(expected)

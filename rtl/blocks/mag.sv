@@ -24,7 +24,7 @@ module mag #(
   logic [WidthIn-1:0] gx, gy;
 
   elastic
-  #(.Width((WidthIn)*2)
+  #(.InBits((WidthIn)*2)
    ,.DatapathGate(1'b1)
    ,.DatapathReset(1)
    )

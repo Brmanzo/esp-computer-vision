@@ -307,12 +307,18 @@ class OutputModel():
         length = self._length
         if length is None:
             raise RuntimeError("Output Model length not set")
+            
         await FallingEdge(self._clk_i)
 
         if not (self._rst_i.value.is_resolvable and self._rst_i.value == 0):
             await FallingEdge(self._rst_i)
 
         while self._nout < length:
+            # 1. ADD THIS AWAIT HERE!
+            # Always yield to the simulator to advance time 
+            # and prevent zero-cycle infinite loops.
+            await FallingEdge(self._clk_i) 
+
             consume = self._generator.generate() if self._generator else 1
             
             if self._ready_pin is not None:
@@ -329,12 +335,11 @@ class OutputModel():
                         assert valid_val.is_resolvable, "Unresolvable value in valid_o"
                     success = True if (int(valid_val) == 1) else False
                 else:
-                    # Fixed-Latency Mode: Rely on the ModelRunner's completion count
+                    # Fixed-Latency Mode
                     if self._runner is not None and self._runner.nproduced() > self._nout:
                         success = True
 
             if success:
                 self._nout += 1
 
-        await FallingEdge(self._clk_i)
         return self._nout
