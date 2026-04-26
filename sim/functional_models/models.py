@@ -120,8 +120,12 @@ class MultiDelayBufferModel:
             (packed_in >> (ch * self._BufferWidth)) & self._mask 
             for ch in range(self._InputChannels)
         ]
-        return self.step(words, in_fire=True)
-
+        
+        result = self.step(words, in_fire=True)
+        
+        # Only wrap in a list if we actually have an expected output!
+        return [result] if result is not None else None
+    
     def produce(self, expected):
         """Cocotb verification interface"""
         val = self._data_o.value

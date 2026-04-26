@@ -1,6 +1,5 @@
 # test_adder_tree.py
 from   decimal import Decimal
-import math
 from   pathlib import Path
 import pytest
 

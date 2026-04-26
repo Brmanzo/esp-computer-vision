@@ -4,13 +4,13 @@ from   pathlib import Path
 import pytest
 
 from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence
-from util.components import ReadyValidInterface, ModelRunner, RateGenerator, InputModel
+from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from util.gen_inputs import gen_random_unsigned
 tbpath = Path(__file__).parent
 
 import cocotb  
 from   cocotb.utils import get_sim_time
-from   cocotb.triggers import Timer,  RisingEdge, FallingEdge, with_timeout
+from   cocotb.triggers import Timer,  RisingEdge, FallingEdge
 from   cocotb.result import SimTimeoutError
    
 import random
@@ -151,78 +151,6 @@ class RandomDataGenerator():
         # Update signature: StreamDriver expects (packed_vals, raw_vals)
         val = gen_random_unsigned(int(self._dut.Width.value), random)
         return (val, val)
-
-class OutputModel():
-    def __init__(self, dut, g, l):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._dut = dut
-        
-        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
-                                          dut.ready_o, dut.valid_i)
-
-        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
-                                           dut.ready_i, dut.valid_o)
-        self._generator = g
-        self._length = l
-
-        self._coro = None
-
-        self._nout = 0
-
-    def start(self):
-        """ Start Output Model """
-        if self._coro is not None:
-            raise RuntimeError("Output Model already started")
-        self._coro = cocotb.start_soon(self._run())
-
-    def stop(self) -> None:
-        """ Stop Output Model """
-        if self._coro is None:
-            raise RuntimeError("Output Model never started")
-        self._coro.kill()
-        self._coro = None
-
-    async def wait(self, t):
-        if self._coro is None:
-            raise RuntimeError("Output Model never started")
-        await with_timeout(self._coro, t, 'ns')
-
-    def nproduced(self):
-        return self._nout
-
-    async def _run(self):
-        """ Output Model Coroutine"""
-
-        self._nout = 0
-        clk_i = self._clk_i
-        ready_i = self._dut.ready_i
-        rst_i = self._dut.rst_i
-        valid_o = self._dut.valid_o
-
-        await FallingEdge(clk_i)
-
-        if(not (rst_i.value.is_resolvable and rst_i.value == 0)):
-            await FallingEdge(rst_i)
-
-        # Precondition: Falling Edge of Clock
-        while self._nout < self._length:
-            consume = self._generator.generate()
-            success = 0
-            ready_i.value = consume
-
-            # Wait until valid
-            while(consume and not success):
-                await RisingEdge(clk_i)
-                assert_resolvable(valid_o)
-                #assert valid_o.value.is_resolvable, f"Unresolvable value in valid_o (x or z in some or all bits) at Time {get_sim_time(units='ns')}ns."
-
-                success = True if (valid_o.value == 1) else False
-                if (success):
-                    self._nout += 1
-
-            await FallingEdge(clk_i)
-        return self._nout
 
 @cocotb.test
 async def reset_test(dut):

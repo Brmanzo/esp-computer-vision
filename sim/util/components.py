@@ -3,6 +3,7 @@ import cocotb
 import random
 from util.utilities import assert_resolvable
 from cocotb.triggers import RisingEdge, with_timeout
+from cocotb.triggers import RisingEdge, FallingEdge, Timer
 
 class ReadyValidInterface():
     def __init__(self, clk, reset, valid, ready):
@@ -54,85 +55,100 @@ class ReadyValidInterface():
             await self._handshake()
 
 class ModelRunner:
-    def __init__(self, dut, model):
+    def __init__(self, dut, model, valid_i_pin=None, ready_o_pin=None, valid_o_pin=None, ready_i_pin=None):
         self._clk_i = dut.clk_i
         self._rst_i = dut.rst_i
-
-        self._rv_in = ReadyValidInterface(
-            self._clk_i, self._rst_i,
-            dut.valid_i, dut.ready_o
-        )
-
-        self._rv_out = ReadyValidInterface(
-            self._clk_i, self._rst_i,
-            dut.valid_o, dut.ready_i
-        )
-
+        self._dut = dut
         self._model = model
+        
+        # AUTO-DETECT: Fall back to standard ready/valid pins if not explicitly overridden
+        self._valid_i = valid_i_pin if valid_i_pin is not None else getattr(dut, 'valid_i', None)
+        self._ready_o = ready_o_pin if ready_o_pin is not None else getattr(dut, 'ready_o', None)
+        self._valid_o = valid_o_pin if valid_o_pin is not None else getattr(dut, 'valid_o', None)
+        self._ready_i = ready_i_pin if ready_i_pin is not None else getattr(dut, 'ready_i', None)
+
         self._events = queue.SimpleQueue()
+        self._seen_expected = False
+        self._nout = 0
 
         self._coro_run_input = None
         self._coro_run_output = None
-        
-        # Flag to track when the pipeline is officially primed
-        self._seen_expected = False
 
     def start(self):
         if self._coro_run_input is not None or self._coro_run_output is not None:
             raise RuntimeError("Model already started")
-
         self._coro_run_input = cocotb.start_soon(self._run_input())
         self._coro_run_output = cocotb.start_soon(self._run_output())
 
+    def stop(self):
+        if self._coro_run_input is None and self._coro_run_output is None:
+            raise RuntimeError("Model never started")
+        if self._coro_run_input:
+            self._coro_run_input.kill()
+            self._coro_run_input = None
+        if self._coro_run_output:
+            self._coro_run_output.kill()
+            self._coro_run_output = None
+
+    def nproduced(self):
+        return self._nout
+
     async def _run_input(self):
         while True:
-            await self._rv_in.handshake(None)
+            await RisingEdge(self._clk_i)
+            if self._rst_i.value.is_resolvable and int(self._rst_i.value) == 1:
+                continue
+
+            # Evaluate Input Handshake
+            v = self._valid_i.value == 1 if self._valid_i is not None else True
+            r = self._ready_o.value == 1 if self._ready_o is not None else True
+            
+            if not (v and r):
+                continue
 
             expected = self._model.consume()
 
+            # Restore backward compatibility for single items vs lists
             if expected is not None:
-                if isinstance(expected, list):
-                    expected = tuple(expected)
+                if isinstance(expected, (list, tuple)):
                     for item in expected:
                         self._events.put(item)
                 else:
                     self._events.put(expected)
 
     async def _run_output(self):
-        from cocotb.triggers import Timer
         from decimal import Decimal
-        
         while True:
-            await self._rv_out.handshake(None)
-            
+            await RisingEdge(self._clk_i)
+            if self._rst_i.value.is_resolvable and int(self._rst_i.value) == 1:
+                continue
+
+            # Evaluate Output Handshake
+            if self._valid_o is not None or self._ready_i is not None:
+                v = self._valid_o.value == 1 if self._valid_o is not None else True
+                r = self._ready_i.value == 1 if self._ready_i is not None else True
+                if not (v and r):
+                    continue
+            else:
+                # Fixed-latency Mode: Wait until we actually expect something
+                if self._events.empty():
+                    continue
+
             # 1. Resolve same-cycle Cocotb scheduling races
             if self._events.qsize() == 0:
                 await Timer(Decimal(0), units="ns")
-                
+
             # 2. Ignore warmup garbage from deep pipelines
             if self._events.qsize() > 0:
                 self._seen_expected = True
             elif not self._seen_expected:
-                continue # Ignore valid outputs until the model is primed
+                continue 
 
-            assert self._events.qsize() > 0, (
-                "Error! Module produced output without expected input"
-            )
+            assert self._events.qsize() > 0, "Error! Module produced output without expected input"
 
             expected = self._events.get()
             self._model.produce(expected)
-
-    def stop(self):
-        if self._coro_run_input is None and self._coro_run_output is None:
-            raise RuntimeError("Model never started")
-
-        if self._coro_run_input is not None:
-            self._coro_run_input.kill()
-            self._coro_run_input = None
-
-        if self._coro_run_output is not None:
-            self._coro_run_output.kill()
-            self._coro_run_output = None
+            self._nout += 1
 
 class StreamDriver:
     def __init__(self, clk, rst, data_pins, valid_pin, ready_pin):
@@ -238,3 +254,87 @@ class InputModel():
 
     def nconsumed(self):
         return self._nin
+    from cocotb.triggers import FallingEdge, with_timeout
+from cocotb.triggers import FallingEdge, RisingEdge, with_timeout
+from cocotb.triggers import FallingEdge, RisingEdge, with_timeout
+
+class OutputModel():
+    def __init__(self, dut, generator=None, length=None, valid_pin=None, ready_pin=None, runner=None):
+        self._clk_i = dut.clk_i
+        self._rst_i = dut.rst_i
+        self._dut = dut
+
+        self._length = length
+
+        # Duck-typing: Handle legacy positional calls like OutputModel(dut, runner, length)
+        # If 'generator' was populated positionally but is actually a runner (no generate method)
+        if generator is not None and not hasattr(generator, 'generate'):
+            self._runner = generator
+            self._generator = None
+        else:
+            # Otherwise, respect the explicit keyword arguments
+            self._generator = generator
+            self._runner = runner
+
+        # Auto-detect standard pins for backward compatibility
+        self._valid_pin = valid_pin if valid_pin is not None else getattr(dut, 'valid_o', None)
+        self._ready_pin = ready_pin if ready_pin is not None else getattr(dut, 'ready_i', None)
+
+        self._coro = None
+        self._nout = 0
+
+    def start(self):
+        if self._coro is not None:
+            raise RuntimeError("Output Model already started")
+        self._coro = cocotb.start_soon(self._run())
+
+    def stop(self):
+        if self._coro is None:
+            raise RuntimeError("Output Model never started")
+        self._coro.kill()
+        self._coro = None
+
+    async def wait(self, t):
+        if self._coro is None:
+            raise RuntimeError("Output Model never started")
+        await with_timeout(self._coro, t, 'ns')
+
+    def nproduced(self):
+        return self._nout
+
+    async def _run(self):
+        self._nout = 0
+        length = self._length
+        if length is None:
+            raise RuntimeError("Output Model length not set")
+        await FallingEdge(self._clk_i)
+
+        if not (self._rst_i.value.is_resolvable and self._rst_i.value == 0):
+            await FallingEdge(self._rst_i)
+
+        while self._nout < length:
+            consume = self._generator.generate() if self._generator else 1
+            
+            if self._ready_pin is not None:
+                self._ready_pin.value = consume
+
+            success = False
+            while consume and not success:
+                await RisingEdge(self._clk_i)
+                
+                if self._valid_pin is not None:
+                    # Streaming Handshake Mode
+                    valid_val = self._valid_pin.value if hasattr(self._valid_pin, "value") else self._valid_pin
+                    if hasattr(valid_val, "is_resolvable"):
+                        assert valid_val.is_resolvable, "Unresolvable value in valid_o"
+                    success = True if (int(valid_val) == 1) else False
+                else:
+                    # Fixed-Latency Mode: Rely on the ModelRunner's completion count
+                    if self._runner is not None and self._runner.nproduced() > self._nout:
+                        success = True
+
+            if success:
+                self._nout += 1
+
+        await FallingEdge(self._clk_i)
+        return self._nout

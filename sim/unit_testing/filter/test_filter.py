@@ -4,27 +4,18 @@ import pytest
 
 from util.gen_inputs import gen_random_signed
 from util.bitwise    import sign_extend, pack_channels, unpack_channels
-from util.utilities  import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
-from util.components import ModelRunner, RateGenerator, InputModel
+from util.utilities  import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence
+from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 tbpath = Path(__file__).parent
 
 import cocotb
-from   cocotb.triggers import RisingEdge, FallingEdge, with_timeout
+from   cocotb.triggers import FallingEdge
 from   cocotb.result import SimTimeoutError
    
 import random
 random.seed(50)
 
 timescale = "1ps/1ps"
-
-def unpack_unsigned_inputs(packed, in_bits, in_channels, term_count):
-    terms = [[] for _ in range(in_channels)]
-    mask = (1 << in_bits) - 1
-    for ch in range(in_channels):
-        for i in range(term_count):
-            raw = (packed >> ((ch * term_count + i) * in_bits)) & mask
-            terms[ch].append(raw)
-    return terms    
 
 def acc_width(in_bits: int, weight_bits: int, kernel_width: int, in_channels: int) -> int:
     kernel_area = kernel_width * kernel_width
@@ -101,9 +92,9 @@ class FilterModel:
         weights = unpack_channels(p_wgt, self._WeightBits, self._InChannels, self._KernelArea)
         
         if self._InBits == 1:
-            windows = unpack_unsigned_inputs(p_win, 1, self._InChannels, self._KernelArea)
+            windows = unpack_channels(p_win, 1, self._InChannels, self._KernelArea, signed=False)
         else:
-            windows = unpack_channels(p_win, self._InBits, self._InChannels, self._KernelArea)
+            windows = unpack_channels(p_win, self._InBits, self._InChannels, self._KernelArea, signed=True)
 
         total = 0
         for ch in range(self._InChannels):
@@ -122,7 +113,7 @@ class FilterModel:
         else:
             exp = sign_extend(total, self._OutBits)
         
-        return (exp, windows, weights)
+        return [(exp, windows, weights)]
 
     def produce(self, expected_tuple):
         assert_resolvable(self._dut.data_o)
@@ -141,74 +132,6 @@ class FilterModel:
             print(f"DEBUG: Raw RTL Bits: {bin(raw_out)}, Expected: {expected}, Got: {got}")
 
         assert got == expected, f"Mismatch. Expected {expected}, got {got}"
-
-
-class OutputModel():
-    def __init__(self, dut, g, l):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._dut = dut
-
-        self._generator = g
-        self._length = l
-
-        self._coro = None
-
-        self._nout = 0
-
-    def start(self):
-        """ Start Output Model """
-        if self._coro is not None:
-            raise RuntimeError("Output Model already started")
-        self._coro = cocotb.start_soon(self._run())
-
-    def stop(self) -> None:
-        """ Stop Output Model """
-        if self._coro is None:
-            raise RuntimeError("Output Model never started")
-        self._coro.kill()
-        self._coro = None
-
-    async def wait(self, t):
-        if self._coro is None:
-            raise RuntimeError("Output Model never started")
-        await with_timeout(self._coro, t, 'ns')
-
-    def nproduced(self):
-        return self._nout
-
-    async def _run(self):
-        """ Output Model Coroutine"""
-
-        self._nout = 0
-        clk_i = self._clk_i
-        ready_i = self._dut.ready_i
-        rst_i = self._dut.rst_i
-        valid_o = self._dut.valid_o
-
-        await FallingEdge(clk_i)
-
-        if(not (rst_i.value.is_resolvable and rst_i.value == 0)):
-            await FallingEdge(rst_i)
-
-        # Precondition: Falling Edge of Clock
-        while self._nout < self._length:
-            consume = self._generator.generate()
-            success = 0
-            ready_i.value = consume
-
-            # Wait until valid
-            while(consume and not success):
-                await RisingEdge(clk_i)
-                assert_resolvable(valid_o)
-                #assert valid_o.value.is_resolvable, f"Unresolvable value in valid_o (x or z in some or all bits) at Time {get_sim_time(units='ns')}ns."
-
-                success = True if (valid_o.value == 1) else False
-                if (success):
-                    self._nout += 1
-
-            await FallingEdge(clk_i)
-        return self._nout
         
 class RandomDataGenerator:
     def __init__(self, dut):

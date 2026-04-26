@@ -8,9 +8,9 @@ import torch.nn.functional as F
 from   typing import List, Optional
 
 from util.utilities  import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
-from util.bitwise    import sign_extend, pack_terms, unpack_terms
+from util.bitwise    import sign_extend, pack_terms, unpack_terms, unpack_kernel_weights
 from util.gen_inputs import gen_kernels, gen_input_channels
-from util.components import ReadyValidInterface, ModelRunner, RateGenerator, InputModel
+from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 
 tbpath = Path(__file__).parent
 
@@ -42,59 +42,6 @@ def output_width(width_in: int, weight_width: int, kernel_width: int=3, in_chann
     max_sum = terms * max_val * max_weight
     abs_bits = max_sum.bit_length()
     return str(abs_bits + 1)
-
-def pack_weights_in(weights_4d, width, kernel_area, IC):
-    """
-    weights_4d: [OC][IC][kernel_area] values (signed ints)
-    Packing order: k fastest, then ic, then oc
-      shift = width * (k + kernel_area*(ic + IC*oc))
-    """
-    mask = (1 << width) - 1
-    lo, hi = -(1 << (width - 1)), (1 << (width - 1)) - 1
-
-    out = 0
-    for oc, ws_by_ic in enumerate(weights_4d):
-        assert len(ws_by_ic) == IC
-        for ic, ws in enumerate(ws_by_ic):
-            assert len(ws) == kernel_area
-            for k, w in enumerate(ws):
-                assert lo <= w <= hi
-                shift = width * (k + kernel_area * (ic + IC * oc))
-                out |= (w & mask) << shift
-    return out
-
-def unpack_weights(packed_val: int, WW: int, OC: int, IC: int, K: int):
-    """Reconstructs the 4D weights matrix from the Verilog parameter integer."""
-    mask = (1 << WW) - 1
-    sign_bit = 1 << (WW - 1)
-    
-    kernels4 = []
-    bit_shift = 0
-    
-    # Must mirror the exact same LSB -> MSB iteration order used in packing
-    for oc in range(OC):
-        oc_list = []
-        for ic in range(IC):
-            ic_list = []
-            for r in range(K):
-                r_list = []
-                for c in range(K):
-                    # Extract the specific bits for this weight
-                    w_bits = (packed_val >> bit_shift) & mask
-                    
-                    # Convert from two's complement back to a signed Python integer
-                    if w_bits & sign_bit:
-                        w = w_bits - (1 << WW)
-                    else:
-                        w = w_bits
-                        
-                    r_list.append(w)
-                    bit_shift += WW
-                ic_list.append(r_list)
-            oc_list.append(ic_list)
-        kernels4.append(oc_list)
-        
-    return kernels4
 
 def to_torch_input(input_activation):
     # input_activation: [IC][H][W]
@@ -463,78 +410,6 @@ class RandomDataGenerator:
         packed_din = pack_terms(raw_din, self._width_p)
         return (packed_din, raw_din)
 
-class OutputModel():
-    def __init__(self, dut, g, l):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._dut = dut
-        
-        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
-                                          dut.valid_i, dut.ready_o)
-
-        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
-                                           dut.valid_o, dut.ready_i)
-        self._generator = g
-        self._length = l
-
-        self._coro = None
-
-        self._nout = 0
-
-    def start(self):
-        """ Start Output Model """
-        if self._coro is not None:
-            raise RuntimeError("Output Model already started")
-        self._coro = cocotb.start_soon(self._run())
-
-    def stop(self) -> None:
-        """ Stop Output Model """
-        if self._coro is None:
-            raise RuntimeError("Output Model never started")
-        self._coro.kill()
-        self._coro = None
-
-    async def wait(self, t):
-        if self._coro is None:
-            raise RuntimeError("Output Model never started")
-        await with_timeout(self._coro, t, 'ns')
-
-    def nproduced(self):
-        return self._nout
-
-    async def _run(self):
-        """ Output Model Coroutine"""
-
-        self._nout = 0
-        clk_i = self._clk_i
-        ready_i = self._dut.ready_i
-        rst_i = self._dut.rst_i
-        valid_o = self._dut.valid_o
-
-        await FallingEdge(clk_i)
-
-        if(not (rst_i.value.is_resolvable and rst_i.value == 0)):
-            await FallingEdge(rst_i)
-
-        # Precondition: Falling Edge of Clock
-        while self._nout < self._length:
-            consume = self._generator.generate()
-            success = 0
-            ready_i.value = consume
-
-            # Wait until valid
-            while(consume and not success):
-                await RisingEdge(clk_i)
-                assert_resolvable(valid_o)
-                #assert valid_o.value.is_resolvable, f"Unresolvable value in valid_o (x or z in some or all bits) at Time {get_sim_time(units='ns')}ns."
-
-                success = True if ready_i.value == 1 and valid_o.value == 1 else False
-                if (success):
-                    self._nout += 1
-
-            await FallingEdge(clk_i)
-        return self._nout
-
 @cocotb.test
 async def reset_test(dut):
     """Test for Initialization"""
@@ -563,7 +438,7 @@ async def single_test(dut):
     rate = 1
 
     packed_weights = int(os.environ["INJECTED_WEIGHTS_INT"])
-    kernels_4d = unpack_weights(packed_weights, WW, OC, IC, K)
+    kernels_4d = unpack_kernel_weights(packed_weights, WW, OC, IC, K)
     
     model = ConvLayerModel(dut, kernels_4d)
     m = ModelRunner(dut, model)
@@ -627,7 +502,7 @@ async def rate_tests(dut, in_rate, out_rate):
     timeout_ns        = int((H_out * N_in + 500) / slow)
 
     packed_weights = int(os.environ["INJECTED_WEIGHTS_INT"])
-    kernels_4d = unpack_weights(packed_weights, WW, OC, IC, K)
+    kernels_4d = unpack_kernel_weights(packed_weights, WW, OC, IC, K)
 
     model = ConvLayerModel(dut, kernels_4d, output_activation, input_activation)
     m = ModelRunner(dut, model)

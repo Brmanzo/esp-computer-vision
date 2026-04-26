@@ -13,12 +13,16 @@ def pack_terms(terms, in_bits):
         packed |= (x & mask) << (i * in_bits)
     return packed
 
-def unpack_terms(packed, term_bits, input_count):
+def unpack_terms(packed, term_bits, input_count, signed=True):
     unpacked = []
     mask = (1 << term_bits) - 1
     for i in range(input_count):
         raw = (packed >> (i * term_bits)) & mask
-        if term_bits == 1:
+        
+        # Logic merge: 
+        # If unsigned OR it's a single bit, take raw. 
+        # Otherwise, sign_extend.
+        if not signed or term_bits == 1:
             unpacked.append(raw)
         else:
             unpacked.append(sign_extend(raw, term_bits))
@@ -34,13 +38,56 @@ def pack_channels(channel_data: list[list[int]], bits: int) -> int:
     flat_terms = [term for channel in channel_data for term in channel]
     return pack_terms(flat_terms, bits)
 
-def unpack_channels(packed: int, bits: int, in_channels: int, term_count: int) -> list[list[int]]:
+def unpack_channels(packed: int, bits: int, in_channels: int, term_count: int, signed: bool = True) -> list[list[int]]:
     """
-    Unified 2D unpacker.
-    Logic: Unpacks a flat list then reshapes it into [OC][IC] or [CH][TERM] structure.
+    Unified 2D unpacker supporting both signed and unsigned data.
     """
-    # 1. Get the flat list from the generic atomic unpacker
-    flat_list = unpack_terms(packed, bits, in_channels * term_count)
+    # 1. Use the atomic unpacker to get a flat list
+    # We pass the signed flag down or handle it in the terms loop
+    flat_list = unpack_terms(packed, bits, in_channels * term_count, signed=signed)
     
-    # 2. Reshape into 2D list using slicing
+    # 2. Reshape into [in_channels][term_count]
     return [flat_list[i * term_count : (i + 1) * term_count] for i in range(in_channels)]
+
+def unpack_weights(packed_val: int, WW: int, OC: int, IC: int) -> list[list[int]]:
+    """
+    Reconstructs [OC][IC] weights using the unified 2D unpacker.
+    """
+    return unpack_channels(
+        packed=packed_val, 
+        bits=WW, 
+        in_channels=OC, 
+        term_count=IC
+    )
+
+def unpack_biases(packed_val: int, BW: int, OC: int) -> list[int]:
+    """
+    Reconstructs 1D bias list using the atomic unpacker.
+    """
+    return unpack_terms(
+        packed=packed_val, 
+        term_bits=BW, 
+        input_count=OC
+    )
+
+def unpack_kernel_weights(packed_val: int, WW: int, OC: int, IC: int, K: int) -> list[list[list[list[int]]]]:
+    """
+    Reconstructs the 4D [OC][IC][K][K] weights matrix.
+    Logic: Unpacks a flat list of all terms, then reshapes.
+    """
+    # 1. Extract all individual signed weights into a flat 1D list
+    total_elements = OC * IC * K * K
+    flat_list = unpack_terms(packed_val, WW, total_elements)
+    
+    # 2. Reshape the flat list into [OC][IC][K][K]
+    # We work backwards from the innermost dimension (K)
+    return [
+        [
+            [
+                flat_list[oc*IC*K*K + ic*K*K + r*K : oc*IC*K*K + ic*K*K + (r+1)*K]
+                for r in range(K)
+            ]
+            for ic in range(IC)
+        ]
+        for oc in range(OC)
+    ]

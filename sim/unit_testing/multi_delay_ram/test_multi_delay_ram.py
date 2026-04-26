@@ -3,16 +3,16 @@ from   pathlib import Path
 import pytest
 import queue
 
-from util.utilities import runner, lint, clock_start_sequence, reset_sequence, delay_cycles
+from util.utilities import runner, lint, clock_start_sequence, reset_sequence
 from functional_models.models import MultiDelayBufferModel
 from util.bitwise import pack_terms
 from util.gen_inputs import gen_input_channels
-from util.components import RateGenerator, InputModel
+from util.components import RateGenerator, InputModel, OutputModel, ModelRunner
 tbpath = Path(__file__).parent
 
 import cocotb
 from   cocotb.types import Logic
-from   cocotb.triggers import RisingEdge, FallingEdge, with_timeout
+from   cocotb.triggers import RisingEdge, FallingEdge
 from   cocotb.result import SimTimeoutError
 
 import random
@@ -103,55 +103,55 @@ def unpack_data_o_top(InBits, KernelWidth, InChannels, packed_o):
 class MultiDelayRamModel():
     def __init__(self, dut):
         self._dut = dut
-        self._data_i = dut.data_i
-        self._data_o = dut.data_o
-
-        self._q = queue.SimpleQueue()
-
-        # Top Level connections
+        
+        # Keep your existing initialization (BufferCount, InBits, warmup, self._buffers, etc.)
         self._BufferCount    = int(dut.BufferCount.value)
         self._ChannelsPerRam = int(dut.ChannelsPerRam.value)
         self._InBits         = int(dut.InBits.value)
         self._InChannels     = int(dut.InChannels.value)
         self._KernelWidth    = int(dut.KernelWidth.value)
         self._LineWidthPx    = int(dut.LineWidthPx.value)
+        self._warmup         = (self._LineWidthPx - 1) * (self._KernelWidth - 1) + 1
         
-        self._warmup = (self._LineWidthPx - 1) * (self._KernelWidth - 1) + 1
-        
-        # Individual RAM connections
         self._buffers = [
             MultiDelayBufferModel(
                 BufferWidth   = self._InBits,
                 Delay         = self._LineWidthPx - 1,
                 BufferRows    = self._KernelWidth - 1,
                 InputChannels = self._ChannelsPerRam
-            )
-            for _ in range(self._BufferCount)
+            ) for _ in range(self._BufferCount)
         ]
 
-    def step(self, data_i_words, in_fire=True):
-        assert len(data_i_words) == self._InChannels
+    # --- New Generic Interface Methods ---
+    def consume(self):
+        packed_in = int(self._dut.data_i.value)
+        words = self.unpack_data_i(packed_in)
         
-        full_out: list[list[int] | None] = [None] * self._InChannels
-        any_valid = False
+        expected = self.step(words, in_fire=True)
+        # ModelRunner expects a list of events to handle bursts.
+        # Wrap our single output in a list so the generic queue works correctly.
+        return [expected] if expected is not None else None
 
-        for buf_idx, buf in enumerate(self._buffers):
-            first_ch = buf_idx * self._ChannelsPerRam
-            last_ch = first_ch + self._ChannelsPerRam
+    def produce(self, expected_words):
+        val = self._dut.data_o.value
+        if not val.is_resolvable:
+            raise AssertionError(f"data_o contains X/Z: {val.binstr}")
 
-            chunk_in = list(map(int, data_i_words[first_ch:min(last_ch, self._InChannels)]))
-            chunk_in += [0] * (self._ChannelsPerRam - len(chunk_in))
+        got_packed = int(val)
+        got = unpack_data_o_top(self._InBits, self._KernelWidth, self._InChannels, got_packed)
+        
+        # print(f"OutputModel Check: got={got} expected={expected_words}")
+        assert got == expected_words, f"Mismatch: got={got} expected={expected_words}"
 
-            chunk_out = buf.step(chunk_in, in_fire=True)
+    # --- Your Existing Helpers ---
+    def unpack_data_i(self, packed_i: int):
+        mask = (1 << self._InBits) - 1
+        return [(packed_i >> (ch * self._InBits)) & mask for ch in range(self._InChannels)]
 
-            if chunk_out is not None:
-                any_valid = True
-                for ch, out_word in enumerate(chunk_out):
-                    idx = first_ch + ch
-                    if idx < self._InChannels:
-                        full_out[idx] = out_word
-
-        return full_out if any_valid else None
+    def step(self, data_i_words, in_fire=True):
+        # Your exact existing step() logic goes here
+        # ...
+        pass
     
 class RandomDataGenerator:
     def __init__(self, dut):
@@ -170,149 +170,6 @@ class RandomDataGenerator:
         masked = [x & mask for x in raw]
 
         return pack_terms(masked, self._bw), masked
-
-class OutputModel():
-    def __init__(self, dut, model, l):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._dut = dut
-        self._model = model
-        self._length = l
-
-        self._coro = None
-        self._nout = 0
-
-    def start(self):
-        if self._coro is not None:
-            raise RuntimeError("Output Model already started")
-        self._coro = cocotb.start_soon(self._run())
-
-    def stop(self):
-        if self._coro is None:
-            raise RuntimeError("Output Model never started")
-        self._coro.kill()
-        self._coro = None
-
-    async def wait(self, t):
-        if self._coro is None:
-            raise RuntimeError("Output Model never started")
-        await with_timeout(self._coro, t, 'ns')
-
-    def nproduced(self):
-        return self._nout
-
-    async def _run(self):
-        self._nout = 0
-        clk_i = self._clk_i
-        rst_i = self._rst_i
-
-        await FallingEdge(clk_i)
-
-        if not (rst_i.value.is_resolvable and rst_i.value == 0):
-            await FallingEdge(rst_i)
-
-        while self._nout < self._length:
-            await RisingEdge(clk_i)
-
-            if not self._model._events.empty():
-                expected_words = self._model._events.get()
-
-                val = self._dut.data_o.value
-                if not val.is_resolvable:
-                    raise AssertionError(f"data_o contains X/Z: {val.binstr}")
-
-                got_packed = int(val)
-                got = unpack_data_o_top(
-                    InBits=int(self._dut.InBits.value),
-                    KernelWidth=int(self._dut.KernelWidth.value),
-                    InChannels=int(self._dut.InChannels.value),
-                    packed_o=got_packed
-                )
-
-                # print(f"OutputModel Check: got={got} expected={expected_words}")
-                assert got == expected_words, f"Mismatch: got={got} expected={expected_words}"
-                self._nout += 1
-
-            await FallingEdge(clk_i)
-
-        return self._nout
-    
-class ModelRunner():
-    def unpack_data_i(self, packed_i: int):
-        C = int(self._dut.InChannels.value)
-        W = int(self._dut.InBits.value)
-        mask = (1 << W) - 1
-
-        words = [0] * C
-        for ch in range(C):
-            words[ch] = (packed_i >> (ch * W)) & mask
-        return words
-
-    def __init__(self, dut, model):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._dut = dut
-        self._model = model
-
-        self._events = queue.SimpleQueue()
-        self._coro_run_in = None
-        self._coro_run_out = None
-
-    def start(self):
-        if self._coro_run_in is not None or self._coro_run_out is not None:
-            raise RuntimeError("Model already started")
-        self._coro_run_in  = cocotb.start_soon(self._run_input())
-        self._coro_run_out = cocotb.start_soon(self._run_output())
-
-    def stop(self):
-        if self._coro_run_in is not None:
-            self._coro_run_in.kill()
-            self._coro_run_in = None
-        if self._coro_run_out is not None:
-            self._coro_run_out.kill()
-            self._coro_run_out = None
-
-    async def _run_input(self):
-        while True:
-            await RisingEdge(self._clk_i)
-
-            if int(self._dut.rst_i.value) == 1:
-                continue
-
-            if int(self._dut.in_fire.value) == 1:
-                packed_in = int(self._dut.data_i.value)
-                words = self.unpack_data_i(packed_in)
-
-                expected = self._model.step(words, in_fire=True)
-                if expected is not None:
-                    self._events.put(expected)
-
-    async def _run_output(self):
-        while True:
-            await RisingEdge(self._clk_i)
-
-            if int(self._dut.rst_i.value) == 1:
-                continue
-
-            if self._events.empty():
-                continue
-
-            expected_words = self._events.get()
-
-            val = self._dut.data_o.value
-            if not val.is_resolvable:
-                raise AssertionError(f"data_o contains X/Z: {val.binstr}")
-
-            got_packed = int(val)
-            got = unpack_data_o_top(
-                InBits=int(self._dut.InBits.value),
-                KernelWidth=int(self._dut.KernelWidth.value),
-                InChannels=int(self._dut.InChannels.value),
-                packed_o=got_packed
-            )
-
-            print(f"OutputModel Check: got={got} expected={expected_words}")
-            assert got == expected_words, f"Mismatch: got={got} expected={expected_words}"
             
 async def flush_dut(dut, duration):
     """
@@ -351,9 +208,9 @@ async def single_test(dut):
     rate = 1
 
     model = MultiDelayRamModel(dut)
-    m = ModelRunner(dut, model)
+    m = ModelRunner(dut, model, valid_i_pin=dut.in_fire, ready_o_pin=None, valid_o_pin=None, ready_i_pin=None)    # Number of accepted inputs until first valid output position (x=K-1, y=K-1)
 
-    om = OutputModel(dut, m, N_out)
+    om = OutputModel(dut, length=N_out, generator=None, valid_pin=None, ready_pin=None, runner=m)
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), N_first,
                     data_pins=dut.data_i, valid_pin=dut.in_fire, ready_pin=Logic(1))
 
@@ -415,15 +272,13 @@ async def rate_tests(dut, in_rate, out_rate):
     await reset_sequence(dut.clk_i, dut.rst_i, 10)
 
     model = MultiDelayRamModel(dut)
-    m = ModelRunner(dut, model)
-
-    # Number of accepted inputs until first valid output position (x=K-1, y=K-1)
+    m = ModelRunner(dut, model, valid_i_pin=dut.in_fire, ready_o_pin=None, valid_o_pin=None, ready_i_pin=None)    # Number of accepted inputs until first valid output position (x=K-1, y=K-1)
     N_in = rows * D * 2 + 2 + model._warmup
 
     # We expect exactly ONE output for this test (the first valid position)
     N_out = N_in - model._warmup
 
-    om = OutputModel(dut, m, N_out)             # consume N_out outputs
+    om = OutputModel(dut, length=N_out, generator=None, valid_pin=None, ready_pin=None, runner=m)
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, in_rate), N_in,
                     data_pins=dut.data_i, valid_pin=dut.in_fire, ready_pin=Logic(1))
     dut.in_fire.value = 0

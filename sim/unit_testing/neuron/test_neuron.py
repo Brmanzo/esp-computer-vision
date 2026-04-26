@@ -12,7 +12,7 @@ import torch.nn as nn
 from   typing import List
 
 from util.utilities import runner, lint, assert_resolvable
-from util.bitwise   import sign_extend, pack_terms, unpack_terms
+from util.bitwise   import sign_extend, pack_terms, unpack_terms, unpack_weights
 from util.gen_inputs import gen_weights, gen_biases, gen_input_channels
 tbpath = Path(__file__).parent
 
@@ -38,31 +38,6 @@ def output_width(width_in: int, weight_width: int, in_channels: int=1, bias_widt
     max_sum = terms * max_val * max_weight + max_bias
     abs_bits = max_sum.bit_length()
     return str(abs_bits + 1)   # +1 for sign bit
-
-def unpack_weights(packed_val: int, WW: int, IC: int):
-    """Reconstructs the 4D weights matrix from the Verilog parameter integer."""
-    mask = (1 << WW) - 1
-    sign_bit = 1 << (WW - 1)
-    
-    weights1 = []
-    bit_shift = 0
-    
-    # Must mirror the exact same LSB -> MSB iteration order used in packing
-
-    for _ in range(IC):
-        # Extract the specific bits for this weight
-        w_bits = (packed_val >> bit_shift) & mask
-        
-        # Convert from two's complement back to a signed Python integer
-        if w_bits & sign_bit:
-            w = w_bits - (1 << WW)
-        else:
-            w = w_bits
-            
-        weights1.append(w)
-        bit_shift += WW
-        
-    return weights1
 
 def twos_complement(val: int, bits: int) -> int:
     mask = (1 << bits) - 1
@@ -308,11 +283,16 @@ async def single_test(dut):
     dut.data_i.value = 0
     await Timer(Decimal(1), units="step")
 
-    weights_1d = unpack_weights(
-        int(os.environ["INJECTED_WEIGHTS_INT"]),
-        WW,
-        IC,
+    # --- UPDATED: Pass OC=1 and extract the first dimension ---
+    weights_2d = unpack_weights(
+        packed_val=int(os.environ["INJECTED_WEIGHTS_INT"]),
+        WW=WW,
+        OC=1, 
+        IC=IC
     )
+    weights_1d = weights_2d[0] 
+    # -----------------------------------------------------------
+
     bias_raw = int(os.environ["INJECTED_BIAS_INT"])
     bias = sign_extend(bias_raw, int(dut.BiasBits.value))
 
@@ -345,11 +325,15 @@ async def full_bw_test(dut):
     dut.data_i.value = 0  # Initialize to avoid X's in consume()
     await Timer(Decimal(1), units="step")
 
-    weights_1d = unpack_weights(
-        int(os.environ["INJECTED_WEIGHTS_INT"]),
-        WW,
-        IC,
+    # --- UPDATED: Pass OC=1 and extract the first dimension ---
+    weights_2d = unpack_weights(
+        packed_val=int(os.environ["INJECTED_WEIGHTS_INT"]),
+        WW=WW,
+        OC=1,
+        IC=IC
     )
+    weights_1d = weights_2d[0]
+    # -----------------------------------------------------------
 
     bias_raw = int(os.environ["INJECTED_BIAS_INT"])
     bias = sign_extend(bias_raw, BW)

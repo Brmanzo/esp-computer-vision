@@ -1,6 +1,5 @@
 # test_comparator_tree.py
 from   decimal import Decimal
-import math
 import pytest
 from   pathlib import Path
 

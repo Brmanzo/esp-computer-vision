@@ -8,14 +8,14 @@ import torch
 from   torch import nn
 from   typing import List
 
-from util.utilities  import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence, delay_cycles
-from util.components import ReadyValidInterface, ModelRunner, RateGenerator, InputModel
-from util.bitwise    import sign_extend, pack_terms, unpack_terms
+from util.utilities  import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence
+from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
+from util.bitwise    import sign_extend, pack_terms, unpack_terms, unpack_weights, unpack_biases
 from util.gen_inputs import gen_weights, gen_biases, gen_input_channels
 tbpath = Path(__file__).parent
 
 import cocotb
-from   cocotb.triggers import RisingEdge, FallingEdge, with_timeout
+from   cocotb.triggers import FallingEdge
 from   cocotb.result import SimTimeoutError
 
 import random
@@ -41,57 +41,6 @@ def output_width(width_in: int, weight_width: int, in_channels: int=1) -> str:
     max_sum = terms * max_val * max_weight
     abs_bits = max_sum.bit_length()
     return str(abs_bits + 1)   # +1 for sign bit
-
-def unpack_weights(packed_val: int, WW: int, OC: int, IC: int):
-    """Reconstructs the 4D weights matrix from the Verilog parameter integer."""
-    mask = (1 << WW) - 1
-    sign_bit = 1 << (WW - 1)
-    
-    weights2 = []
-    bit_shift = 0
-    
-    # Must mirror the exact same LSB -> MSB iteration order used in packing
-    for _ in range(OC):
-        oc_list = []
-        for _ in range(IC):
-            # Extract the specific bits for this weight
-            w_bits = (packed_val >> bit_shift) & mask
-            
-            # Convert from two's complement back to a signed Python integer
-            if w_bits & sign_bit:
-                w = w_bits - (1 << WW)
-            else:
-                w = w_bits
-                
-            oc_list.append(w)
-            bit_shift += WW
-        weights2.append(oc_list)
-        
-    return weights2
-
-def unpack_biases(packed_val: int, BW: int, OC: int):
-    """Reconstructs the 4D weights matrix from the Verilog parameter integer."""
-    mask = (1 << BW) - 1
-    sign_bit = 1 << (BW - 1)
-    
-    biases1 = []
-    bit_shift = 0
-    
-    # Must mirror the exact same LSB -> MSB iteration order used in packing
-    for _ in range(OC):
-        # Extract the specific bits for this weight
-        w_bits = (packed_val >> bit_shift) & mask
-        
-        # Convert from two's complement back to a signed Python integer
-        if w_bits & sign_bit:
-            w = w_bits - (1 << BW)
-        else:
-            w = w_bits
-            
-        biases1.append(w)
-        bit_shift += BW
-        
-    return biases1
 
 def linear_reference(weights_2d, biases_1d, InChannels, OutChannels):
     # One output channel instantiates a single neuron
@@ -294,7 +243,7 @@ class LinearLayerModel():
                 e_wrapped = sign_extend(expected[i] & mask, self._OutBits)
                 assert t_wrapped == e_wrapped, f"Torch Drift! ch{i}: {e_wrapped} vs {t_wrapped}"
 
-        return tuple(expected)
+        return [expected]
 
     def produce(self, expected):
         """Called by ModelRunner on output handshake."""
@@ -314,78 +263,6 @@ class RandomDataGenerator:
         din = gen_input_channels(self._width_p, self._InChannels)
         packed = pack_terms(din, self._width_p)
         return packed, din
-
-class OutputModel():
-    def __init__(self, dut, g, l):
-        self._clk_i = dut.clk_i
-        self._rst_i = dut.rst_i
-        self._dut = dut
-        
-        self._rv_in = ReadyValidInterface(self._clk_i, self._rst_i,
-                                          dut.valid_i, dut.ready_o)
-
-        self._rv_out = ReadyValidInterface(self._clk_i, self._rst_i,
-                                           dut.valid_o, dut.ready_i)
-        self._generator = g
-        self._length = l
-
-        self._coro = None
-
-        self._nout = 0
-
-    def start(self):
-        """ Start Output Model """
-        if self._coro is not None:
-            raise RuntimeError("Output Model already started")
-        self._coro = cocotb.start_soon(self._run())
-
-    def stop(self) -> None:
-        """ Stop Output Model """
-        if self._coro is None:
-            raise RuntimeError("Output Model never started")
-        self._coro.kill()
-        self._coro = None
-
-    async def wait(self, t):
-        if self._coro is None:
-            raise RuntimeError("Output Model never started")
-        await with_timeout(self._coro, t, 'ns')
-
-    def nproduced(self):
-        return self._nout
-
-    async def _run(self):
-        """ Output Model Coroutine"""
-
-        self._nout = 0
-        clk_i = self._clk_i
-        ready_i = self._dut.ready_i
-        rst_i = self._dut.rst_i
-        valid_o = self._dut.valid_o
-
-        await FallingEdge(clk_i)
-
-        if(not (rst_i.value.is_resolvable and rst_i.value == 0)):
-            await FallingEdge(rst_i)
-
-        # Precondition: Falling Edge of Clock
-        while self._nout < self._length:
-            consume = self._generator.generate()
-            success = 0
-            ready_i.value = consume
-
-            # Wait until valid
-            while(consume and not success):
-                await RisingEdge(clk_i)
-                assert_resolvable(valid_o)
-                #assert valid_o.value.is_resolvable, f"Unresolvable value in valid_o (x or z in some or all bits) at Time {get_sim_time(units='ns')}ns."
-
-                success = True if ready_i.value == 1 and valid_o.value == 1 else False
-                if (success):
-                    self._nout += 1
-
-            await FallingEdge(clk_i)
-        return self._nout
 
 @cocotb.test
 async def reset_test(dut):
