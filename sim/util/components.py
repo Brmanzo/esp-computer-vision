@@ -83,10 +83,10 @@ class ModelRunner:
     def stop(self):
         if self._coro_run_input is None and self._coro_run_output is None:
             raise RuntimeError("Model never started")
-        if self._coro_run_input:
+        if self._coro_run_input is not None and not self._coro_run_input.done():
             self._coro_run_input.kill()
             self._coro_run_input = None
-        if self._coro_run_output:
+        if self._coro_run_output is not None and not self._coro_run_output.done():
             self._coro_run_output.kill()
             self._coro_run_output = None
 

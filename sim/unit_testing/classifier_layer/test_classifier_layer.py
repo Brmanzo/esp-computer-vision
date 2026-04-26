@@ -4,12 +4,16 @@ import os
 from   pathlib import Path
 import pytest
 import shutil
+import torch
+from   torch  import nn
 from   typing import List
+
 
 from util.utilities  import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from util.bitwise    import unpack_terms, pack_terms, unpack_weights, unpack_biases
 from util.gen_inputs import gen_weights, gen_biases, gen_input_channels
+
 tbpath = Path(__file__).parent
 
 import cocotb
@@ -28,6 +32,29 @@ tests = ['reset_test'
         ,'in_fuzz_test'
         ,'out_fuzz_test'
         ,'full_bw_test']
+
+def torch_classifier_reference(sequence, weights, biases, in_ch, out_ch):
+    """
+    Performs full pipeline: Global Max Pool -> Linear -> Argmax.
+    sequence: Shape (TermCount, InChannels)
+    """
+    with torch.no_grad():
+        # Convert buffer to tensor [TermCount, InChannels]
+        t_in = torch.tensor(sequence, dtype=torch.float32)
+        
+        # 1. Global Max Pool (across the time/sequence dimension)
+        # Returns shape [1, InChannels]
+        t_max = torch.amax(t_in, dim=0, keepdim=True)
+
+        # 2. Linear Layer
+        ref = nn.Linear(in_ch, out_ch, bias=True)
+        ref.weight.data = torch.tensor(weights, dtype=torch.float32)
+        ref.bias.data = torch.tensor(biases, dtype=torch.float32)
+        
+        logits = ref(t_max)
+        class_id = torch.argmax(logits, dim=1).item()
+        
+        return class_id, logits.squeeze().tolist()
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
@@ -145,47 +172,56 @@ class ClassifierLayerModel:
             f"biases={biases!r}"
         )
 
+        self._sequence_buffer = []
+
     def consume(self):
         assert_resolvable(self._data_i)
-
         packed_in = int(self._data_i.value.integer)
-        
-        # 1. Unpack incoming feature map (InChannels wide)
         x = unpack_terms(packed_in, self._term_bits, self._in_channels)
 
-        # 2. Global Max Pooling (across spatial TermCount)
-        if self._term_counter == 0 or self._current_max is None:
-            self._current_max = x[:]
-        else:
-            for ch in range(self._in_channels):
-                self._current_max[ch] = max(self._current_max[ch], x[ch])
-
+        # 1. Map values for 1-bit logic (0 -> -1) before buffering
+        current_vector = [(1 if v == 1 else -1) if self._term_bits == 1 else v for v in x]
+        self._sequence_buffer.append(current_vector)
         self._term_counter += 1
 
-        # 3. When spatial max is complete, run the linear layer and comparator!
+        # 2. When the full image sequence is collected
         if self._term_counter == self._term_count:
             
-            # --- Linear Layer MAC Operation ---
-            expected_logits = [0 for _ in range(self._class_count)]
+            # --- BRAIN A: Torch Reference ---
+            torch_id, torch_logits = torch_classifier_reference(
+                self._sequence_buffer, self.w, self.b, 
+                self._in_channels, self._class_count
+            )
+
+            # --- BRAIN B: Internal Python Model (Manual MAC) ---
+            # Manual Max Pool
+            manual_max = [max(col) for col in zip(*self._sequence_buffer)]
+            
+            # Manual Linear Projection
+            manual_logits = []
             for oc in range(self._class_count):
                 acc = self.b[oc]
                 for ic in range(self._in_channels):
-                    if self._term_bits == 1:
-                        val = 1 if self._current_max[ic] == 1 else -1
-                    else:
-                        val = int(self._current_max[ic])
-                        
-                    acc += self.w[oc][ic] * val # Multiply by mapped value
-                    
-                expected_logits[oc] = acc
-            # --- Comparator (Argmax) Operation ---
-            max_val = max(expected_logits)
-            class_id = expected_logits.index(max_val)  # lowest index wins ties
+                    acc += self.w[oc][ic] * manual_max[ic]
+                manual_logits.append(acc)
             
-            # Reset for the next image
+            manual_id = manual_logits.index(max(manual_logits))
+
+            # --- CROSS-CHECK A vs B ---
+            # Use math.isclose or np.allclose if using floats, 
+            # but for integers, exact equality is expected.
+            assert manual_id == torch_id, (
+                f"Reference Mismatch! Internal Model: {manual_id}, Torch: {torch_id}. "
+                f"Check for tie-breaking or precision drift."
+            )
+
+            # Clean up for next handshake
             self._term_counter = 0
-            self._current_max = None
-            return [(class_id, expected_logits[:])]
+            self._sequence_buffer = []
+
+            # Return the golden data for produce() to check against BRAIN C (the DUT)
+            return [(torch_id, torch_logits)]
+
         return None
 
     def produce(self, expected):
@@ -195,7 +231,7 @@ class ClassifierLayerModel:
         got_id = int(self._class_o.value.integer)
 
         print(
-            f"Produced class {got_id}, expected {expected_id}, "
+            f"Produced class {got_id}, expected {expected_id}"
             f"logits={expected_logits} at time {get_sim_time(units='ns')}ns"
         )
 
@@ -256,9 +292,9 @@ async def rate_tests(dut, in_rate, out_rate):
     """Input random data elements at 100% line rate"""
 
     eg = RandomDataGenerator(dut)
-    T = int(dut.TermCount.value)
+    TC = int(dut.TermCount.value)
     groups = 10
-    l_in = groups * T
+    l_in = groups * TC  
     l_out = groups
 
     IC = int(dut.InChannels.value)
@@ -302,7 +338,7 @@ async def rate_tests(dut, in_rate, out_rate):
     except SimTimeoutError:
         assert 0, (
             f"Test timed out. Expected {l_out} outputs from {l_in} inputs "
-            f"with TermCount={T}, in_rate={in_rate}, out_rate={out_rate}"
+            f"with TermCount={TC}, in_rate={in_rate}, out_rate={out_rate}"
         )
 
 @cocotb.test

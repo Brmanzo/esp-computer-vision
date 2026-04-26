@@ -6,7 +6,7 @@ from util.utilities import runner, lint, clock_start_sequence, reset_sequence
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from util.gen_inputs import gen_input_channels
 from util.bitwise import pack_terms
-from sim.functional_models.multi_delay_buffer import MultiDelayBufferModel
+from functional_models.multi_delay_buffer import MultiDelayBufferModel
 tbpath = Path(__file__).parent
 
 import cocotb

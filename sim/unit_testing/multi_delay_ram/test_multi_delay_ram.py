@@ -4,7 +4,7 @@ import pytest
 import queue
 
 from util.utilities import runner, lint, clock_start_sequence, reset_sequence
-from sim.functional_models.multi_delay_buffer import MultiDelayBufferModel
+from functional_models.multi_delay_buffer import MultiDelayBufferModel
 from util.bitwise import pack_terms
 from util.gen_inputs import gen_input_channels
 from util.components import RateGenerator, InputModel, OutputModel, ModelRunner
