@@ -2,10 +2,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-def to_torch_input(input_activation):
-    # input_activation: [IC][H][W]
-    x = torch.tensor(input_activation, dtype=torch.int32)   # (IC,H,W)
-    x = x.unsqueeze(0).to(torch.int32)                      # (1,IC,H,W)
+def to_torch_input(input_data):
+    """Safely handles both raw lists (from testbench) and Tensors (from previous layers)"""
+    if isinstance(input_data, torch.Tensor):
+        x = input_data.clone().detach().to(torch.int32)
+    else:
+        x = torch.tensor(input_data, dtype=torch.int32)
+        
+    # Add batch dimension if it's exactly 3D (Channels, Height, Width)
+    if x.dim() == 3:
+        x = x.unsqueeze(0)
+        
     return x
 
 def to_torch_weights(kernels4):
@@ -20,13 +27,29 @@ def torch_conv_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1):
     if in_bits == 1:
         # Match MAC input encoding: 0 -> -1, 1 -> +1
         x = x * 2.0 - 1.0
-
     y = F.conv2d(x, w, stride=stride, padding=0).squeeze(0)
 
     if out_bits == 1:
         y = (y > 0).to(torch.int32)
 
     return y
+
+def torch_pool_ref(input_activation, kernel_size, stride=None, mode=0):
+    x = to_torch_input(input_activation).to(torch.float32)
+    if mode == 0:
+        y = F.max_pool2d(x, kernel_size=kernel_size, stride=stride, padding=0)
+    elif mode == 1:
+        y = F.avg_pool2d(x, kernel_size=kernel_size, stride=stride, padding=0)
+    return y.squeeze(0) 
+
+def torch_single_block_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1, mode=0, pool_kernel_size=2):
+    # 1. Run Convolution
+    conv_out = torch_conv_ref(input_activation, kernels4, stride, in_bits, out_bits)
+
+    # 2. Chain directly into Pool
+    pool_out = torch_pool_ref(conv_out, kernel_size=pool_kernel_size, stride=pool_kernel_size, mode=mode)
+    
+    return pool_out
 
 def torch_classifier_ref(sequence, weights, biases, in_ch, out_ch):
     """
@@ -50,14 +73,6 @@ def torch_classifier_ref(sequence, weights, biases, in_ch, out_ch):
         class_id = torch.argmax(logits, dim=1).item()
         
         return class_id, logits.squeeze().tolist()
-
-def torch_pool_ref(input_activation, kernel_size, stride=None, mode=0):
-    x = to_torch_input(input_activation).to(torch.float32)
-    if mode == 0:
-        y = F.max_pool2d(x, kernel_size=kernel_size, stride=stride, padding=0)
-    elif mode == 1:
-        y = F.avg_pool2d(x, kernel_size=kernel_size, stride=stride, padding=0)
-    return y.squeeze(0) 
 
 def torch_linear_ref(weights_2d, biases_1d, InChannels, OutChannels):
     # One output channel instantiates a single neuron

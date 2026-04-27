@@ -18,7 +18,7 @@ module conv_layer #(
   ,localparam int unsigned ChannelsPerRam = TargetRamBits / ((KernelWidth - 1) * InBits)
   ,localparam int unsigned BufferCount    = (InChannels + ChannelsPerRam - 1) / ChannelsPerRam
 
-  ,parameter  int unsigned Stride         = 1
+  ,parameter  int unsigned Stride         = 1 // TODO Add Padding support
   ,localparam int unsigned StrideBits     = (Stride <= 1) ? 1 : $clog2(Stride)
 
   ,localparam int XBits = (LineWidthPx <= 1) ? 1 : $clog2(LineWidthPx)

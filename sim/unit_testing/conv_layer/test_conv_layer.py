@@ -220,7 +220,7 @@ async def single_test(dut):
     packed_weights = int(os.environ["INJECTED_WEIGHTS_INT"])
     kernels_4d = unpack_kernel_weights(packed_weights, WW, OC, IC, K)
     
-    model = ConvLayerModel(dut, kernels_4d)
+    model = ConvLayerModel(dut, weights=kernels_4d)
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, RateGenerator(dut, 1), N_out)               # consume 1 output
@@ -284,7 +284,7 @@ async def rate_tests(dut, in_rate, out_rate):
     packed_weights = int(os.environ["INJECTED_WEIGHTS_INT"])
     kernels_4d = unpack_kernel_weights(packed_weights, WW, OC, IC, K)
 
-    model = ConvLayerModel(dut, kernels_4d, output_activation, input_activation)
+    model = ConvLayerModel(dut, weights=kernels_4d, output_activation=output_activation, input_activation=input_activation)
     m = ModelRunner(dut, model)
 
     # Consumer fuzzed; producer always drives valid

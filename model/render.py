@@ -155,6 +155,7 @@ def render_pool_layer(
         f"    ,.InBits      ({InBits})",
         f"    ,.KernelWidth ({KernelWidth})",
         f"    ,.InChannels  ({InChannels})",
+        f"    ,.PoolMode    (0)", # PoolMode is fixed to 0 (max pooling) for now since we only support max pooling
         f"  ) pool_layer_inst_{instance} (",
         "     .clk_i    (clk_i)",
         "    ,.rst_i    (rst_i)",

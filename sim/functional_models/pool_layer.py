@@ -16,44 +16,56 @@ class RandomDataGenerator:
         raw_din = gen_input_channels(self._width_p, self._InChannels)
         packed_din = pack_terms(raw_din, self._width_p)
         return (packed_din, raw_din)
-
 class PoolLayerModel():
-    def __init__(self, dut, 
+    def __init__(self, dut=None,
                  output_activation: Optional[List[List[List[int]]]] = None,
-                 input_activation: Optional[List[List[List[int]]]] = None):
+                 input_activation:  Optional[List[List[List[int]]]] = None,
+                 **kwargs): # <-- All hardware dimensions collapse into **kwargs
        
-        self._kernel_width = int(dut.KernelWidth.value)
-        self._f = np.ones((self._kernel_width,self._kernel_width), dtype=int)
         self._dut = dut
-        self._data_o = dut.data_o
-        self._data_i = dut.data_i
-
-        self._input_width = int(dut.LineWidthPx.value)
-        self._input_height = int(dut.LineCountPx.value)
-        self._OutBits = int(dut.OutBits.value)
-        self._InChannels  = int(dut.InChannels.value)
-        self._OutChannels = int(dut.OutChannels.value)
-        self._Stride = int(dut.Stride.value)
-        self._PoolMode = int(dut.PoolMode.value)
-
+        self._input_activation  = input_activation 
         self._output_activation = output_activation
-        self._input_activation = input_activation
+        
+        # 1. Parameter Extraction
+        if dut is not None:
+            self._data_o = dut.data_o
+            self._data_i = dut.data_i
+
+            self._kernel_width = int(dut.KernelWidth.value)
+            self._input_width  = int(dut.LineWidthPx.value)
+            self._input_height = int(dut.LineCountPx.value)
+            self._InBits       = int(dut.InBits.value)
+            self._OutBits      = int(dut.OutBits.value)
+            self._InChannels   = int(dut.InChannels.value)
+            self._OutChannels  = int(dut.OutChannels.value)
+            self._Stride       = int(dut.Stride.value)
+            self._PoolMode     = int(dut.PoolMode.value)
+        else:
+            # If a parameter is missing, kwargs will throw a KeyError automatically
+            try:
+                self._kernel_width = int(kwargs["KernelWidth"])
+                self._input_width  = int(kwargs["LineWidthPx"])
+                self._input_height = int(kwargs["LineCountPx"])
+                self._InBits       = int(kwargs["InBits"])
+                self._OutBits      = int(kwargs["OutBits"])
+                self._InChannels   = int(kwargs["InChannels"])
+                self._OutChannels  = int(kwargs["OutChannels"])
+                self._Stride       = int(kwargs["Stride"])
+                self._PoolMode     = int(kwargs["PoolMode"])
+            except KeyError as e:
+                raise ValueError(f"Missing required parameter when dut is None: {e}")
+
         self._r = 0
         self._c = 0
         self._OW = (self._input_width - self._kernel_width) // self._Stride + 1
         self._OH = (self._input_height - self._kernel_width) // self._Stride + 1
 
-        # We're going to initialize _buf with NaN so that we can
-        # detect when the output should be not an X in simulation
-        # Buffer for all input channels, storing the most recent kernel_width values for each channel
         self._buf = [np.zeros((self._kernel_width,self._input_width))/0 for _ in range(self._InChannels)]
         self._deqs = 0
         self._enqs = 0
 
-        # kernel 4D array storing all kernels in each filter: [OC][IC][K][K]
         self._in_idx = 0
 
-        # Valid kernel positions within input image depending on stride and kernel size
         invalid_region = self._kernel_width - 1
         S = int(self._Stride)
         span_w = (self._input_width  - 1) - (self._kernel_width - 1)
@@ -66,23 +78,20 @@ class PoolLayerModel():
         self._valid_cycles[:invalid_region, :] = False
         self._valid_cycles[:, :invalid_region] = False
         
-        # If stride larger than normal, invalidate the skipped over elements
         if S > 1:
             for r in range(invalid_region, self._input_height):
                 for c in range(invalid_region, self._input_width):
                     if ((r - invalid_region) % S) != 0 or ((c - invalid_region) % S) != 0:
                         self._valid_cycles[r, c] = False
 
+
+    # ==========================================
+    # UNTOUCHED MATH HELPER FUNCTIONS
+    # ==========================================
     def update_window(self, buf, inp):
         temp = buf.flatten()
-
-        # Now shift everything by 1
         temp = np.roll(temp, -1, axis=0)
-
-        # Add the new input, replacing the input that was "kicked out"
         temp[-1] = inp
-
-        # Now reshape it back into the original buffer
         temp = np.reshape(temp, buf.shape)
         buf = temp
         return buf
@@ -96,76 +105,92 @@ class PoolLayerModel():
                 result[ch] = np.max(windows[ch])
             else:
                 if self._OutBits == 1:
-                    # acc += 1 for 1, acc -= 1 for 0
                     acc = np.sum(windows[ch] == 1) - np.sum(windows[ch] == 0)
                     shift = int(np.log2(windows[ch].size))
-                    # Arithmetic shift and mask the LSB
                     result[ch] = (acc >> shift) & 1
                 else:
                     result[ch] = np.sum(windows[ch]) // windows[ch].size
 
         return result
 
-    def consume(self):
-        assert_resolvable(self._data_i)
-        packed = int(self._data_i.value.integer)
-        packed_data_i = unpack_terms(packed, int(self._dut.InBits.value), self._InChannels)
+    # ==========================================
+    # REFACTORED PIPELINE INTERFACES
+    # ==========================================
+    def step(self, raw_val, in_fire=True):
+        if not in_fire:
+            return None
 
-        # 1. Record input activation if requested
+        # Input activation tracking
         if self._input_activation is not None:
             y_in = self._enqs // self._input_width
             x_in = self._enqs % self._input_width
             for ic in range(self._InChannels):
-                self._input_activation[ic][y_in][x_in] = packed_data_i[ic]
+                self._input_activation[ic][y_in][x_in] = raw_val[ic]
 
-        # advance windows on EVERY accepted input
-        for ic, inp in enumerate(packed_data_i):
+        # Advance windows
+        for ic, inp in enumerate(raw_val):
             self._buf[ic] = self.update_window(self._buf[ic], inp)
 
+        # Check validity
         idx = self._enqs
         x = idx % int(self._input_width)
         y = idx // int(self._input_width)
         self._enqs += 1
 
-        if y >= int(self._input_height):
+        if y >= int(self._input_height) or not self._valid_cycles[y, x]:
             return None
 
-        if not self._valid_cycles[y, x]:
-            return None
+        # Compute expected
+        result = self.apply_kernel(self._buf)
 
-        # compute expected NOW, while _buf matches this accepted input position
-        expected = self.apply_kernel(self._buf)
-        return expected
+        # Output activation and coordinate tracking moved here from produce()
+        if self._output_activation is not None:
+            for ch in range(self._OutChannels):
+                self._output_activation[ch][self._r][self._c] = result[ch]
 
-    def produce(self, expected):
-        assert_resolvable(self._data_o)
-
-        w = int(self._dut.OutBits.value)
-        packed = int(self._data_o.value.integer)
-
-        for ch in range(self._OutChannels):
-            got_raw = (packed >> (ch * w)) & ((1 << w) - 1)
-            
-            if w == 1:
-                got = got_raw
-            else:
-                got = sign_extend(got_raw, w)
-                
-            exp = int(expected[ch])
-
-            print(f"Output #{self._deqs} (r={self._r}, c={self._c}) ch{ch}: expected {exp}, got {got}")
-
-            if self._output_activation is not None:
-                self._output_activation[ch][self._r][self._c] = got
-
-            assert got == exp, (
-                f"Mismatch at output #{self._deqs} (r={self._r}, c={self._c}) ch{ch}: expected {exp}, got {got} "
-            )
-
-        # Advance pixel position ONCE per output handshake/vector
+        self._deqs += 1
         self._c += 1
         if self._c >= self._OW:
             self._c = 0
             self._r += 1
             if self._r >= self._OH:
                 self._r = 0
+
+        return tuple(result)
+
+    def consume(self):
+        if self._dut is not None:
+            assert_resolvable(self._data_i)
+            packed = int(self._data_i.value.integer)
+            raw_val = unpack_terms(packed, int(self._dut.InBits.value), self._InChannels)
+
+            # Call the pure math pipeline
+            expected = self.step(raw_val, in_fire=True)
+            return [expected] if expected is not None else None
+
+    def produce(self, expected):
+        if self._dut is not None:
+            assert_resolvable(self._data_o)
+            w = int(self._dut.OutBits.value)
+            packed = int(self._data_o.value.integer)
+
+            # Calculate the *current* coordinates for printing
+            check_idx = self._deqs - 1
+            check_r = check_idx // self._OW
+            check_c = check_idx % self._OW
+
+            for ch in range(self._OutChannels):
+                got_raw = (packed >> (ch * w)) & ((1 << w) - 1)
+                
+                if w == 1:
+                    got = got_raw
+                else:
+                    got = sign_extend(got_raw, w)
+                    
+                exp = int(expected[ch])
+
+                print(f"Output #{check_idx} (r={check_r}, c={check_c}) ch{ch}: expected {exp}, got {got}")
+
+                assert got == exp, (
+                    f"Mismatch at output #{check_idx} (r={check_r}, c={check_c}) ch{ch}: expected {exp}, got {got} "
+                )

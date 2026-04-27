@@ -171,7 +171,7 @@ async def rate_tests(dut, in_rate, out_rate):
     first_out_wait_ns = int((2 * (K - 1) * W + 2 * (K - 1) + 200) / slow)
     timeout_ns        = int((H_out * N_in + 500) / slow)
     
-    model = PoolLayerModel(dut, output_activation, input_activation)
+    model = PoolLayerModel(dut, output_activation=output_activation, input_activation=input_activation)
     m = ModelRunner(dut, model)
 
     # Consumer fuzzed; producer always drives valid

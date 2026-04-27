@@ -28,49 +28,67 @@ class RandomDataGenerator:
         packed_din = pack_terms(raw_din, self._width_p)
         return (packed_din, raw_din)
 
+import queue
+import numpy as np
+from typing import Optional, List
+
 class ConvLayerModel():
-    def __init__(self, dut, weights: List[List[List[List[int]]]], 
+    def __init__(self, dut=None, 
+                 weights: Optional[List[List[List[List[int]]]]] = None, 
                  output_activation: Optional[List[List[List[int]]]] = None,
-                 input_activation: Optional[List[List[List[int]]]] = None):
-        
-        self._kernel_width = int(dut.KernelWidth.value)
-        self._f = np.ones((self._kernel_width,self._kernel_width), dtype=int)
-        self._input_activation = input_activation 
-        self._output_activation = output_activation
+                 input_activation:  Optional[List[List[List[int]]]] = None,
+                 **kwargs): # <-- All hardware dimensions collapse into **kwargs
 
         self._dut = dut
-        self._data_o = dut.data_o
-        self._data_i = dut.data_i
+        self._input_activation  = input_activation 
+        self._output_activation = output_activation
 
+        # 1. Parameter Extraction
+        if dut is not None:
+            self._data_o = dut.data_o
+            self._data_i = dut.data_i
+            
+            self._kernel_width = int(dut.KernelWidth.value)
+            self._input_width  = int(dut.LineWidthPx.value)
+            self._input_height = int(dut.LineCountPx.value)
+            self._InBits       = int(dut.InBits.value)
+            self._OutBits      = int(dut.OutBits.value)
+            self._InChannels   = int(dut.InChannels.value)
+            self._OutChannels  = int(dut.OutChannels.value)
+            self._Stride       = int(dut.Stride.value)
+        else:
+            # If a parameter is missing, kwargs will throw a KeyError automatically
+            try:
+                self._kernel_width = int(kwargs["KernelWidth"])
+                self._input_width  = int(kwargs["LineWidthPx"])
+                self._input_height = int(kwargs["LineCountPx"])
+                self._InBits       = int(kwargs["InBits"])
+                self._OutBits      = int(kwargs["OutBits"])
+                self._InChannels   = int(kwargs["InChannels"])
+                self._OutChannels  = int(kwargs["OutChannels"])
+                self._Stride       = int(kwargs["Stride"])
+            except KeyError as e:
+                raise ValueError(f"Missing required parameter when dut is None: {e}")
+
+        # 2. Safety check for Weights (prevents the NoneType error!)
+        if weights is None:
+            raise ValueError("Weights must be provided to ConvLayerModel")
+
+        # 3. State Initialization
         self._q = queue.SimpleQueue()
-
-        self._input_width = int(dut.LineWidthPx.value)
-        self._input_height = int(dut.LineCountPx.value)
-        self._InBits  = int(dut.InBits.value)
-        self._OutBits = int(dut.OutBits.value)
-        self._InChannels  = int(dut.InChannels.value)
-        self._OutChannels = int(dut.OutChannels.value)
-        self._Stride = int(dut.Stride.value)
-
-        self._output_activation = output_activation 
         self._r = 0
         self._c = 0
         self._OW = (self._input_width - self._kernel_width) // self._Stride + 1
         self._OH = (self._input_height - self._kernel_width) // self._Stride + 1
 
-        # We're going to initialize _buf with NaN so that we can
-        # detect when the output should be not an X in simulation
-        # Buffer for all input channels, storing the most recent kernel_width values for each channel
-        self._buf = [np.zeros((self._kernel_width,self._input_width))/0 for _ in range(self._InChannels)]
+        self._buf = [np.zeros((self._kernel_width, self._input_width))/0 for _ in range(self._InChannels)]
         self._deqs = 0
         self._enqs = 0
 
-        # kernel 4D array storing all kernels in each filter: [OC][IC][K][K]
         self.k = np.array(weights, dtype=int)
         assert self.k.shape == (self._OutChannels, self._InChannels, self._kernel_width, self._kernel_width)
-        self._in_idx = 0
 
-        # Valid kernel positions within input image depending on stride and kernel size
+        # 4. Validity Map Generation
         invalid_region = self._kernel_width - 1
         S = int(self._Stride)
         span_w = (self._input_width  - 1) - (self._kernel_width - 1)
@@ -83,7 +101,6 @@ class ConvLayerModel():
         self._valid_cycles[:invalid_region, :] = False
         self._valid_cycles[:, :invalid_region] = False
         
-        # If stride larger than normal, invalidate the skipped over elements
         if S > 1:
             for r in range(invalid_region, self._input_height):
                 for c in range(invalid_region, self._input_width):
@@ -132,28 +149,27 @@ class ConvLayerModel():
 
         return result
 
-    def consume(self):
+    def step(self, raw_val, in_fire=True):
         """
-        The ModelRunner calls this every time it sees a handshake on the INPUT side.
-        Because your ModelRunner doesn't know about the 'raw_val' yet, 
-        we unpack it here ONE LAST TIME, or update your ModelRunner to handle raw_vals.
+        Pure Python step function. 
+        Takes raw Python integers, runs the math, tracks pixel coordinates, 
+        and returns the expected output. No Cocotb dependencies.
         """
-        # Get bits from pins
-        packed = int(self._dut.data_i.value.integer)
-        raw_val = unpack_terms(packed, int(self._dut.InBits.value), self._InChannels)
+        if not in_fire:
+            return None
 
-        # 1. Record input activation if requested
+        # Input activation tracking moved here from consume()
         if self._input_activation is not None:
             y_in = self._enqs // self._input_width
             x_in = self._enqs % self._input_width
             for ic in range(self._InChannels):
                 self._input_activation[ic][y_in][x_in] = raw_val[ic]
 
-        # 2. Update sliding windows
+        # Window updating moved here from consume()
         for ic, inp in enumerate(raw_val):
             self._buf[ic] = self.update_window(self._buf[ic], inp)
 
-        # 3. Determine if output is expected
+        # Validity checking moved here from consume()
         idx = self._enqs
         x = idx % self._input_width
         y = idx // self._input_width
@@ -162,38 +178,72 @@ class ConvLayerModel():
         if y >= self._input_height or not self._valid_cycles[y, x]:
             return None
 
-        return self.apply_kernel(self._buf)
+        # Kernel application moved here from consume()
+        result = self.apply_kernel(self._buf)
 
-    def produce(self, expected):
-        assert_resolvable(self._data_o)
+        # Pixel coordinate tracking (_c, _r) moved here from produce().
+        # This ensures the model tracks its state even in software-only mode.
+        if self._output_activation is not None:
+            for ch in range(self._OutChannels):
+                self._output_activation[ch][self._r][self._c] = result[ch]
 
-        w = int(self._dut.OutBits.value)
-        packed = int(self._data_o.value.integer)
-
-        # Write all channels at the SAME (r,c)
-        for ch in range(self._OutChannels):
-            raw = (packed >> (ch * w)) & ((1 << w) - 1)
-            if w == 1:
-                got = raw
-            else:
-                got = sign_extend(raw, w)
-            exp = int(expected[ch])
-
-            print(f"Output #{self._deqs} (r={self._r}, c={self._c}) ch{ch}: expected {exp}, got {got} (raw=0x{raw:x})")
-
-            if self._output_activation is not None:
-                self._output_activation[ch][self._r][self._c] = got
-
-            assert got == exp, (
-                f"Mismatch at output #{self._deqs} (r={self._r}, c={self._c}) ch{ch}: expected {exp}, got {got} "
-                f"(raw=0x{raw:x})"
-            )
-
-        # Advance pixel position ONCE per output handshake/vector
+        self._deqs += 1
         self._c += 1
         if self._c >= self._OW:
             self._c = 0
             self._r += 1
             if self._r >= self._OH:
                 self._r = 0
+
+        # Must return a tuple for your unified pipeline runner
+        return tuple(result)
+
+    def consume(self):
+        """
+        Hardware-to-software translator. 
+        It unpacks the bits, passes them to step(), and returns the expected result.
+        """
+        if self._dut is not None:
+            packed = int(self._dut.data_i.value.integer)
+            raw_val = unpack_terms(packed, int(self._dut.InBits.value), self._InChannels)
+
+            # Forward the unpacked Python ints to the pure math pipeline
+            expected = self.step(raw_val, in_fire=True)
+
+            # Wrap in a list so the model runner queue can handle bursts correctly
+            return [expected] if expected is not None else None
+
+    def produce(self, expected):
+        """
+        Verifier. 
+        State tracking (_c, _r, _deqs) was removed so it doesn't break in software mode.
+        """
+        assert_resolvable(self._data_o)
+        if self._dut is not None:
+            w = int(self._dut.OutBits.value)
+        packed = int(self._data_o.value.integer)
+
+        # Because _c and _r are already advanced by step(), we calculate 
+        # the *current* check coordinates mathematically for your print statement.
+        check_idx = self._deqs - 1
+        check_r = check_idx // self._OW
+        check_c = check_idx % self._OW
+
+        for ch in range(self._OutChannels):
+            raw = (packed >> (ch * w)) & ((1 << w) - 1)
+            if w == 1:
+                got = raw
+            else:
+                got = sign_extend(raw, w)
+            
+            exp = int(expected[ch])
+
+            print(f"Output #{check_idx} (r={check_r}, c={check_c}) ch{ch}: expected {exp}, got {got} (raw=0x{raw:x})")
+
+            # _output_activation tracking was removed from here (it is now in step())
+
+            assert got == exp, (
+                f"Mismatch at output #{check_idx} (r={check_r}, c={check_c}) ch{ch}: "
+                f"expected {exp}, got {got} (raw=0x{raw:x})"
+            )
     
