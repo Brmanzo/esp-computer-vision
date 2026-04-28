@@ -12,6 +12,7 @@ module tb_single_block #(
   ,parameter int unsigned C_InChannels  = 1
   ,parameter int unsigned C_OutChannels = 1
   ,parameter int unsigned C_Stride      = 1
+  ,parameter int unsigned C_Padding     = 1
   ,parameter int unsigned P_Mode        = 0 // 0 for max pooling, 1 for average pooling
 )  (
    input  [0:0] clk_i
@@ -29,14 +30,14 @@ module tb_single_block #(
 
   // Calculate reduced input dimensions for pooling layer based on convolutional layer parameters.
   function automatic int unsigned p_in_dim;
-    input int unsigned c_dim, c_kernel, c_stride;
+    input int unsigned c_dim, c_kernel, c_stride, c_Padding;
     begin
-      p_in_dim = ((c_dim - c_kernel) / c_stride) + 1;
+      p_in_dim = ((c_dim - c_kernel) / c_stride) + 1 + 2 * c_Padding; // Account for convolutional layer padding
     end
   endfunction
 
-  localparam int unsigned P_LineWidthPx = p_in_dim(C_LineWidthPx, C_KernelWidth, C_Stride);
-  localparam int unsigned P_LineCountPx = p_in_dim(C_LineCountPx, C_KernelWidth, C_Stride);
+  localparam int unsigned P_LineWidthPx = p_in_dim(C_LineWidthPx, C_KernelWidth, C_Stride, C_Padding);
+  localparam int unsigned P_LineCountPx = p_in_dim(C_LineCountPx, C_KernelWidth, C_Stride, C_Padding);
 
   `include "injected_weights.vh"
 
@@ -54,6 +55,7 @@ module tb_single_block #(
     ,.InChannels  (C_InChannels)
     ,.OutChannels (C_OutChannels)
     ,.Stride      (C_Stride)
+    ,.Padding     (C_Padding)
     ,.Weights     (INJECTED_WEIGHTS)
   ) conv_layer_inst_0 (
      .clk_i   (clk_i)

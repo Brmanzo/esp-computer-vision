@@ -54,9 +54,9 @@ def torch_pool_ref(input_activation, kernel_size, stride=None, mode=0):
         y = F.avg_pool2d(x, kernel_size=kernel_size, stride=stride, padding=0)
     return y.squeeze(0) 
 
-def torch_single_block_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1, mode=0, pool_kernel_size=2):
+def torch_single_block_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1, mode=0, pool_kernel_size=2, padding=0):
     # 1. Run Convolution
-    conv_out = torch_conv_ref(input_activation, kernels4, stride, in_bits, out_bits)
+    conv_out = torch_conv_ref(input_activation, kernels4, stride, in_bits, out_bits, padding)
 
     # 2. Chain directly into Pool
     pool_out = torch_pool_ref(conv_out, kernel_size=pool_kernel_size, stride=pool_kernel_size, mode=mode)
