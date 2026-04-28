@@ -20,13 +20,25 @@ def to_torch_weights(kernels4):
     w = torch.tensor(kernels4, dtype=torch.int32)           # (OC,IC,K,K)
     return w
 
-def torch_conv_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1):
+def torch_conv_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1, padding=0):
     x = to_torch_input(input_activation).to(torch.float32)
     w = to_torch_weights(kernels4).to(torch.float32)
 
     if in_bits == 1:
         # Match MAC input encoding: 0 -> -1, 1 -> +1
         x = x * 2.0 - 1.0
+        # A 0-bit in hardware means -1 mathematically
+        pad_val = -1.0 
+    else:
+        # Standard multi-bit padding is just 0
+        pad_val = 0.0
+
+    # Manually pad the tensor with the correct semantic value
+    if padding > 0:
+        # F.pad format: (left, right, top, bottom)
+        x = F.pad(x, (padding, padding, padding, padding), mode='constant', value=pad_val)
+
+    # Run conv2d with padding=0 since the tensor is already expanded
     y = F.conv2d(x, w, stride=stride, padding=0).squeeze(0)
 
     if out_bits == 1:

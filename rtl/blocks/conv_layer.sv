@@ -18,11 +18,13 @@ module conv_layer #(
   ,localparam int unsigned ChannelsPerRam = TargetRamBits / ((KernelWidth - 1) * InBits)
   ,localparam int unsigned BufferCount    = (InChannels + ChannelsPerRam - 1) / ChannelsPerRam
 
-  ,parameter  int unsigned Stride         = 1 // TODO Add Padding support
+  ,parameter  int unsigned Stride         = 1
   ,localparam int unsigned StrideBits     = (Stride <= 1) ? 1 : $clog2(Stride)
 
-  ,localparam int XBits = (LineWidthPx <= 1) ? 1 : $clog2(LineWidthPx)
-  ,localparam int YBits = (LineCountPx <= 1) ? 1 : $clog2(LineCountPx)
+  ,parameter  int unsigned Padding        = 0
+
+  ,localparam int XBits = (LineWidthPx <= 1) ? 1 : $clog2(LineWidthPx + 2*Padding + 1)
+  ,localparam int YBits = (LineCountPx <= 1) ? 1 : $clog2(LineCountPx + 2*Padding + 1)
 
   ,localparam int unsigned WeightIndex = InChannels * KernelArea * WeightBits
   ,parameter logic signed [OutChannels*WeightIndex-1:0] Weights = '0
@@ -66,21 +68,41 @@ module conv_layer #(
     end
   endfunction
   
-  wire [0:0] in_fire = valid_i & ready_o;
-
   // Position counters track the current x and y pixel positions within the input image.
   logic [XBits-1:0] x_pos;
   logic [YBits-1:0] y_pos;
 
+  // Valid positions of kernel within input activation, (excludes invalid buffering states)
   wire [0:0] valid_x_pos = (x_pos >= (XBits'(KernelWidth - 1)));
   wire [0:0] valid_y_pos = (y_pos >= (YBits'(KernelWidth - 1)));
 
-  wire [0:0] last_col = (x_pos == XBits'(LineWidthPx - 1));
-  wire [0:0] last_row = (y_pos == YBits'(LineCountPx - 1));
+  wire [0:0] valid_kernel_pos = valid_x_pos && valid_y_pos;
 
+  // Last column and row indicators for resetting position counters
+  wire [0:0] last_col = (x_pos == XBits'((LineWidthPx - 1) + 2*Padding));
+  wire [0:0] last_row = (y_pos == YBits'((LineCountPx - 1) + 2*Padding));
+
+  /* ------------------------------------------ Stride Logic ------------------------------------------ */
   // Stride phase counters track the current position within the stride cycle for x and y dimensions.
   logic [StrideBits-1:0] x_phase;
   logic [StrideBits-1:0] y_phase;
+
+  wire [0:0] valid_x_stride = (Stride <= 1) ? 1'b1 : (x_phase == '0);
+  wire [0:0] valid_y_stride = (Stride <= 1) ? 1'b1 : (y_phase == '0);
+
+  wire [0:0] valid_stride = valid_x_stride && valid_y_stride;
+
+  /* ----------------------------------------- Padding Logic ----------------------------------------- */
+  // Padding (If we are before the first real pixel, or after the last real pixel)
+  /* verilator lint_off UNSIGNED */
+  wire [0:0] pad_x = (x_pos < XBits'(Padding)) | (x_pos >= XBits'(LineWidthPx + Padding));
+  wire [0:0] pad_y = (y_pos < YBits'(Padding)) | (y_pos >= YBits'(LineCountPx + Padding));
+  /* verilator lint_on UNSIGNED */
+  wire [0:0] pad_cycle = pad_x | pad_y;
+
+  wire  [0:0] elastic_ready;
+  wire  [0:0] in_fire = (valid_i | pad_cycle) & elastic_ready;
+  assign ready_o = elastic_ready & ~pad_cycle;
 
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
@@ -109,40 +131,34 @@ module conv_layer #(
     end
   end
 
-  wire [0:0] valid_kernel_pos = valid_x_pos && valid_y_pos;
-
-  wire [0:0] valid_x_stride = (Stride <= 1) ? 1'b1 : (x_phase == '0);
-  wire [0:0] valid_y_stride = (Stride <= 1) ? 1'b1 : (y_phase == '0);
-  wire [0:0] valid_stride = valid_x_stride && valid_y_stride;
-
-  wire [0:0] produce = in_fire && valid_kernel_pos && valid_stride;
-
   /* ------------------------------------ Elastic Handshaking Logic ------------------------------------ */
   // Provided Elastic State Machine Logic
-  logic  [0:0] input_valid_r;
+  logic [0:0] input_valid_r;
+  wire  [0:0] produce = in_fire && valid_kernel_pos && valid_stride;
 
   always_ff @(posedge clk_i) begin
     // If reset, we are not valid this cycle
     if (rst_i)        input_valid_r <= 1'b0; 
     // If not stalling, then we have valid data if we are producing it this cycle
-    else if (ready_o) input_valid_r <= produce;
+    else if (elastic_ready) input_valid_r <= produce;
   end
-
-  wire [0:0] window_valid;
 
   // Each filter has its own internal pipeline stage
   wire [OutChannels-1:0] filter_ready;
   wire [OutChannels-1:0] filter_valid;
-  // Top level output is valid and ready when all filters are valid and ready, respectively
+  // Top level output is valid when all filters are valid
   assign valid_o = &filter_valid;
   
   /* --------------------------------------- Input Channel Logic --------------------------------------- */
   // Vertically partition channels and row buffers for each channel within RAM
   logic signed [InChannels-1:0][KernelWidth-1:0][InBits-1:0] row_buffers;
   logic signed [InChannels-1:0][KernelWidth-1:1][InBits-1:0] row_buffer_taps;
+  logic signed [InChannels-1:0][InBits-1:0] padded_data_i; 
+
   generate
     for (genvar ch = 0; ch < InChannels; ch++) begin : gen_data_input
-      assign row_buffers[ch][0] = $signed(data_i[ch]); // Row buffer 0 is current data input
+      assign padded_data_i[ch]  = pad_cycle ? '0 : $signed(data_i[ch]); // If padding, input 0, else input data
+      assign row_buffers[ch][0] = padded_data_i[ch]; // Row buffer 0 is current data input
       assign row_buffers[ch][KernelWidth-1:1] = row_buffer_taps[ch];
     end
   endgenerate
@@ -156,18 +172,19 @@ module conv_layer #(
     ,.InBits         (InBits)
     ,.InChannels     (InChannels)
     ,.KernelWidth    (KernelWidth)
-    ,.LineWidthPx    (LineWidthPx)
+    ,.LineWidthPx    (LineWidthPx + 2*Padding) // Account for padding in line width
   ) multi_delay_ram_inst (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)
     ,.in_fire (in_fire)
-    ,.data_i  (data_i)
+    ,.data_i  (padded_data_i)
     ,.data_o  (row_buffer_taps) // Row buffers >= 1 read from delay buffer
   );
 
   /* ------------------------------------ Window Generation Logic ------------------------------------ */
   // Every input channel is represented within its own matrix and passed to every filter
   // Which each have input channel number of kernels 
+  wire  [0:0] window_valid;
   logic signed [InChannels-1:0][KernelArea-1:0][InBits-1:0] windows_d, windows_q;
 
   generate
@@ -196,19 +213,18 @@ module conv_layer #(
     ,.rst_i   (rst_i)
 
     ,.valid_i (input_valid_r) // Valid when top-level is valid
-    ,.ready_o (ready_o)       // Handles top-level backpressure
+    ,.ready_o (elastic_ready)       // Handles top-level backpressure
     ,.data_i  (windows_d)
 
     ,.valid_o (window_valid)
     ,.ready_i (&filter_ready) // ready when all filters are ready to accept data
     ,.data_o  (windows_q)
   );
-
   /* ------------------------------------ Filter Logic ------------------------------------ */
   generate
     for (genvar ch = 0; ch < OutChannels; ch++) begin : gen_row_buffer_delayed
       filter #(
-         .InBits      (InBits)
+         .InBits     (InBits)
         ,.OutBits    (OutBits)
         ,.KernelWidth(KernelWidth)
         ,.WeightBits (WeightBits)

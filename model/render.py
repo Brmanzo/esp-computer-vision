@@ -63,6 +63,7 @@ def render_conv_layer(
     instance,
     num_instances,
     kernels,
+    padding,
 ):
     # If at head of the first layer, connect to global input
     if instance == 0:
@@ -110,9 +111,10 @@ def render_conv_layer(
         f"    ,.OutChannels ({OutChannels})",
         f"    ,.Stride      ({Stride})",
         f"    ,.Weights     ({Weights})",
+        f"    ,.Padding     ({padding})",
         f"  ) conv_layer_inst_{instance} (",
-        "     .clk_i   (clk_i)",
-        "    ,.rst_i   (rst_i)",
+        "     .clk_i     (clk_i)",
+        "    ,.rst_i     (rst_i)",
         "",
         f"    ,.ready_o  ({ready_o})",
         f"    ,.valid_i  ({valid_i})",
@@ -132,6 +134,7 @@ def render_pool_layer(
     KernelWidth,
     InChannels,
     instance,
+    PoolMode, # 0 for max pooling, 1 for average pooling
     num_instances,
     kernels,
 ):
@@ -155,7 +158,7 @@ def render_pool_layer(
         f"    ,.InBits      ({InBits})",
         f"    ,.KernelWidth ({KernelWidth})",
         f"    ,.InChannels  ({InChannels})",
-        f"    ,.PoolMode    (0)", # PoolMode is fixed to 0 (max pooling) for now since we only support max pooling
+        f"    ,.PoolMode    ({PoolMode})", # PoolMode is fixed to 0 (max pooling) for now since we only support max pooling
         f"  ) pool_layer_inst_{instance} (",
         "     .clk_i    (clk_i)",
         "    ,.rst_i    (rst_i)",

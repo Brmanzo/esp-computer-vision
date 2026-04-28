@@ -43,6 +43,7 @@ input_dimensions = (320, 240)
 in_channels = [1, 8, 16, 24, 32]
 in_bits     = [1, 1, 1, 1]
 kernels     = [[3,2], [3,2], [3,2], [3], [1]]
+padding     = [1, 1, 1, 1, 0]
 
 # Establish schedule for progressive quantization of each layer
 schedule = [LayerConfig(20, [5, 5, 5, 10, 20], 8, 4),
@@ -98,6 +99,7 @@ model = cnn_model(
     in_channels=in_channels, 
     in_bits=in_bits,
     kernels=kernels,
+    padding=padding,
     schedule=schedule,
     num_classes=num_classes).to(device)
 

@@ -13,7 +13,7 @@ module tb_conv_layer #(
   ,parameter int unsigned InChannels   = 1
   ,parameter int unsigned OutChannels  = 1
   ,parameter int unsigned Stride       = 1
-
+  ,parameter int unsigned Padding      = 0
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -40,6 +40,7 @@ conv_layer #(
     ,.InChannels  (InChannels)
     ,.OutChannels (OutChannels)
     ,.Stride      (Stride)
+    ,.Padding     (Padding)
     ,.Weights     (INJECTED_WEIGHTS)
   ) dut (
      .clk_i   (clk_i)

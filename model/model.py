@@ -41,6 +41,13 @@ class cnn_model(nn.Module):
             print(render_wires(self._kernels), file=f)
             print("", file=f)
 
+            pool_modes = []
+            for m in self.features.children():
+                if isinstance(m, nn.MaxPool2d):
+                    pool_modes.append(0)
+                elif isinstance(m, nn.AvgPool2d):
+                    pool_modes.append(1)
+
             for layer in range(self._layers):
                 for module in range(len(self._kernels[layer])):
                     if module == 0:  # Convolution module
@@ -59,6 +66,7 @@ class cnn_model(nn.Module):
                                 instance=layer,
                                 num_instances=self._layers,
                                 kernels=self._kernels,
+                                padding=self._padding[layer],
                             ),
                             file=f,
                         )
@@ -73,6 +81,7 @@ class cnn_model(nn.Module):
                                 instance=layer,
                                 num_instances=self._layers,
                                 kernels=self._kernels,
+                                PoolMode=pool_modes[layer], # 0 for max pooling, 1 for average pooling
                             ),
                             file=f,
                         )
@@ -93,7 +102,7 @@ class cnn_model(nn.Module):
             )
             print(render_footer(), file=f)
 
-    def __init__(self, input_dimensions, in_channels, in_bits, kernels, schedule, num_classes=5):
+    def __init__(self, input_dimensions, in_channels, in_bits, kernels, padding, schedule, num_classes=5):
         super().__init__()
 
         repo_root = Path(__file__).resolve().parents[1]   # adjust depth as needed
@@ -106,7 +115,7 @@ class cnn_model(nn.Module):
         
         self._input_bits       = in_bits
         self._out_bits         = in_bits[1:]
-
+        self._padding          = padding
         self._kernels          = kernels
 
         self._input_dimensions = input_dimensions
@@ -121,8 +130,8 @@ class cnn_model(nn.Module):
                 self._input_heights[layer].append(h)
 
                 if module == 0: # Convolution module
-                    w = w - self._kernels[layer][module] + 1
-                    h = h - self._kernels[layer][module] + 1
+                    w = w - self._kernels[layer][module] + 1 + 2 * self._padding[layer]
+                    h = h - self._kernels[layer][module] + 1 + 2 * self._padding[layer]
 
                 elif module == 1: # Pooling module
                     w = w // self._kernels[layer][1]
@@ -146,29 +155,27 @@ class cnn_model(nn.Module):
         # One BRAM consumed by binary in_ch
         self.ram_utilization()
 
-        self.render_verilog(out_file)
-
         self.features = nn.Sequential(
             # Block 0
-            QuantConv2d(self._in_ch[0], self._out_ch[0], kernel_size=self._kernels[0][0], padding=0, bias=False),
+            QuantConv2d(self._in_ch[0], self._out_ch[0], kernel_size=self._kernels[0][0], padding=self._padding[0], bias=False),
             nn.BatchNorm2d(self._out_ch[0]),
             QuantizeActivation(bits=self._out_bits[0]),
             nn.MaxPool2d(self._kernels[0][1]),
 
             # Block 1
-            QuantConv2d(self._in_ch[1], self._out_ch[1], kernel_size=self._kernels[1][0], padding=0, bias=False),
+            QuantConv2d(self._in_ch[1], self._out_ch[1], kernel_size=self._kernels[1][0], padding=self._padding[1], bias=False),
             nn.BatchNorm2d(self._out_ch[1]),
             QuantizeActivation(bits=self._out_bits[1]),
             nn.MaxPool2d(self._kernels[1][1]),
 
             # Block 2
-            QuantConv2d(self._in_ch[2], self._out_ch[2], kernel_size=self._kernels[2][0], padding=0, bias=False),
+            QuantConv2d(self._in_ch[2], self._out_ch[2], kernel_size=self._kernels[2][0], padding=self._padding[2], bias=False),
             nn.BatchNorm2d(self._out_ch[2]),
             QuantizeActivation(bits=self._out_bits[2]),
             nn.MaxPool2d(self._kernels[2][1]),
 
             # Block 3
-            QuantConv2d(self._in_ch[3], self._out_ch[3], kernel_size=self._kernels[3][0], padding=0, bias=False),
+            QuantConv2d(self._in_ch[3], self._out_ch[3], kernel_size=self._kernels[3][0], padding=self._padding[3], bias=False),
             nn.BatchNorm2d(self._out_ch[3]),
             QuantizeActivation(bits=self._out_bits[3]),
         )
@@ -179,6 +186,8 @@ class cnn_model(nn.Module):
             QuantConv2d(self._in_ch[4], self._out_ch[4], kernel_size=self._kernels[4][0], bias=False),
             nn.BatchNorm2d(self._out_ch[4])
         )
+
+        self.render_verilog(out_file)
 
     def forward(self, x):
         x = self.features(x)           
