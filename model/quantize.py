@@ -4,7 +4,7 @@ from matplotlib.pylab import cast
 from torch import nn
 import torch
 
-class LayerConfig:
+class QSchedule:
     def __init__(self, q_start=0, q_epochs=[15,15,15,15,15,15,30], q_max_bits=8, q_min_bits=2):
         self._q_start = q_start
         assert len(q_epochs) == q_max_bits - q_min_bits + 1, "q_epochs must specify epochs for each bit-width quantization step + the final plateau"

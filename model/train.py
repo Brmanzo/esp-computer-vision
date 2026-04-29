@@ -12,9 +12,10 @@ from matplotlib import pyplot as plt
 from pathlib import Path
 import matplotlib.pyplot as plt
 
+from .quantize import QSchedule
 from .model import cnn_model, QuantConv2d
 from .export import export_model_to_csv
-from .quantize import LayerConfig
+from .config import ModelConfig, InputDimensions
 
 IMG_H, IMG_W = 240, 320
 DATA_SPLIT = 0.8
@@ -24,6 +25,8 @@ EPOCHS_PER_LAYER = 15
 # Hyperparameters
 LEARNING_RATE = 5e-4
 WEIGHT_DECAY  = 1e-5
+
+IN_BITS = 1
 
 train_acc_history = []
 test_acc_history = []
@@ -38,22 +41,9 @@ def pad_to_target(img):
     pad_bottom = max(IMG_H - h - pad_top, 0)
     return TF.pad(img, [pad_left, pad_top, pad_right, pad_bottom], fill=255)
 
-# Define model architecture and quantization schedule
-input_dimensions = (320, 240)
-in_channels = [1, 8, 16, 24, 32]
-in_bits     = [1, 1, 1, 1]
-kernels     = [[3,2], [3,2], [3,2], [3], [1]]
-padding     = [1, 1, 1, 1, 0]
-
-# Establish schedule for progressive quantization of each layer
-schedule = [LayerConfig(20, [5, 5, 5, 10, 20], 8, 4),
-            LayerConfig(30, [5, 5, 5, 10, 20], 8, 4),
-            LayerConfig(40, [5, 5, 5, 10, 20], 8, 4),
-            LayerConfig(50, [5, 5, 5, 10, 20], 8, 4),
-            LayerConfig(50, [10], 8, 8)]
 
 tfm_train = transforms.Compose([
-    transforms.Grayscale(in_bits[0]),  # Ensure images are single-channel grayscale
+    transforms.Grayscale(IN_BITS),  # Ensure images are single-channel grayscale
     
     # Pad the image to 320x240 (centers it and fills borders with white: 255)
     transforms.Lambda(pad_to_target),
@@ -93,22 +83,31 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 torch.backends.cudnn.benchmark = True
 
 num_classes = len(dataset.classes)
-# Import CNN Model and set the optimizer, loss function, and scheduler for training
-model = cnn_model(
-    input_dimensions=input_dimensions, 
-    in_channels=in_channels, 
-    in_bits=in_bits,
-    kernels=kernels,
-    padding=padding,
-    schedule=schedule,
-    num_classes=num_classes).to(device)
 
+cfg = ModelConfig(
+    input_dimensions = InputDimensions(320, 240),
+    in_channels      = [1, 8, 16, 24, 32],
+    in_bits          = [1, 1, 1, 1],  # Only the first 4 layers are binarized, the classifier is full precision
+    kernels          = [[3,2], [3,2], [3,2], [3], [1]],
+    padding          = 1,
+    stride           = 1,
+    num_classes      = num_classes,
+    bus_width        = 8,
+    q_schedule       = [QSchedule(20, [5, 5, 5, 10, 20], 8, 4),
+                        QSchedule(30, [5, 5, 5, 10, 20], 8, 4),
+                        QSchedule(40, [5, 5, 5, 10, 20], 8, 4),
+                        QSchedule(50, [5, 5, 5, 10, 20], 8, 4),
+                        QSchedule(50, [10], 8, 8)])
+
+# Import CNN Model and set the optimizer, loss function, and scheduler for training
+model = cnn_model(config = cfg)
+model = model.to(device)
 
 model_layers = model.modules()
-assert len(schedule) == sum(1 for m in model_layers if isinstance(m, QuantConv2d)), "Schedule must have an entry for each QuantConv2d layer"
+assert len(cfg.q_schedule) == sum(1 for m in model_layers if isinstance(m, QuantConv2d)), "Schedule must have an entry for each QuantConv2d layer"
 
-EPOCHS = max(cfg.total_epochs() for cfg in schedule) 
-BEGIN_Q_EPOCHS = schedule[0]._q_start
+EPOCHS = max(cfg.total_epochs() for cfg in cfg.q_schedule) 
+BEGIN_Q_EPOCHS = cfg.q_schedule[0]._q_start
 
 opt = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
 loss_fn = torch.nn.CrossEntropyLoss()
@@ -130,7 +129,7 @@ for epoch in range(EPOCHS):
     for module in model.modules(): # Safely iterate directly
         if isinstance(module, QuantConv2d):
             # Fetch the target bits directly from your shiny new data structure
-            target_bits = schedule[quant_layer_idx].get_target_bits(epoch)
+            target_bits = cfg.q_schedule[quant_layer_idx].get_target_bits(epoch)
             
             if target_bits is not None:
                 # Turning quantization ON for the first time
@@ -210,12 +209,12 @@ plt.plot(train_acc_history, label="Train Accuracy", linewidth=2)
 plt.plot(test_acc_history, label="Test Accuracy", linewidth=2)
 
 colors = ['red', 'orange', 'green', 'blue', 'purple']
-assert len(schedule) == len(colors), "Need a color for each layer in the schedule"
+assert len(cfg.q_schedule) == len(colors), "Need a color for each layer in the schedule"
 
 # Find the lowest accuracy on the graph to anchor our text
 min_acc = min(min(train_acc_history), min(test_acc_history))
 
-for layer_idx, (cfg, color) in enumerate(zip(schedule, colors)):
+for layer_idx, (cfg, color) in enumerate(zip(cfg.q_schedule, colors)):
     # Offset text vertically so the 4 layers stack neatly instead of overlapping
     y_offset = min_acc + (layer_idx * 0.05) 
     
