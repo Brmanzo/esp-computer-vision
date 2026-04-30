@@ -1,8 +1,10 @@
 # quantize.py
 
 from matplotlib.pylab import cast
-from torch import nn
 import torch
+from   torch import nn
+import torch.nn.functional as F
+
 
 class QSchedule:
     def __init__(self, q_start=0, q_epochs=[15,15,15,15,15,15,30], q_max_bits=8, q_min_bits=2):
@@ -59,25 +61,62 @@ class QuantizeBit(torch.autograd.Function):
         # Return gradient for 'w', and None for 'bits'
         return grad_output, None
 
-class QuantConv2d(nn.Conv2d):
-    '''Applies quantization to conv2d layer weights during the forward pass when enabled.'''
-    def __init__(self, *args, threshold: float = 0.05, bits: int = 4, **kwargs):
-        # Hardware tip: If your FPGA/ASIC doesn't support biases yet, 
-        # force bias=False here or pass it in kwargs.
-        super().__init__(*args, **kwargs)
-        self._threshold = threshold
+class QuantConv2d(nn.Conv2d): # Or FusedQuantConvBN2d depending on what you named it
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, bits=4, **kwargs):
+        # Safely remove 'bias' from kwargs if the user passed it in
+        kwargs.pop('bias', None) 
+        
+        # Now super() only gets one bias argument!
+        super().__init__(in_channels, out_channels, kernel_size, stride, padding, bias=False, **kwargs)
+        
         self._bits = bits
         self._quantize = False
+        
+        # Native BatchNorm parameters
+        self.bn_weight = nn.Parameter(torch.ones(out_channels))  # Gamma
+        self.bn_bias = nn.Parameter(torch.zeros(out_channels))   # Beta
+        self.register_buffer('running_mean', torch.zeros(out_channels))
+        self.register_buffer('running_var', torch.ones(out_channels))
+        self.eps = 1e-5
+        self.momentum = 0.1
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self._quantize:
-            # Cast the output to guarantee to the linter that this is a Tensor
-            w_q = cast(torch.Tensor, QuantizeBit.apply(self.weight, self._bits))
-            return self._conv_forward(x, w_q, self.bias)
+        # 1. The Dummy Pass: Standard float convolution to get pre-BN activations
+        #    (We use None for bias because BN handles all biasing)
+        pre_act = F.conv2d(x, self.weight, None, self.stride, self.padding)
+        
+        # 2. Handle BatchNorm Statistics on the OUTPUT of the convolution
+        if self.training:
+            # Calculate batch stats on the 16 output channels
+            mean = pre_act.mean([0, 2, 3])
+            var = pre_act.var([0, 2, 3], unbiased=False)
+            
+            # Update running stats
+            with torch.no_grad():
+                self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * mean
+                self.running_var = (1 - self.momentum) * self.running_var + self.momentum * var
         else:
-            return self._conv_forward(x, self.weight, self.bias)
-import torch
-import torch.nn as nn
+            mean = self.running_mean
+            var = self.running_var
+
+        # 3. Calculate the BN Scale
+        bn_scale = self.bn_weight / torch.sqrt(var + self.eps)
+
+        # 4. Fold BN into the weights
+        # Broadcast scale to (OutChannels, 1, 1, 1)
+        folded_w = self.weight * bn_scale.view(-1, 1, 1, 1)
+        
+        # 5. Calculate the Folded Bias
+        folded_b = self.bn_bias - (mean * bn_scale)
+
+        # 6. Quantize the FOLDED weights (The QAT Schedule kicks in here!)
+        if self._quantize:
+            w_q = cast(torch.Tensor, QuantizeBit.apply(folded_w, self._bits))
+        else:
+            w_q = folded_w
+
+        # 7. Execute the REAL Convolution using the integer weights and folded bias
+        return F.conv2d(x, w_q, folded_b, self.stride, self.padding)
 
 class QuantizeActivationSTE(torch.autograd.Function):
     @staticmethod

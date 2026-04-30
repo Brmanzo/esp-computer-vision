@@ -158,6 +158,7 @@ class ModelConfig:
                 c_in_bits = in_bits[i]
             else:
                 c_in_bits = current_out_bits
+                assert c_in_bits is not None, "Input bit-width is undefined for this layer"
 
             # 2. Check if this is the FINAL layer (Classifier)
             if i == self.num_layers - 1:

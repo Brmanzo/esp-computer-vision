@@ -84,9 +84,9 @@ def test_width(test_name, simulator, InBits, WeightBits, OutBits, KernelWidth, I
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 # Added 'Weights' to the tuple list, generating it with WW=2, OC=1, IC=1
 @pytest.mark.parametrize("OutBits, KernelWidth, Stride, LineWidthPx, LineCountPx, Weights", 
-                         [(output_width(1, 2, 2), 2, 2, 16, 12, gen_kernels(2, 1, 1, 2, seed=1234)),
-                          (output_width(1, 2, 4), 4, 4, 16, 12, gen_kernels(2, 1, 1, 4, seed=1234)),
-                          (output_width(1, 2, 5), 5, 2, 17, 13, gen_kernels(2, 1, 1, 5, seed=1234))
+                         [(output_width(1, 2, 2, 1), 2, 2, 16, 12, gen_kernels(2, 1, 1, 2, seed=1234)),
+                          (output_width(1, 2, 4, 1), 4, 4, 16, 12, gen_kernels(2, 1, 1, 4, seed=1234)),
+                          (output_width(1, 2, 5, 1), 5, 2, 17, 13, gen_kernels(2, 1, 1, 5, seed=1234))
                           ])
 
 def test_stride(test_name, simulator, OutBits, KernelWidth, Stride, LineWidthPx, LineCountPx, Weights):
@@ -132,8 +132,8 @@ def test_stride(test_name, simulator, OutBits, KernelWidth, Stride, LineWidthPx,
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 # Added 'Weights' to the tuple list, generating it with WW=2, OC=1, IC=1
 @pytest.mark.parametrize("OutBits, KernelWidth, Padding, LineWidthPx, LineCountPx, Weights", 
-                         [(output_width(1, 2, 3), 3, 1, 16, 12, gen_kernels(2, 1, 1, 3, seed=1234)),
-                          (output_width(1, 2, 5), 5, 2, 16, 12, gen_kernels(2, 1, 1, 5, seed=1234)),
+                         [(output_width(1, 2, 3, 1), 3, 1, 16, 12, gen_kernels(2, 1, 1, 3, seed=1234)),
+                          (output_width(1, 2, 5, 1), 5, 2, 16, 12, gen_kernels(2, 1, 1, 5, seed=1234)),
                           ])
 
 def test_padding(test_name, simulator, OutBits, KernelWidth, Padding, LineWidthPx, LineCountPx, Weights):
@@ -182,7 +182,7 @@ def test_padding(test_name, simulator, OutBits, KernelWidth, Padding, LineWidthP
                          [(1, 2, 3, 1, 16, 8, gen_kernels(2, 8, 16, 3, seed=1234)),
                           (1, 2, 3, 1, 17, 8, gen_kernels(2, 8, 17, 3, seed=1234)),
                           (1, 2, 3, 1, 8, 8, gen_kernels(2, 8, 8, 3, seed=1234)),
-                          (4, 5, 3, output_width(4, 5, 3), 4, 5, gen_kernels(5, 5, 4, 3, seed=1234))
+                          (4, 5, 3, output_width(4, 5, 3, 1), 4, 5, gen_kernels(5, 5, 4, 3, seed=1234))
                           ])
 
 def test_channels(test_name, simulator, InBits, WeightBits, KernelWidth, OutBits, InChannels, OutChannels, Weights):
@@ -222,7 +222,7 @@ def test_channels(test_name, simulator, InBits, WeightBits, KernelWidth, OutBits
     )
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("LineWidthPx, InBits, OutBits", [("16", "1", output_width(1, 2, 3))])
+@pytest.mark.parametrize("LineWidthPx, InBits, OutBits", [("16", "1", output_width(1, 2, 3, 1))])
 def test_lint(simulator, LineWidthPx, InBits, OutBits):
     # This line must be first
     parameters = dict(locals())
@@ -230,7 +230,7 @@ def test_lint(simulator, LineWidthPx, InBits, OutBits):
     lint(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("LineWidthPx, InBits, OutBits", [("16", "1", output_width(1, 2))])
+@pytest.mark.parametrize("LineWidthPx, InBits, OutBits", [("16", "1", output_width(1, 2, 3, 1))])
 def test_style(simulator, LineWidthPx, InBits, OutBits):
     # This line must be first
     parameters = dict(locals())

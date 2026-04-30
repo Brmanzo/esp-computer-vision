@@ -214,21 +214,21 @@ assert len(cfg.q_schedule) == len(colors), "Need a color for each layer in the s
 # Find the lowest accuracy on the graph to anchor our text
 min_acc = min(min(train_acc_history), min(test_acc_history))
 
-for layer_idx, (cfg, color) in enumerate(zip(cfg.q_schedule, colors)):
+for layer_idx, (q_sched, color) in enumerate(zip(cfg.q_schedule, colors)):
     # Offset text vertically so the 4 layers stack neatly instead of overlapping
     y_offset = min_acc + (layer_idx * 0.05) 
     
     # Plot the starting point for this layer
-    plt.axvline(cfg._q_start, color=color, linestyle='-', alpha=0.6)
-    plt.text(cfg._q_start - 2, y_offset, f'L{layer_idx} Q-Start', rotation=90, color=color, fontsize=8)
+    plt.axvline(q_sched._q_start, color=color, linestyle='-', alpha=0.6)
+    plt.text(q_sched._q_start - 2, y_offset, f'L{layer_idx} Q-Start', rotation=90, color=color, fontsize=8)
     
     # Accumulate the epochs to step forward in time correctly
-    accumulated_epochs = cfg._q_start
-    for i, duration in enumerate(cfg._epochs_per_bit[:-1]): # Skip the final plateau duration for text labels
+    accumulated_epochs = q_sched._q_start
+    for i, duration in enumerate(q_sched._epochs_per_bit[:-1]): # Skip the final plateau duration for text labels
         accumulated_epochs += duration
         
         # Calculate the bit-width the layer is dropping TO
-        next_bits = max(cfg._q_min_bits, cfg._q_max_bits - i - 1)
+        next_bits = max(q_sched._q_min_bits, q_sched._q_max_bits - i - 1)
         
         # Plot the drop threshold
         plt.axvline(accumulated_epochs, color=color, linestyle='--', alpha=0.3)
@@ -243,7 +243,7 @@ plt.grid(True, alpha=0.3)
 print("\n--- TRAINING COMPLETE ---")
 
 # 2. Extract from the best model the folded hardware parameters to CSV
-export_model_to_csv(model_save_path, num_classes, output_csv="hardware_weights.csv")
+export_model_to_csv(model_save_path, config=cfg, output_csv="hardware_weights.csv")
 
 # 3. Show the graph (Script will pause here until you close the window)
 plt.savefig("training_accuracy.png")  # Save the figure to a file

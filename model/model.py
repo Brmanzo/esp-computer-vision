@@ -52,9 +52,7 @@ class cnn_model(nn.Module):
             pool = layer_cfg.PoolLayer
             
             feature_layers.append(QuantConv2d(conv._in_ch, conv._out_ch, kernel_size=conv._kernel_width, padding=conv._padding, bias=False))
-            out_ch = conv._out_ch
-            assert out_ch is not None
-            feature_layers.append(nn.BatchNorm2d(out_ch))
+
             feature_layers.append(QuantizeActivation(bits=conv._out_bits))
             
             if pool is not None:
@@ -72,7 +70,6 @@ class cnn_model(nn.Module):
             nn.Dropout2d(p=0.1),
             # Notice the 1x1 kernel assumption typical for fully convolutional classifiers
             QuantConv2d(cls_cfg._in_ch, cls_cfg._num_classes, kernel_size=1, bias=False),
-            nn.BatchNorm2d(cls_cfg._num_classes)
         )
 
         # 3. Utilities

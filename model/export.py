@@ -2,92 +2,66 @@
 import torch
 import pandas as pd
 import numpy as np
-from typing import cast
 from .model import cnn_model, QuantConv2d
+from .config import ModelConfig
 
-def get_quantized_data(conv_layer: QuantConv2d, target_bits: int):
+def get_hardware_weights(fused_layer: QuantConv2d):
     """
-    Extracts the actual integer weights (q), fake-quantized floats (w_q), and scale.
+    Extracts the folded integer weights and biases directly from the QAT layer.
     """
-    w = conv_layer.weight.detach()
+    # 1. Recreate the exact fold that happened during training
+    bn_scale = fused_layer.bn_weight / torch.sqrt(fused_layer.running_var + fused_layer.eps)
+    folded_w = fused_layer.weight * bn_scale.view(-1, 1, 1, 1)
+    folded_b = fused_layer.bn_bias - (fused_layer.running_mean * bn_scale)
+
+    # 2. Retrieve the target bits directly from the layer
+    target_bits = fused_layer._bits
+
+    # 3. Quantize to extract the exact integer arrays the network learned
     qmin = -2**(target_bits-1)
     qmax = 2**(target_bits-1) - 1
 
-    max_abs = w.abs().max()
-    scale = max_abs / qmax if max_abs > 0 else 1.0
-
-    # Extract the raw integers
-    q = torch.round(w / scale)
-    q = torch.clip(q, qmin, qmax)
+    max_abs = folded_w.abs().max()
+    w_scale = max_abs / qmax if max_abs > 0 else 1.0
     
-    # Calculate the fake-quantized weights
-    w_q = q * scale
-
-    return q, w_q, scale
-
-def fold_batchnorm_into_conv(conv_layer: QuantConv2d, bn_layer: torch.nn.BatchNorm2d, target_bits: int):
-    q, w_q, w_scale = get_quantized_data(conv_layer, target_bits)
-
-    gamma = bn_layer.weight.detach()
-    beta = bn_layer.bias.detach()
-    if bn_layer.running_mean is not None and bn_layer.running_var is not None:
-        mean = bn_layer.running_mean.detach()
-        var = bn_layer.running_var.detach()
-    else:
-        return q, torch.zeros_like(beta)  # If no running stats, we can't fold, so return zero bias
-    eps = bn_layer.eps
-
-    bn_scale = gamma / torch.sqrt(var + eps)
-
-    if conv_layer.bias is not None:
-        conv_bias = conv_layer.bias.detach()
-    else:
-        conv_bias = torch.zeros_like(mean)
-
-    # 1. Calculate the standard folded bias (float)
-    folded_bias = (conv_bias - mean) * bn_scale + beta
+    # Extract integer weights
+    q_weights = torch.round(folded_w / w_scale)
+    q_weights = torch.clip(q_weights, qmin, qmax)
     
-    # 2. Scale the bias into the integer domain
+    # Extract integer bias (using the exact same scale)
+    hw_bias = torch.round(folded_b / w_scale)
+    
+    return q_weights, hw_bias
 
-    total_scale = w_scale * bn_scale
-    hw_bias = folded_bias / total_scale
-
-    # Return the pure integer weights 'q', and the scaled-down bias
-    return q, hw_bias
-
-def export_model_to_csv(model_path, num_classes, output_csv="hardware_weights.csv"):
+def export_model_to_csv(model_path: str, config: ModelConfig, output_csv="hardware_weights.csv"):
     device = "cpu"
 
-    model = cnn_model(in_ch=1, num_classes=num_classes).to(device)
-    state = torch.load(model_path, map_location=device)
+    # Initialize model using the new config architecture
+    model = cnn_model(config=config).to(device)
+    state = torch.load(model_path, map_location=device, weights_only=True)
     model.load_state_dict(state, strict=True)
     model.eval()
 
     all_hardware_data = []
 
-    print("Exporting layers with BatchNorm folding...")
+    print("Exporting Fused QAT layers to hardware CSV...")
 
-    # Notice the updated indices to account for the new BN and Activation layers!
-    # Format: (Name, Conv_Layer, BN_Layer, Target_Bits)
-    conv_layers = [
-        ("Block0", cast(QuantConv2d, model.features[0]), cast(torch.nn.BatchNorm2d, model.features[1]), 2),
-        ("Block1", cast(QuantConv2d, model.features[4]), cast(torch.nn.BatchNorm2d, model.features[5]), 2),
-        ("Block2", cast(QuantConv2d, model.features[8]), cast(torch.nn.BatchNorm2d, model.features[9]), 2),
-        ("Block3", cast(QuantConv2d, model.features[12]), cast(torch.nn.BatchNorm2d, model.features[13]), 3),
-        ("Classifier", cast(QuantConv2d, model.classifier[1]), cast(torch.nn.BatchNorm2d, model.classifier[2]), 8),
-    ]
+    # Dynamically grab all Fused modules so we don't have to guess indices!
+    fused_layers = []
+    for name, module in model.named_modules():
+        if isinstance(module, QuantConv2d):
+            fused_layers.append((name, module))
 
-    for name, conv, bn, bits in conv_layers:
+    for name, fused_layer in fused_layers:
+        bits = fused_layer._bits
         print(f"  Processing {name} at {bits}-bits...")
         
         # Extract folded weights and biases
-        w_int_tensor, b_hw = fold_batchnorm_into_conv(conv, bn, target_bits=bits)
+        w_int_tensor, b_hw = get_hardware_weights(fused_layer)
 
         # Convert to numpy
         w_int = w_int_tensor.to(torch.int8).cpu().numpy()
-        
-        # Round the scaled bias to the nearest integer for your SystemVerilog module
-        b_int = torch.round(b_hw).to(torch.int32).cpu().numpy()
+        b_int = b_hw.to(torch.int32).cpu().numpy()
 
         all_hardware_data.append({
             "layer_name": name,
