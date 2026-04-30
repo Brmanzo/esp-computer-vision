@@ -15,11 +15,14 @@ __pycache__/
 .pytest_cache/
 *.pth
 *.csv
+!sim/unit_testing/*/*.csv
+!sim/integration_testing/*/*.csv
 *.png
 
 # FPGA / EDA outputs
 *.json
 !filelists/*.json
+!sim/integration_testing/*/*.json
 *.yslog
 *.nplog
 *.asc

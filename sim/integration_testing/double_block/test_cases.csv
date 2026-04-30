@@ -1,0 +1,3 @@
+C0_LineWidthPx,C0_LineCountPx,C0_InBits,C0_OutBits,C0_KernelWidth,C0_WeightBits,C0_InChannels,C0_OutChannels,C0_Stride,C0_Padding,P0_KernelWidth,P0_Mode,C1_OutBits,C1_KernelWidth,C1_WeightBits,C1_OutChannels,C1_Stride,C1_Padding,P1_KernelWidth,P1_Mode,Seed
+32,24,1,AUTO,3,2,1,2,1,1,2,0,AUTO,3,2,4,1,1,2,0,1234
+32,24,1,1,3,2,1,2,1,1,2,0,1,3,2,4,1,1,2,0,1234

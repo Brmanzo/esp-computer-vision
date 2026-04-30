@@ -7,12 +7,12 @@ from util.utilities  import assert_resolvable
 from util.bitwise    import sign_extend, pack_terms, unpack_terms
 from util.gen_inputs import gen_input_channels
 
-def output_width(width_in: int, weight_width: int, kernel_width: int=3, in_channels: int=1) -> str:
+def output_width(width_in: int | str, weight_width: int| str, kernel_width: int | str, in_channels: int | str) -> str:
     terms = kernel_width * kernel_width * in_channels
 
     # For signed inputs, the max magnitude is 2^(width-1)
-    max_val    = (1 << (width_in - 1)) 
-    max_weight = (1 << (weight_width - 1))
+    max_val    = (1 << (int(width_in) - 1)) 
+    max_weight = (1 << (int(weight_width) - 1))
 
     max_sum = terms * max_val * max_weight
     abs_bits = max_sum.bit_length()

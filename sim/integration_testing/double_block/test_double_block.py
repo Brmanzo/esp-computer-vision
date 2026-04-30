@@ -20,6 +20,66 @@ from   cocotb.result import SimTimeoutError
 import random
 random.seed(50)
 
+import csv
+
+def load_tests_from_csv(filepath):
+    test_cases = []
+    
+    with open(filepath, mode='r') as f:
+        reader = csv.DictReader(f)
+        
+        for row in reader:
+            # 1. Parse standard base parameters
+            C0_W  = int(row["C0_LineWidthPx"])
+            C0_H  = int(row["C0_LineCountPx"])
+            C0_IB = int(row["C0_InBits"])
+            C0_KW = int(row["C0_KernelWidth"])
+            C0_WB = int(row["C0_WeightBits"])
+            C0_IC = int(row["C0_InChannels"])
+            C0_OC = int(row["C0_OutChannels"])
+            C0_S  = int(row["C0_Stride"])
+            C0_P  = int(row["C0_Padding"])
+            
+            P0_KW = int(row["P0_KernelWidth"])
+            P0_M  = int(row["P0_Mode"])
+            
+            C1_KW = int(row["C1_KernelWidth"])
+            C1_WB = int(row["C1_WeightBits"])
+            C1_OC = int(row["C1_OutChannels"])
+            C1_S  = int(row["C1_Stride"])
+            C1_P  = int(row["C1_Padding"])
+            
+            P1_KW = int(row["P1_KernelWidth"])
+            P1_M  = int(row["P1_Mode"])
+            
+            seed  = int(row["Seed"])
+
+            # 2. Parse C0_OutBits (Hybrid Logic)
+            c0_outbits_raw = row["C0_OutBits"].strip().upper()
+            if c0_outbits_raw == "AUTO":
+                C0_OB = output_width(C0_IB, C0_WB, C0_KW, C0_IC)
+            else:
+                C0_OB = int(c0_outbits_raw)
+
+            # 3. Parse C1_OutBits (Hybrid Logic)
+            c1_outbits_raw = row["C1_OutBits"].strip().upper()
+            if c1_outbits_raw == "AUTO":
+                C1_OB = output_width(C0_OB, C1_WB, C1_KW, C0_OC)
+            else:
+                C1_OB = int(c1_outbits_raw)
+
+            # 4. Dynamically generate Kernels
+            C0_Weights = gen_kernels(C0_WB, C0_OC, C0_IC, C0_KW, seed=seed)
+            C1_Weights = gen_kernels(C1_WB, C1_OC, C0_OC, C1_KW, seed=seed)
+
+            # 5. Append to the test case list
+            test_cases.append((
+                C0_W, C0_H, C0_IB, C0_OB, C0_KW, C0_WB, C0_IC, C0_OC, C0_S, C0_P, C0_Weights,
+                P0_KW, P0_M, C1_OB, C1_KW, C1_WB, C1_OC, C1_S, C1_P, C1_Weights, P1_KW, P1_M
+            ))
+            
+    return test_cases
+
 timescale = "1ps/1ps"
 
 timescale = "1ps/1ps"
@@ -123,13 +183,15 @@ class DoubleBlockModel:
             
         self._deqs += 1
 
+# Generate the list of tuples dynamically from the CSV
+TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"))
+
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+# Pass the dynamically generated list directly into parametrize!
 @pytest.mark.parametrize("C0_LineWidthPx, C0_LineCountPx, C0_InBits, C0_OutBits, C0_KernelWidth, C0_WeightBits, C0_InChannels, C0_OutChannels, C0_Stride, C0_Padding, C0_Weights, " \
                          "P0_KernelWidth, P0_Mode, C1_OutBits, C1_KernelWidth, C1_WeightBits, C1_OutChannels, C1_Stride, C1_Padding, C1_Weights, P1_KernelWidth, P1_Mode", 
-                         [(32, 24, 1, output_width(1, 2, 3, 1), 3, 2, 1, 2, 1, 1, gen_kernels(2, 2, 1, 3, seed=1234),
-                           2, 0, output_width(int(output_width(1, 2, 3, 1)), 2, 3, 1), 3, 2, 4, 1, 1, gen_kernels(2, 4, 2, 3, seed=1234), 2, 0),
-                         ])
+                         TEST_CASES)
 def test_each(test_name, simulator, C0_LineWidthPx, C0_LineCountPx, C0_InBits, C0_OutBits, C0_KernelWidth, C0_WeightBits, C0_InChannels, C0_OutChannels, C0_Stride, C0_Padding, C0_Weights, 
                                     P0_KernelWidth, P0_Mode, 
                                     C1_OutBits, C1_KernelWidth, C1_WeightBits, C1_OutChannels, C1_Stride, C1_Padding, C1_Weights, 
@@ -190,7 +252,6 @@ def test_each(test_name, simulator, C0_LineWidthPx, C0_LineCountPx, C0_InBits, C
         sim_build=custom_work_dir,
         includes=[custom_work_dir],          
         toplevel_override="tb_double_block", 
-        extra_sources=[wrapper_path]
     )
 
 class RandomDataGenerator:
