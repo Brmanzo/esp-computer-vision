@@ -1,9 +1,10 @@
+from cocotb_test import simulator
 import numpy as np
 import os
 from   pathlib import Path
 import pytest
 
-from util.utilities  import runner, lint, clock_start_sequence, reset_sequence
+from util.utilities  import inject_weights_and_biases, runner, lint, clock_start_sequence, reset_sequence
 from util.bitwise    import unpack_kernel_weights, unpack_biases
 from util.gen_inputs import gen_kernels, gen_biases
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
@@ -40,59 +41,19 @@ tests = ['reset_test'
                           ])
 def test_width(test_name, simulator, InBits, WeightBits, BiasBits, OutBits, KernelWidth, InChannels, OutChannels, Weights, Biases):
     parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
-    
-    # 1. Remove Weights and Biases from the CLI parameters dict so cocotb-runner doesn't pass it
-    del parameters['Weights'] 
-    del parameters['Biases']
-    
     param_str = f"InBits_{InBits}_WeightBits_{WeightBits}_OutBits_{OutBits}_test_{test_name}"
-    custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
-    os.makedirs(custom_work_dir, exist_ok=True)
-    
-    # 2. Calculate total bits to format the Verilog hex string correctly
     total_weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
-    weights_mask = (1 << total_weight_bits) - 1
-    packed_weights = Weights & weights_mask
+    total_bias_bits   = OutChannels * BiasBits
 
-    total_bias_bits = OutChannels * BiasBits
-    bias_mask = (1 << total_bias_bits) - 1
-    packed_biases = Biases & bias_mask
-
-    hex_weight_width = (total_weight_bits + 3) // 4
-    vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
-    with open(vh_path, "w") as f:
-        f.write(
-            f"localparam logic signed [{total_weight_bits-1}:0] INJECTED_WEIGHTS = "
-            f"{total_weight_bits}'h{packed_weights:0{hex_weight_width}x};\n"
-        )
-    
-    hex_bias_width = (total_bias_bits + 3) // 4
-    vh_path = os.path.join(custom_work_dir, "injected_biases.vh")
-    with open(vh_path, "w") as f:
-        f.write(
-            f"localparam logic signed [{total_bias_bits-1}:0] INJECTED_BIASES = "
-            f"{total_bias_bits}'h{packed_biases:0{hex_bias_width}x};\n"
-        )
-
-    # Pass the massive integer strictly through the OS environment to Cocotb
-    os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
-    os.environ["INJECTED_BIASES_INT"]  = str(Biases)
-
-    # Define the wrapper path and pass the extra arguments to your runner
-    wrapper_path = os.path.join(tbpath, "tb_conv_layer.sv")
+    custom_work_dir = inject_weights_and_biases(
+        simulator=simulator, parameters=parameters, param_str=param_str, 
+        tbpath=tbpath, test_class="width", Weights=Weights, Biases=Biases, 
+        weight_bits=total_weight_bits, bias_bits=total_bias_bits)
 
     runner(
-        simulator=simulator, 
-        timescale=timescale, 
-        tbpath=tbpath, 
-        params=parameters, 
-        testname=test_name, 
-        work_dir=custom_work_dir,
-        includes=[custom_work_dir],          # Tells simulator where to find injected_weights.vh
-        toplevel_override="tb_conv_layer",   # Forces simulator to use the wrapper as top-level
-        extra_sources=[wrapper_path]         # Adds the wrapper file to the compilation list
+        simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 
+        testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
+        toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")]
     )
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
@@ -103,34 +64,16 @@ def test_width(test_name, simulator, InBits, WeightBits, BiasBits, OutBits, Kern
                           ])
 def test_stride(test_name, simulator, OutBits, KernelWidth, Stride, LineWidthPx, LineCountPx, Weights, Biases):
     parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
-    del parameters['Weights'] 
-    del parameters['Biases'] 
-
     param_str = f"KW_{KernelWidth}_S_{Stride}_test_{test_name}"
-    custom_work_dir = os.path.join(tbpath, "run", "stride", param_str, simulator)
-    os.makedirs(custom_work_dir, exist_ok=True)
 
-    # Hardcode defaults for this specific test category
-    WW, IC, OC, BB = 2, 1, 1, 8
-    
-    # Inject Weights
-    total_w_bits = OC * IC * (KernelWidth**2) * WW
-    vh_w_path = os.path.join(custom_work_dir, "injected_weights.vh")
-    with open(vh_w_path, "w") as f:
-        hex_w = (total_w_bits + 3) // 4
-        f.write(f"localparam logic signed [{total_w_bits-1}:0] INJECTED_WEIGHTS = {total_w_bits}'h{Weights:0{hex_w}x};\n")
+    WeightBits, InChannels, OutChannels, BiasBits = 2, 1, 1, 8
+    total_weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
+    total_bias_bits   = OutChannels * BiasBits
 
-    # Inject Biases
-    total_b_bits = OC * BB
-    vh_b_path = os.path.join(custom_work_dir, "injected_biases.vh")
-    with open(vh_b_path, "w") as f:
-        hex_b = (total_b_bits + 3) // 4
-        f.write(f"localparam logic signed [{total_b_bits-1}:0] INJECTED_BIASES = {total_b_bits}'h{Biases:0{hex_b}x};\n")
-
-    os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
-    os.environ["INJECTED_BIASES_INT"] = str(Biases)
+    custom_work_dir = inject_weights_and_biases(
+        simulator=simulator, parameters=parameters, param_str=param_str, 
+        tbpath=tbpath, test_class="stride", Weights=Weights, Biases=Biases, 
+        weight_bits=total_weight_bits, bias_bits=total_bias_bits)
     
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 
@@ -146,32 +89,17 @@ def test_stride(test_name, simulator, OutBits, KernelWidth, Stride, LineWidthPx,
                           ])
 def test_padding(test_name, simulator, OutBits, KernelWidth, Padding, LineWidthPx, LineCountPx, Weights, Biases):
     parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
-    del parameters['Weights'] 
-    del parameters['Biases']
-
     param_str = f"KW_{KernelWidth}_P_{Padding}_test_{test_name}"
-    custom_work_dir = os.path.join(tbpath, "run", "padding", param_str, simulator)
-    os.makedirs(custom_work_dir, exist_ok=True)
 
-    WW, IC, OC, BB = 2, 1, 1, 8
+    WeightBits, InChannels, OutChannels, BiasBits = 2, 1, 1, 8
+    total_weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
+    total_bias_bits = OutChannels * BiasBits
+
+    custom_work_dir = inject_weights_and_biases(
+        simulator=simulator, parameters=parameters, param_str=param_str, 
+        tbpath=tbpath, test_class="padding", Weights=Weights, Biases=Biases, 
+        weight_bits=total_weight_bits, bias_bits=total_bias_bits)
     
-    # Weight Injection
-    total_w_bits = OC * IC * (KernelWidth**2) * WW
-    with open(os.path.join(custom_work_dir, "injected_weights.vh"), "w") as f:
-        hex_w = (total_w_bits + 3) // 4
-        f.write(f"localparam logic signed [{total_w_bits-1}:0] INJECTED_WEIGHTS = {total_w_bits}'h{Weights:0{hex_w}x};\n")
-
-    # Bias Injection
-    total_b_bits = OC * BB
-    with open(os.path.join(custom_work_dir, "injected_biases.vh"), "w") as f:
-        hex_b = (total_b_bits + 3) // 4
-        f.write(f"localparam logic signed [{total_b_bits-1}:0] INJECTED_BIASES = {total_b_bits}'h{Biases:0{hex_b}x};\n")
-
-    os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
-    os.environ["INJECTED_BIASES_INT"] = str(Biases)
-
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 
         testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
@@ -180,40 +108,23 @@ def test_padding(test_name, simulator, OutBits, KernelWidth, Padding, LineWidthP
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("InBits, WeightBits, KernelWidth, OutBits, InChannels, OutChannels, Weights, Biases", 
-                         [(1, 2, 3, 1, 16, 8, gen_kernels(2, 8, 16, 3, seed=1234), gen_biases(8, 8, seed=1234)),
-                          (1, 2, 3, 1, 17, 8, gen_kernels(2, 8, 17, 3, seed=1234), gen_biases(8, 8, seed=1234)),
-                          (1, 2, 3, 1, 8, 8, gen_kernels(2, 8, 8, 3, seed=1234), gen_biases(8, 8, seed=1234)),
-                          (4, 5, 3, output_width(4, 5, 3, 4), 4, 5, gen_kernels(5, 5, 4, 3, seed=1234), gen_biases(8, 5, seed=1234))
+@pytest.mark.parametrize("InBits, WeightBits, BiasBits, KernelWidth, OutBits, InChannels, OutChannels, Weights, Biases", 
+                         [(1, 2, 8, 3, 1, 16, 8, gen_kernels(2, 8, 16, 3, seed=1234), gen_biases(8, 8, seed=1234)),
+                          (1, 2, 8, 3, 1, 17, 8, gen_kernels(2, 8, 17, 3, seed=1234), gen_biases(8, 8, seed=1234)),
+                          (1, 2, 8, 3, 1,  8, 8, gen_kernels(2, 8, 8, 3, seed=1234), gen_biases(8, 8, seed=1234)),
+                          (4, 5, 8, 3, output_width(4, 5, 3, 4), 4, 5, gen_kernels(5, 5, 4, 3, seed=1234), gen_biases(8, 5, seed=1234))
                           ])
-def test_channels(test_name, simulator, InBits, WeightBits, KernelWidth, OutBits, InChannels, OutChannels, Weights, Biases):
+def test_channels(test_name, simulator, InBits, WeightBits, BiasBits, KernelWidth, OutBits, InChannels, OutChannels, Weights, Biases):
     parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
-    del parameters['Weights'] 
-    del parameters['Biases']
-    
     param_str = f"IC_{InChannels}_OC_{OutChannels}_test_{test_name}"
-    custom_work_dir = os.path.join(tbpath, "run", "channels", param_str, simulator)
-    os.makedirs(custom_work_dir, exist_ok=True)
 
-    # BiasBits is 8 by default in your DUT
-    BB = 8
-
-    # Dynamic Weight Injection
-    total_w_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
-    with open(os.path.join(custom_work_dir, "injected_weights.vh"), "w") as f:
-        hex_w = (total_w_bits + 3) // 4
-        f.write(f"localparam logic signed [{total_w_bits-1}:0] INJECTED_WEIGHTS = {total_w_bits}'h{Weights:0{hex_w}x};\n")
-
-    # Dynamic Bias Injection (Scales with OutChannels)
-    total_b_bits = OutChannels * BB
-    with open(os.path.join(custom_work_dir, "injected_biases.vh"), "w") as f:
-        hex_b = (total_b_bits + 3) // 4
-        f.write(f"localparam logic signed [{total_b_bits-1}:0] INJECTED_BIASES = {total_b_bits}'h{Biases:0{hex_b}x};\n")
-
-    os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
-    os.environ["INJECTED_BIASES_INT"] = str(Biases)
+    total_weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
+    total_bias_bits = OutChannels * BiasBits
+   
+    custom_work_dir = inject_weights_and_biases(
+        simulator=simulator, parameters=parameters, param_str=param_str, 
+        tbpath=tbpath, test_class="channels", Weights=Weights, Biases=Biases, 
+        weight_bits=total_weight_bits, bias_bits=total_bias_bits)
 
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 

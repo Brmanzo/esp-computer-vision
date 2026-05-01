@@ -10,20 +10,20 @@
 
 # Each file in the filelist is relative to the repository root.
 
-import os
 import git
-
-import queue
 import json
-import cocotb
-from pathlib import Path
+import os
+from   pathlib import Path
+from   typing import Literal
 
-from cocotb_test.simulator import run
-from cocotb.clock import Clock
-from cocotb.utils import get_sim_time
-from cocotb.triggers import Decimal, Timer, ClockCycles, RisingEdge, FallingEdge, with_timeout
-from cocotb.types import Logic
-from cocotb.utils import get_sim_time
+
+import cocotb
+from   cocotb_test.simulator  import run
+from   cocotb.clock    import Clock
+from   cocotb.utils    import get_sim_time
+from   cocotb.triggers import Decimal, Timer, ClockCycles, RisingEdge, FallingEdge, with_timeout
+from   cocotb.types    import Logic
+from   cocotb.utils    import get_sim_time
 
 def runner(simulator, timescale, tbpath, params, defs=[], testname=None, pymodule=None, jsonpath=None, jsonname="filelist.json", root=None, work_dir=None, sim_build=None, includes=None, toplevel_override=None, extra_sources=None):
     """Run the simulator on test n, with parameters params, and defines
@@ -251,3 +251,38 @@ async def delay_cycles(dut, ncyc, polarity):
 
 def assert_passerror(s):
     assert s.value.is_resolvable, f"Testbench pass/fail output ({s._path}) is set to x or z, but must be explicitly set to 0 at start of simulation.."
+
+def inject_params(parameters: dict, param: int, param_name: str, param_bits: int, work_dir: str):
+    """Dynamically creates a Verilog header for massive integer parameters to avoid CLI overflow."""
+    
+    # 1. Safely remove from CLI parameters dict so cocotb-runner doesn't pass it
+    parameters.pop(param_name, None)
+
+    # 2. Calculate total bits and apply mask for proper two's complement hex formatting
+    mask = (1 << param_bits) - 1
+    packed_param = param & mask
+    hex_width = (param_bits + 3) // 4
+    
+    # 3. Write out the Verilog Header (.vh)
+    vh_path = os.path.join(work_dir, f"injected_{param_name.lower()}.vh")
+    with open(vh_path, "w") as f:
+        f.write(
+            f"localparam logic signed [{param_bits-1}:0] INJECTED_{param_name.upper()} = "
+            f"{param_bits}'h{packed_param:0{hex_width}x};\n"
+        )
+
+    # 4. Pass the integer strictly through the OS environment to Cocotb testbench
+    os.environ[f"INJECTED_{param_name.upper()}_INT"] = str(param)
+
+def inject_weights_and_biases(simulator: Literal['verilator', 'icarus'], parameters: dict, param_str: str, tbpath: Path, test_class: str, Weights: int, Biases: int, weight_bits: int, bias_bits: int):
+    """Helper function to inject both weights and biases using the inject_params function."""
+    parameters.pop('test_name', None)
+    parameters.pop('simulator', None)
+    
+    custom_work_dir = os.path.join(tbpath, "run", test_class, param_str, simulator)
+    os.makedirs(custom_work_dir, exist_ok=True)
+  
+    inject_params(parameters, Weights, "Weights", weight_bits, custom_work_dir)
+    inject_params(parameters,  Biases,  "Biases", bias_bits,   custom_work_dir)
+
+    return custom_work_dir
