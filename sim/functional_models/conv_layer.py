@@ -7,15 +7,14 @@ from util.utilities  import assert_resolvable
 from util.bitwise    import sign_extend, pack_terms, unpack_terms
 from util.gen_inputs import gen_input_channels
 
-def output_width(width_in: int | str, weight_width: int| str, kernel_width: int | str, in_channels: int | str) -> str:
-    terms = kernel_width * kernel_width * in_channels
-
-    # For signed inputs, the max magnitude is 2^(width-1)
-    max_val    = (1 << (int(width_in) - 1)) 
+def output_width(width_in, weight_width, kernel_width, in_channels, bias_bits=8):
+    terms = int(kernel_width) * int(kernel_width) * int(in_channels)
+    max_val = (1 << (int(width_in) - 1))
     max_weight = (1 << (int(weight_width) - 1))
 
     max_sum = terms * max_val * max_weight
-    abs_bits = max_sum.bit_length()
+    # The output bits must be the larger of (ConvSum bits) or (Bias bits) + 1 for the addition
+    abs_bits = max(max_sum.bit_length(), int(bias_bits))
     return str(abs_bits + 1)
 
 class RandomDataGenerator:
@@ -33,11 +32,13 @@ class ConvLayerModel():
                  weights: Optional[List[List[List[List[int]]]]] = None, 
                  output_activation: Optional[List[List[List[int]]]] = None,
                  input_activation:  Optional[List[List[List[int]]]] = None,
+                 biases: Optional[List[int]] = None,
                  **kwargs): 
 
         self._dut = dut
         self._input_activation  = input_activation 
         self._output_activation = output_activation
+        self._biases = biases
 
         # 1. Parameter Extraction
         if dut is not None:
@@ -45,6 +46,7 @@ class ConvLayerModel():
             self._data_i = dut.data_i
             
             self._kernel_width = int(dut.KernelWidth.value)
+            self._weight_width = int(dut.WeightBits.value)
             self._input_width  = int(dut.LineWidthPx.value)
             self._input_height = int(dut.LineCountPx.value)
             self._InBits       = int(dut.InBits.value)
@@ -56,6 +58,7 @@ class ConvLayerModel():
         else:
             try:
                 self._kernel_width = int(kwargs["KernelWidth"])
+                self._weight_width = int(kwargs["WeightBits"])
                 self._input_width  = int(kwargs["LineWidthPx"])
                 self._input_height = int(kwargs["LineCountPx"])
                 self._InBits       = int(kwargs["InBits"])
@@ -69,6 +72,8 @@ class ConvLayerModel():
 
         if weights is None:
             raise ValueError("Weights must be provided to ConvLayerModel")
+        if biases is None:
+            biases = [0] * self._OutChannels
 
         # Dimensions scaled for padding
         self._padded_width  = self._input_width + 2 * self._Padding
@@ -133,10 +138,15 @@ class ConvLayerModel():
                     win_enc = np.vectorize(sign_extend)(win, self._InBits)
                 acc += int((self.k[oc, ic] * win_enc).sum())
 
+            # Calculate the sum including bias
+            biased_acc = acc + self._biases[oc]
+
             if self._OutBits == 1:
-                result[oc] = 1 if acc > 0 else 0
+                # FIX: Use biased_acc here, not acc!
+                result[oc] = 1 if biased_acc > 0 else 0
             else:
-                result[oc] = acc
+                raw = biased_acc & ((1 << self._OutBits) - 1)
+                result[oc] = sign_extend(raw, self._OutBits)
 
         return result
 

@@ -1,4 +1,4 @@
-# train.py
+# model.train.py
 # Bradley Manzo 2026
 
 import kagglehub
@@ -93,11 +93,12 @@ cfg = ModelConfig(
     stride           = 1,
     num_classes      = num_classes,
     bus_width        = 8,
+    bias_bits        = 8,
     q_schedule       = [QSchedule(20, [5, 5, 5, 10, 20], 8, 4),
                         QSchedule(30, [5, 5, 5, 10, 20], 8, 4),
                         QSchedule(40, [5, 5, 5, 10, 20], 8, 4),
                         QSchedule(50, [5, 5, 5, 10, 20], 8, 4),
-                        QSchedule(50, [10], 8, 8)])
+                        QSchedule(50, [10], 13, 13)]) # Classifier stays at 13 bits to preserve accuracy
 
 # Import CNN Model and set the optimizer, loss function, and scheduler for training
 model = cnn_model(config = cfg)
@@ -135,13 +136,13 @@ for epoch in range(EPOCHS):
                 # Turning quantization ON for the first time
                 if not getattr(module, '_quantize', False): 
                     module._quantize = True
-                    module._bits = target_bits
+                    module._weight_bits = target_bits
                     bits_changed_this_epoch = True
                     print(f"Epoch {epoch:02d}: Layer {quant_layer_idx} quantization ON -> {target_bits}-bit")
                     
                 # Dropping to a lower bit-width
-                elif getattr(module, '_bits', None) != target_bits:
-                    module._bits = target_bits
+                elif getattr(module, '_weight_bits', None) != target_bits:
+                    module._weight_bits = target_bits
                     bits_changed_this_epoch = True
                     print(f"Epoch {epoch:02d}: Layer {quant_layer_idx} dropping bits -> {target_bits}-bit")
                     
@@ -152,11 +153,11 @@ for epoch in range(EPOCHS):
     # --------------------------------------- TRAINING LOGIC ---------------------------------------
     model.train()
     for x, y in train_loader:
-        x = train_aug(x) 
+        x    = train_aug(x) 
         x, y = x.to(device), y.to(device)
         
         logits = model(x)
-        loss = loss_fn(logits, y)
+        loss   = loss_fn(logits, y)
         
         opt.zero_grad(set_to_none=True)
         loss.backward()
@@ -168,7 +169,7 @@ for epoch in range(EPOCHS):
 
     model.eval()
     train_correct = train_total = 0
-    test_correct = test_total = 0
+    test_correct  = test_total = 0
     
     with torch.no_grad():
         # Evaluate Training Set
@@ -178,14 +179,14 @@ for epoch in range(EPOCHS):
             # Evaluate on unaugmented training images
             pred = model(x).argmax(1)
             train_correct += (pred == y).sum().item()
-            train_total += y.numel()
+            train_total   += y.numel()
             
         # Evaluate Test Set 
         for x, y in test_loader:
             x, y = x.to(device), y.to(device)
             pred = model(x).argmax(1)
             test_correct += (pred == y).sum().item()
-            test_total += y.numel()
+            test_total   += y.numel()
 
     # Compute accuracies
     train_acc = train_correct / train_total

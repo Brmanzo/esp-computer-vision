@@ -4,8 +4,8 @@ from   pathlib import Path
 import pytest
 
 from util.utilities  import runner, lint, clock_start_sequence, reset_sequence
-from util.bitwise    import unpack_kernel_weights
-from util.gen_inputs import gen_kernels
+from util.bitwise    import unpack_kernel_weights, unpack_biases
+from util.gen_inputs import gen_kernels, gen_biases
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from functional_models.conv_layer import ConvLayerModel, RandomDataGenerator, output_width
 from util.torch_ref import torch_conv_ref
@@ -30,41 +30,55 @@ tests = ['reset_test'
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("InBits, WeightBits, OutBits, KernelWidth, InChannels, OutChannels, Weights", 
-                         [(1, 2,                     1, 2, 1, 1, gen_kernels(2, 1, 1, 2, seed=1234)),
-                          (2, 2, output_width(2, 2, 2, 1), 2, 1, 1, gen_kernels(2, 1, 1, 2, seed=1234)),
-                          (2, 2, output_width(2, 2, 5, 1), 5, 1, 1, gen_kernels(2, 1, 1, 5, seed=1234)),
-                          (2, 3, output_width(2, 3, 3, 1), 3, 1, 1, gen_kernels(3, 1, 1, 3, seed=1234)), # Unsigned data_i
-                          (4, 5, output_width(4, 5, 3, 1), 3, 1, 1, gen_kernels(5, 1, 1, 3, seed=1234)),
-                          (8, 8, output_width(8, 8, 3, 1), 3, 1, 1, gen_kernels(8, 1, 1, 3, seed=1234)),
+@pytest.mark.parametrize("InBits, WeightBits, BiasBits, OutBits, KernelWidth, InChannels, OutChannels, Weights, Biases", 
+                         [(1, 2, 8,                        1, 2, 1, 1, gen_kernels(2, 1, 1, 2, seed=1234), gen_biases(8, 1, seed=1234)),
+                          (2, 2, 8, output_width(2, 2, 2, 1), 2, 1, 1, gen_kernels(2, 1, 1, 2, seed=1234), gen_biases(8, 1, seed=1234)),
+                          (2, 2, 8, output_width(2, 2, 5, 1), 5, 1, 1, gen_kernels(2, 1, 1, 5, seed=1234), gen_biases(8, 1, seed=1234)),
+                          (2, 3, 8, output_width(2, 3, 3, 1), 3, 1, 1, gen_kernels(3, 1, 1, 3, seed=1234), gen_biases(8, 1, seed=1234)), # Unsigned data_i
+                          (4, 5, 8, output_width(4, 5, 3, 1), 3, 1, 1, gen_kernels(5, 1, 1, 3, seed=1234), gen_biases(8, 1, seed=1234)),
+                          (8, 8, 8, output_width(8, 8, 3, 1), 3, 1, 1, gen_kernels(8, 1, 1, 3, seed=1234), gen_biases(8, 1, seed=1234)),
                           ])
-def test_width(test_name, simulator, InBits, WeightBits, OutBits, KernelWidth, InChannels, OutChannels, Weights):
+def test_width(test_name, simulator, InBits, WeightBits, BiasBits, OutBits, KernelWidth, InChannels, OutChannels, Weights, Biases):
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
     
-    # 1. Remove Weights from the CLI parameters dict so cocotb-runner doesn't pass it
+    # 1. Remove Weights and Biases from the CLI parameters dict so cocotb-runner doesn't pass it
     del parameters['Weights'] 
+    del parameters['Biases']
     
     param_str = f"InBits_{InBits}_WeightBits_{WeightBits}_OutBits_{OutBits}_test_{test_name}"
     custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
     os.makedirs(custom_work_dir, exist_ok=True)
     
     # 2. Calculate total bits to format the Verilog hex string correctly
-    total_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
-    mask = (1 << total_bits) - 1
-    packed_weights = Weights & mask
+    total_weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
+    weights_mask = (1 << total_weight_bits) - 1
+    packed_weights = Weights & weights_mask
 
-    hex_width = (total_bits + 3) // 4
+    total_bias_bits = OutChannels * BiasBits
+    bias_mask = (1 << total_bias_bits) - 1
+    packed_biases = Biases & bias_mask
+
+    hex_weight_width = (total_weight_bits + 3) // 4
     vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
     with open(vh_path, "w") as f:
         f.write(
-            f"localparam logic signed [{total_bits-1}:0] INJECTED_WEIGHTS = "
-            f"{total_bits}'h{packed_weights:0{hex_width}x};\n"
+            f"localparam logic signed [{total_weight_bits-1}:0] INJECTED_WEIGHTS = "
+            f"{total_weight_bits}'h{packed_weights:0{hex_weight_width}x};\n"
+        )
+    
+    hex_bias_width = (total_bias_bits + 3) // 4
+    vh_path = os.path.join(custom_work_dir, "injected_biases.vh")
+    with open(vh_path, "w") as f:
+        f.write(
+            f"localparam logic signed [{total_bias_bits-1}:0] INJECTED_BIASES = "
+            f"{total_bias_bits}'h{packed_biases:0{hex_bias_width}x};\n"
         )
 
     # Pass the massive integer strictly through the OS environment to Cocotb
     os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
+    os.environ["INJECTED_BIASES_INT"]  = str(Biases)
 
     # Define the wrapper path and pass the extra arguments to your runner
     wrapper_path = os.path.join(tbpath, "tb_conv_layer.sv")
@@ -82,143 +96,129 @@ def test_width(test_name, simulator, InBits, WeightBits, OutBits, KernelWidth, I
     )
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-# Added 'Weights' to the tuple list, generating it with WW=2, OC=1, IC=1
-@pytest.mark.parametrize("OutBits, KernelWidth, Stride, LineWidthPx, LineCountPx, Weights", 
-                         [(output_width(1, 2, 2, 1), 2, 2, 16, 12, gen_kernels(2, 1, 1, 2, seed=1234)),
-                          (output_width(1, 2, 4, 1), 4, 4, 16, 12, gen_kernels(2, 1, 1, 4, seed=1234)),
-                          (output_width(1, 2, 5, 1), 5, 2, 17, 13, gen_kernels(2, 1, 1, 5, seed=1234))
+@pytest.mark.parametrize("OutBits, KernelWidth, Stride, LineWidthPx, LineCountPx, Weights, Biases", 
+                         [(output_width(1, 2, 2, 1), 2, 2, 16, 12, gen_kernels(2, 1, 1, 2, seed=1234), gen_biases(8, 1, seed=1234)),
+                          (output_width(1, 2, 4, 1), 4, 4, 16, 12, gen_kernels(2, 1, 1, 4, seed=1234), gen_biases(8, 1, seed=1234)),
+                          (output_width(1, 2, 5, 1), 5, 2, 17, 13, gen_kernels(2, 1, 1, 5, seed=1234), gen_biases(8, 1, seed=1234))
                           ])
-
-def test_stride(test_name, simulator, OutBits, KernelWidth, Stride, LineWidthPx, LineCountPx, Weights):
+def test_stride(test_name, simulator, OutBits, KernelWidth, Stride, LineWidthPx, LineCountPx, Weights, Biases):
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
-    
-    # Remove Weights from CLI
     del parameters['Weights'] 
-    
-    param_str = f"KernelWidth_{KernelWidth}_Stride_{Stride}_LineWidthPx_{LineWidthPx}_LineCountPx_{LineCountPx}_test_{test_name}"
+    del parameters['Biases'] 
+
+    param_str = f"KW_{KernelWidth}_S_{Stride}_test_{test_name}"
     custom_work_dir = os.path.join(tbpath, "run", "stride", param_str, simulator)
     os.makedirs(custom_work_dir, exist_ok=True)
 
-    # Hardcode the DUT defaults since they aren't parametrized here
-    WW, IC, OC = 2, 1, 1
-    total_bits = OC * IC * (KernelWidth**2) * WW
+    # Hardcode defaults for this specific test category
+    WW, IC, OC, BB = 2, 1, 1, 8
     
-    # Write the header file
-    vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
-    with open(vh_path, "w") as f:
-        hex_width = (total_bits + 3) // 4
-        f.write(f"localparam logic signed [{total_bits-1}:0] INJECTED_WEIGHTS = {total_bits}'h{Weights:0{hex_width}x};\n")
+    # Inject Weights
+    total_w_bits = OC * IC * (KernelWidth**2) * WW
+    vh_w_path = os.path.join(custom_work_dir, "injected_weights.vh")
+    with open(vh_w_path, "w") as f:
+        hex_w = (total_w_bits + 3) // 4
+        f.write(f"localparam logic signed [{total_w_bits-1}:0] INJECTED_WEIGHTS = {total_w_bits}'h{Weights:0{hex_w}x};\n")
 
-    # Route weights via OS environment
+    # Inject Biases
+    total_b_bits = OC * BB
+    vh_b_path = os.path.join(custom_work_dir, "injected_biases.vh")
+    with open(vh_b_path, "w") as f:
+        hex_b = (total_b_bits + 3) // 4
+        f.write(f"localparam logic signed [{total_b_bits-1}:0] INJECTED_BIASES = {total_b_bits}'h{Biases:0{hex_b}x};\n")
+
     os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
-    wrapper_path = os.path.join(tbpath, "tb_conv_layer.sv")
-
-    # Run with wrapper hooks
+    os.environ["INJECTED_BIASES_INT"] = str(Biases)
+    
     runner(
-        simulator=simulator, 
-        timescale=timescale, 
-        tbpath=tbpath, 
-        params=parameters, 
-        testname=test_name, 
-        work_dir=custom_work_dir,
-        includes=[custom_work_dir],
-        toplevel_override="tb_conv_layer",
-        extra_sources=[wrapper_path]
+        simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 
+        testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
+        toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")]
     )
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-# Added 'Weights' to the tuple list, generating it with WW=2, OC=1, IC=1
-@pytest.mark.parametrize("OutBits, KernelWidth, Padding, LineWidthPx, LineCountPx, Weights", 
-                         [(output_width(1, 2, 3, 1), 3, 1, 16, 12, gen_kernels(2, 1, 1, 3, seed=1234)),
-                          (output_width(1, 2, 5, 1), 5, 2, 16, 12, gen_kernels(2, 1, 1, 5, seed=1234)),
+@pytest.mark.parametrize("OutBits, KernelWidth, Padding, LineWidthPx, LineCountPx, Weights, Biases", 
+                         [(output_width(1, 2, 3, 1), 3, 1, 16, 12, gen_kernels(2, 1, 1, 3, seed=1234), gen_biases(8, 1, seed=1234)),
+                          (output_width(1, 2, 5, 1), 5, 2, 16, 12, gen_kernels(2, 1, 1, 5, seed=1234), gen_biases(8, 1, seed=1234)),
                           ])
-
-def test_padding(test_name, simulator, OutBits, KernelWidth, Padding, LineWidthPx, LineCountPx, Weights):
+def test_padding(test_name, simulator, OutBits, KernelWidth, Padding, LineWidthPx, LineCountPx, Weights, Biases):
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
-    
-    # Remove Weights from CLI
     del parameters['Weights'] 
-    
-    param_str = f"KernelWidth_{KernelWidth}_Padding_{Padding}_LineWidthPx_{LineWidthPx}_LineCountPx_{LineCountPx}_test_{test_name}"
+    del parameters['Biases']
+
+    param_str = f"KW_{KernelWidth}_P_{Padding}_test_{test_name}"
     custom_work_dir = os.path.join(tbpath, "run", "padding", param_str, simulator)
     os.makedirs(custom_work_dir, exist_ok=True)
 
-    # Hardcode the DUT defaults since they aren't parametrized here
-    WW, IC, OC = 2, 1, 1
-    total_bits = OC * IC * (KernelWidth**2) * WW
+    WW, IC, OC, BB = 2, 1, 1, 8
     
-    # Write the header file
-    vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
-    with open(vh_path, "w") as f:
-        hex_width = (total_bits + 3) // 4
-        f.write(f"localparam logic signed [{total_bits-1}:0] INJECTED_WEIGHTS = {total_bits}'h{Weights:0{hex_width}x};\n")
+    # Weight Injection
+    total_w_bits = OC * IC * (KernelWidth**2) * WW
+    with open(os.path.join(custom_work_dir, "injected_weights.vh"), "w") as f:
+        hex_w = (total_w_bits + 3) // 4
+        f.write(f"localparam logic signed [{total_w_bits-1}:0] INJECTED_WEIGHTS = {total_w_bits}'h{Weights:0{hex_w}x};\n")
 
-    # Route weights via OS environment
+    # Bias Injection
+    total_b_bits = OC * BB
+    with open(os.path.join(custom_work_dir, "injected_biases.vh"), "w") as f:
+        hex_b = (total_b_bits + 3) // 4
+        f.write(f"localparam logic signed [{total_b_bits-1}:0] INJECTED_BIASES = {total_b_bits}'h{Biases:0{hex_b}x};\n")
+
     os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
-    wrapper_path = os.path.join(tbpath, "tb_conv_layer.sv")
+    os.environ["INJECTED_BIASES_INT"] = str(Biases)
 
-    # Run with wrapper hooks
     runner(
-        simulator=simulator, 
-        timescale=timescale, 
-        tbpath=tbpath, 
-        params=parameters, 
-        testname=test_name, 
-        work_dir=custom_work_dir,
-        includes=[custom_work_dir],
-        toplevel_override="tb_conv_layer",
-        extra_sources=[wrapper_path]
+        simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 
+        testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
+        toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")]
     )
 
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-# Expanded to include InBits, WeightBits, KernelWidth so the DUT scales with the Python math
-@pytest.mark.parametrize("InBits, WeightBits, KernelWidth, OutBits, InChannels, OutChannels, Weights", 
-                         [(1, 2, 3, 1, 16, 8, gen_kernels(2, 8, 16, 3, seed=1234)),
-                          (1, 2, 3, 1, 17, 8, gen_kernels(2, 8, 17, 3, seed=1234)),
-                          (1, 2, 3, 1, 8, 8, gen_kernels(2, 8, 8, 3, seed=1234)),
-                          (4, 5, 3, output_width(4, 5, 3, 1), 4, 5, gen_kernels(5, 5, 4, 3, seed=1234))
+@pytest.mark.parametrize("InBits, WeightBits, KernelWidth, OutBits, InChannels, OutChannels, Weights, Biases", 
+                         [(1, 2, 3, 1, 16, 8, gen_kernels(2, 8, 16, 3, seed=1234), gen_biases(8, 8, seed=1234)),
+                          (1, 2, 3, 1, 17, 8, gen_kernels(2, 8, 17, 3, seed=1234), gen_biases(8, 8, seed=1234)),
+                          (1, 2, 3, 1, 8, 8, gen_kernels(2, 8, 8, 3, seed=1234), gen_biases(8, 8, seed=1234)),
+                          (4, 5, 3, output_width(4, 5, 3, 4), 4, 5, gen_kernels(5, 5, 4, 3, seed=1234), gen_biases(8, 5, seed=1234))
                           ])
-
-def test_channels(test_name, simulator, InBits, WeightBits, KernelWidth, OutBits, InChannels, OutChannels, Weights):
+def test_channels(test_name, simulator, InBits, WeightBits, KernelWidth, OutBits, InChannels, OutChannels, Weights, Biases):
     parameters = dict(locals())
     del parameters['test_name']
     del parameters['simulator']
     del parameters['Weights'] 
+    del parameters['Biases']
     
-    param_str = f"InChannels_{InChannels}_OutChannels_{OutChannels}_test_{test_name}"
+    param_str = f"IC_{InChannels}_OC_{OutChannels}_test_{test_name}"
     custom_work_dir = os.path.join(tbpath, "run", "channels", param_str, simulator)
     os.makedirs(custom_work_dir, exist_ok=True)
 
-    # Calculate total bits using the explicit parameters
-    total_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
-    
-    # Write the header file
-    vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
-    with open(vh_path, "w") as f:
-        hex_width = (total_bits + 3) // 4
-        f.write(f"localparam logic signed [{total_bits-1}:0] INJECTED_WEIGHTS = {total_bits}'h{Weights:0{hex_width}x};\n")
+    # BiasBits is 8 by default in your DUT
+    BB = 8
 
-    # Route weights via OS environment
+    # Dynamic Weight Injection
+    total_w_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
+    with open(os.path.join(custom_work_dir, "injected_weights.vh"), "w") as f:
+        hex_w = (total_w_bits + 3) // 4
+        f.write(f"localparam logic signed [{total_w_bits-1}:0] INJECTED_WEIGHTS = {total_w_bits}'h{Weights:0{hex_w}x};\n")
+
+    # Dynamic Bias Injection (Scales with OutChannels)
+    total_b_bits = OutChannels * BB
+    with open(os.path.join(custom_work_dir, "injected_biases.vh"), "w") as f:
+        hex_b = (total_b_bits + 3) // 4
+        f.write(f"localparam logic signed [{total_b_bits-1}:0] INJECTED_BIASES = {total_b_bits}'h{Biases:0{hex_b}x};\n")
+
     os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
-    wrapper_path = os.path.join(tbpath, "tb_conv_layer.sv")
+    os.environ["INJECTED_BIASES_INT"] = str(Biases)
 
-    # Run with wrapper hooks
     runner(
-        simulator=simulator, 
-        timescale=timescale, 
-        tbpath=tbpath, 
-        params=parameters, 
-        testname=test_name, 
-        work_dir=custom_work_dir,
-        includes=[custom_work_dir],
-        toplevel_override="tb_conv_layer",
-        extra_sources=[wrapper_path]
+        simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 
+        testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
+        toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")]
     )
 
 @pytest.mark.parametrize("simulator", ["verilator"])
@@ -254,6 +254,7 @@ async def single_test(dut):
     K  = int(dut.KernelWidth.value)
     IC = int(dut.InChannels.value)
     OC = int(dut.OutChannels.value)
+    BW = int(dut.BiasBits.value)
     WW = int(dut.WeightBits.value)
     P  = int(dut.Padding.value)
 
@@ -273,8 +274,11 @@ async def single_test(dut):
 
     packed_weights = int(os.environ["INJECTED_WEIGHTS_INT"])
     kernels_4d = unpack_kernel_weights(packed_weights, WW, OC, IC, K)
+
+    packed_biases = int(os.environ.get("INJECTED_BIASES_INT", "0"))
+    biases_2d = unpack_biases(packed_biases, BW, OC)
     
-    model = ConvLayerModel(dut, weights=kernels_4d)
+    model = ConvLayerModel(dut, weights=kernels_4d, biases=biases_2d)
     m = ModelRunner(dut, model)
 
     om = OutputModel(dut, RateGenerator(dut, 1), N_out)               # consume 1 output
@@ -316,6 +320,7 @@ async def rate_tests(dut, in_rate, out_rate):
     IC = int(dut.InChannels.value)
     OC = int(dut.OutChannels.value)
     WW = int(dut.WeightBits.value)
+    BW = int(dut.BiasBits.value)
     S  = int(dut.Stride.value)
     P  = int(dut.Padding.value)
 
@@ -341,9 +346,11 @@ async def rate_tests(dut, in_rate, out_rate):
     timeout_ns        = int((H_out * N_in + 500) / slow)
 
     packed_weights = int(os.environ["INJECTED_WEIGHTS_INT"])
-    kernels_4d = unpack_kernel_weights(packed_weights, WW, OC, IC, K)
+    packed_biases  = int(os.environ.get("INJECTED_BIASES_INT", "0"))
 
-    model = ConvLayerModel(dut, weights=kernels_4d, output_activation=output_activation, input_activation=input_activation)
+    kernels_4d = unpack_kernel_weights(packed_weights, WW, OC, IC, K)
+    biases_2d  = unpack_biases(packed_biases, BW, OC)
+    model = ConvLayerModel(dut, weights=kernels_4d, output_activation=output_activation, input_activation=input_activation, biases=biases_2d)
     m = ModelRunner(dut, model)
 
     # Consumer fuzzed; producer always drives valid
@@ -396,8 +403,16 @@ async def rate_tests(dut, in_rate, out_rate):
                 print(" ".join(f"{output_activation[oc][r][c]:4d}" for c in range(W_out)))
 
         # Verify against PyTorch reference convolution
-        ref = torch_conv_ref(input_activation, kernels_4d, S, in_bits=int(dut.InBits.value), out_bits=int(dut.OutBits.value), padding=int(dut.Padding.value))  # (OC,H_out,W_out)
-
+        ref = torch_conv_ref(
+            input_activation, 
+            kernels_4d, 
+            S, 
+            in_bits=int(dut.InBits.value), 
+            out_bits=int(dut.OutBits.value), 
+            padding=int(dut.Padding.value),
+            biases=biases_2d
+        )
+    
         for oc in range(OC):
             print(f"\nExpected (PyTorch) for OC{oc}")
             for r in range(H_out):

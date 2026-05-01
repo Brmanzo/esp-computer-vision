@@ -32,6 +32,10 @@ ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 # Run both simulators
 test: results.json
 
+# List all available tests without running them
+list-tests:
+	$(PYTHON3) -m pytest --collect-only -q
+
 results.json: $(FILELIST) $(SIM_SOURCES)
 	$(PYTHON3) -m pytest -rA $(if $(ARGS),-k "$(ARGS)",)
 

@@ -207,7 +207,7 @@ class InputModel():
         
         # 1. Resolve Pins (Use provided override OR fallback to standard names)
         # Fallback to dut.data_i, dut.valid_i, dut.ready_o if not specified
-        d_pins = data_pins if data_pins is not None else getattr(dut, "data_i", None)
+        d_pins = data_pins  if data_pins  is not None else getattr(dut, "data_i", None)
         v_pin  = valid_pin  if valid_pin  is not None else getattr(dut, "valid_i", None)
         r_pin  = ready_pin  if ready_pin  is not None else getattr(dut, "ready_o", None)
 

@@ -1,10 +1,13 @@
-# render.py
+# model.render.py
 # Bradley Manzo 2026
 
 from datetime import datetime
+from pathlib import Path
 from .config import ModelConfig, ConvConfig, PoolConfig, ClassifierConfig
 
 def render_header(BusBits):
+    '''Renders the header of the CNN SystemVerilog file.'''
+    # Timestamp the file for traceability
     date = datetime.now().strftime("%B %d, %Y %I:%M %p")
     lines = [
         "// cnn.sv",
@@ -30,6 +33,7 @@ def render_header(BusBits):
     return "\n".join(lines)
 
 def render_wires(cfg: ModelConfig):
+    '''Renders the wire declarations for the CNN SystemVerilog file.'''
     lines = []
 
     for layer in cfg.layers:
@@ -38,10 +42,10 @@ def render_wires(cfg: ModelConfig):
 
         # Conv layer output wires
         if conv._ready_o != "ready_o":
-            lines.append(f"  wire        [ 0:0]       {conv._ready_o};")
+            lines.append(f"  wire              [ 0:0] {conv._ready_o};")
         if conv._valid_o != "valid_o":
-            lines.append(f"  wire        [ 0:0]       {conv._valid_o};")
-        if conv._data_o != "data_o":
+            lines.append(f"  wire              [ 0:0] {conv._valid_o};")
+        if conv._data_o  != "data_o":
             # Declare as 2D signed logic to match your architecture!
             if conv._out_ch is None or conv._out_bits is None:
                 raise ValueError(f"Output channels or bits for layer {conv._layer_num} are not defined. Cannot render data wires.")
@@ -51,21 +55,21 @@ def render_wires(cfg: ModelConfig):
         if pool is not None:
             lines.append("") # Add a blank line between conv and pool wires for readability
             if pool._ready_o != "ready_o":
-                lines.append(f"  wire        [ 0:0]       {pool._ready_o};")
+                lines.append(f"  wire              [ 0:0] {pool._ready_o};")
             if pool._valid_o != "valid_o":
-                lines.append(f"  wire        [ 0:0]       {pool._valid_o};")
-            if pool._data_o != "data_o":
+                lines.append(f"  wire              [ 0:0] {pool._valid_o};")
+            if pool._data_o  != "data_o":
                 lines.append(f"  wire signed [{pool._out_ch-1:2}:0][{pool._out_bits-1:2}:0] {pool._data_o};")
 
         lines.append("") # Add a blank line between blocks for readability
 
     # Classifier output wire (Since it is handled outside the loop)
-    lines.append("  wire [0:0] classifier_ready;")
+    lines.append("  wire              [ 0:0] classifier_ready;")
 
     return "\n".join(lines)
 
 def render_conv_layer(cfg: ConvConfig):
-   
+    '''Renders a convolution layer within the CNN SystemVerilog file.'''
     lines = [
         "  conv_layer #(",
         f"     .LineWidthPx ({cfg._input_dims.width})",
@@ -74,10 +78,12 @@ def render_conv_layer(cfg: ConvConfig):
         f"    ,.OutBits     ({cfg._out_bits})",
         f"    ,.KernelWidth ({cfg._kernel_width})",
         f"    ,.WeightBits  ({cfg._q_schedule._q_min_bits})",
+        f"    ,.BiasBits    ({cfg._bias_bits})", # Bias bits are fixed to 8 for now since we haven't implemented quantized biases
         f"    ,.InChannels  ({cfg._in_ch})",
         f"    ,.OutChannels ({cfg._out_ch})",
         f"    ,.Stride      ({cfg._stride})",
         f"    ,.Weights     (weights_{cfg._layer_num})",
+        f"    ,.Biases      (biases_{cfg._layer_num})",
         f"    ,.Padding     ({cfg._padding})",
         f"  ) conv_layer_inst_{cfg._layer_num} (",
         "     .clk_i     (clk_i)",
@@ -95,6 +101,7 @@ def render_conv_layer(cfg: ConvConfig):
     return "\n".join(lines)
 
 def render_pool_layer(cfg: PoolConfig):
+    '''Renders a pooling layer within the CNN SystemVerilog file.'''
     lines = [
         "  pool_layer #(",
         f"     .LineWidthPx ({cfg._input_dims.width})",
@@ -119,6 +126,7 @@ def render_pool_layer(cfg: PoolConfig):
     return "\n".join(lines)
 
 def render_classifier_layer(cfg: ClassifierConfig):
+    '''Renders the classifier layer within the CNN SystemVerilog file.'''
     lines = [
         "  classifier_layer #(",
         f"     .TermBits   ({cfg._in_bits})",
@@ -127,7 +135,7 @@ def render_classifier_layer(cfg: ClassifierConfig):
         f"    ,.InChannels ({cfg._in_ch})",
         f"    ,.ClassCount ({cfg._num_classes})",
         f"    ,.WeightBits ({cfg._q_schedule._q_min_bits})",
-        f"    ,.BiasBits   (8)",
+        f"    ,.BiasBits   ({cfg._bias_bits})", # Bias bits are fixed to 8 for now since we haven't implemented quantized biases
         f"    ,.Weights    (weights_{cfg._layer_num})",
         f"    ,.Biases     (biases_{cfg._layer_num})",
         f"  ) classifier_layer_inst_{cfg._layer_num} (",
@@ -145,9 +153,31 @@ def render_classifier_layer(cfg: ClassifierConfig):
     ]
     return "\n".join(lines)
 
-
 def render_footer():
+    '''Renders the footer of the CNN SystemVerilog file.'''
     lines = [
         "endmodule",
     ]
     return "\n".join(lines)
+
+def render_verilog(cfg: ModelConfig) -> None:
+    '''Render the CNN architecture to a SystemVerilog file for hardware implementation.'''
+    repo_root = Path(__file__).resolve().parents[1]
+    out_file = repo_root / "rtl" / "blocks" / "cnn.sv"
+
+    with open(out_file, "w", encoding="utf-8") as f:
+        print(render_header(cfg._bus_width), file=f)
+        # You might need to adjust render_wires to accept self.config.layers
+        print(render_wires(cfg), file=f) 
+        print("", file=f)
+
+        # Render Feature Layers
+        for layer_cfg in cfg.layers:
+            print(render_conv_layer(layer_cfg.ConvLayer), file=f)
+            if layer_cfg.PoolLayer is not None:
+                print(render_pool_layer(layer_cfg.PoolLayer), file=f)
+
+        # Render Classifier
+        print(render_classifier_layer(cfg.classifier_config), file=f)
+        
+        print(render_footer(), file=f)

@@ -10,6 +10,7 @@ module tb_conv_layer #(
   ,parameter int unsigned OutBits      = 32
   ,parameter int unsigned KernelWidth  = 3
   ,parameter int unsigned WeightBits   = 2
+  ,parameter int unsigned BiasBits     = 8
   ,parameter int unsigned InChannels   = 1
   ,parameter int unsigned OutChannels  = 1
   ,parameter int unsigned Stride       = 1
@@ -29,6 +30,7 @@ module tb_conv_layer #(
 );
 
 `include "injected_weights.vh"
+`include "injected_biases.vh"
 
 conv_layer #(
      .LineWidthPx (LineWidthPx)
@@ -37,11 +39,13 @@ conv_layer #(
     ,.OutBits     (OutBits)
     ,.KernelWidth (KernelWidth)
     ,.WeightBits  (WeightBits)
+    ,.BiasBits    (BiasBits)
     ,.InChannels  (InChannels)
     ,.OutChannels (OutChannels)
     ,.Stride      (Stride)
     ,.Padding     (Padding)
     ,.Weights     (INJECTED_WEIGHTS)
+    ,.Biases      (INJECTED_BIASES)
   ) dut (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)

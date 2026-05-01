@@ -20,29 +20,47 @@ def to_torch_weights(kernels4):
     w = torch.tensor(kernels4, dtype=torch.int32)           # (OC,IC,K,K)
     return w
 
-def torch_conv_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1, padding=0):
+def torch_conv_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1, padding=0, biases=None):
     x = to_torch_input(input_activation).to(torch.float32)
     w = to_torch_weights(kernels4).to(torch.float32)
+    
+    # 1. Prepare Biases
+    # PyTorch expects a 1D tensor of shape (OutChannels,)
+    if biases is not None:
+        b = torch.tensor(biases, dtype=torch.float32)
+    else:
+        # Default to zeros if no bias provided
+        b = torch.zeros(w.shape[0], dtype=torch.float32)
 
+    # 2. Input Encoding (Bipolar for 1-bit)
     if in_bits == 1:
-        # Match MAC input encoding: 0 -> -1, 1 -> +1
         x = x * 2.0 - 1.0
-        # A 0-bit in hardware means -1 mathematically
         pad_val = -1.0 
     else:
-        # Standard multi-bit padding is just 0
         pad_val = 0.0
 
-    # Manually pad the tensor with the correct semantic value
+    # 3. Manual Padding
     if padding > 0:
-        # F.pad format: (left, right, top, bottom)
         x = F.pad(x, (padding, padding, padding, padding), mode='constant', value=pad_val)
 
-    # Run conv2d with padding=0 since the tensor is already expanded
-    y = F.conv2d(x, w, stride=stride, padding=0).squeeze(0)
+    # 4. Run Convolution with Bias
+    # We pass 'b' directly into F.conv2d. 
+    # It adds the bias to each output channel before returning the result.
+    y = F.conv2d(x, w, bias=b, stride=stride, padding=0).squeeze(0)
 
     if out_bits == 1:
         y = (y > 0).to(torch.int32)
+    else:
+        # 5. Simulate Hardware Truncation/Sign-Extension
+        # We convert to a bitmask to simulate the overflow wrap-around
+        y_int = y.to(torch.int32)
+        mask = (1 << out_bits) - 1
+        y_wrapped = y_int & mask
+        
+        # 6. Convert back to signed representation for comparison
+        sign_bit = 1 << (out_bits - 1)
+        y_signed = torch.where(y_wrapped >= sign_bit, y_wrapped - (1 << out_bits), y_wrapped)
+        y = y_signed.to(torch.int32)
 
     return y
 

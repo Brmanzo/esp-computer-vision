@@ -10,6 +10,7 @@ module conv_layer #(
   ,parameter  int unsigned OutBits        = 1
   ,parameter  int unsigned KernelWidth    = 3
   ,parameter  int unsigned WeightBits     = 2
+  ,parameter  int unsigned BiasBits       = 8
   ,parameter  int unsigned InChannels     = 1
   ,parameter  int unsigned OutChannels    = 1
   ,localparam int unsigned KernelArea     = KernelWidth * KernelWidth
@@ -28,6 +29,8 @@ module conv_layer #(
 
   ,localparam int unsigned WeightIndex = InChannels * KernelArea * WeightBits
   ,parameter logic signed [OutChannels*WeightIndex-1:0] Weights = '0
+
+  ,parameter logic signed [OutChannels*BiasBits-1:0] Biases = '0
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -44,18 +47,20 @@ module conv_layer #(
   /* ---------------------------------- Accumulator Width Calculation ----------------------- */
   // Generate only the minimum bits to support a full accumulation per filter
   function automatic int unsigned acc_bits;
-    input int unsigned kernel_area, input_bits, weight_bits, in_channels;
+    input int unsigned kernel_area, input_bits, weight_bits, in_channels, bias_bits;
     longint unsigned max_input, max_weight, worst_case_sum;
+    int unsigned wc_bits;
     begin
       max_input      = (64'd1 << (input_bits - 1));
-      max_weight     = (64'd1 << (weight_bits - 1)) - 1;
+      max_weight     = (64'd1 << (weight_bits - 1));
       worst_case_sum = longint'(kernel_area) * max_input * max_weight * longint'(in_channels);
 
-      acc_bits = $clog2(worst_case_sum + 1) + 1; // assign to function name
+      wc_bits = $clog2(worst_case_sum + 1) + 1; // assign to function name
+      acc_bits = ((wc_bits > bias_bits) ? wc_bits : bias_bits) + 1; // Ensure we can also represent the bias
     end
   endfunction
 
-  localparam AccBits = acc_bits(KernelArea, InBits, WeightBits, InChannels);
+  localparam AccBits = acc_bits(KernelArea, InBits, WeightBits, InChannels, BiasBits);
 
   /* ---------------------------------------- Kernel Validation ---------------------------------------- */
   // Helper function to compute the next phase in the stride cycle for strides greater than 1.
@@ -231,15 +236,16 @@ module conv_layer #(
         ,.AccBits    (AccBits)
         ,.InChannels (InChannels)
       ) filter_inst (
-         .clk_i      (clk_i)
-        ,.rst_i      (rst_i)
-        ,.valid_i    (window_valid)
-        ,.ready_o    (filter_ready[ch])
-        ,.windows_i  (windows_q)
-        ,.weights_i  (Weights[ch*WeightIndex +: WeightIndex])
-        ,.ready_i    (ready_i)
-        ,.valid_o    (filter_valid[ch])
-        ,.data_o     (data_o[ch])
+         .clk_i     (clk_i)
+        ,.rst_i     (rst_i)
+        ,.valid_i   (window_valid)
+        ,.ready_o   (filter_ready[ch])
+        ,.windows_i (windows_q)
+        ,.weights_i (Weights[ch*WeightIndex +: WeightIndex])
+        ,.bias_i    (Biases[ch*BiasBits +: BiasBits])
+        ,.ready_i   (ready_i)
+        ,.valid_o   (filter_valid[ch])
+        ,.data_o    (data_o[ch])
       );
     end
   endgenerate

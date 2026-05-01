@@ -36,18 +36,28 @@ My goal for this project is to implement a dynamic system that captures live dat
   - Down-sampling from default 320x240 down to 80x60
   - Periodic auto-exposure to adjust to changing light levels
   - Fault detection and recovery via reset-driven SYN/ACK polling
-- Hardware Acceleration of Image processing via FPGA
+- Hardware acceleration of image processing via FPGA
   - Decoupled interface via UART for non-blocking transmission
   - Packet framing for proper data alignment
   - UART RTS line to ensure data integrity
   - Kernel-stationary sliding-window convolution architecture
   - Parameterized kernel size, stride, input and weight widths for model flexibility
-  - Fully-Connected conv2d, linear, and pool modules verified with Pytorch
-- Unit Testing of all hardware components using CocoTB
+  - Fully-Connected conv2d, linear, pool, and classifier modules verified with Pytorch
+- Pytorch model quantization
+  - Weights quantized via progressive QAT and batchnorm folding
+  - Binary activations quantized and encoded as {-1,1}
+  - Pytorch model automatically translated into system verilog hardware description.
+- Unit and Integration Testing of all hardware components using CocoTB
 - Dynamic HTML viewing of image over ESP32 Wi-Fi
 
 ## Milestones
-- **2026-02-17** — Verified Convolution Layer with actual PyTorch.Conv2d() output
+- **2026-04-26** — Verified Classifier Layer with Pytorch amax-linear-argmax output
+- **2026-04-19** — Translate model specs into Pytorch Model, Verilog, and Testbench
+- **2026-04-06** — Mapped delay buffers to Icestorm BRAM, (8 channels/BRAM)
+- **2026-03-08** — Quantized Weights and Activations in Pytorch Model
+- **2026-02-25** — Verified Linear Layer with PyTorch.Linear() output
+- **2026-02-19** — Verified Pooling Layer with PyTorch.MaxPool() output
+- **2026-02-17** — Verified Convolution Layer with PyTorch.Conv2d() output
 - **2026-02-11** — Convolution Layer with N Input and M Output Channels
 - **2026-01-27** — FPGA packet data framing
 - **2026-01-13** — Streaming raw grayscale image
