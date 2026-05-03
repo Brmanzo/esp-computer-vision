@@ -1,5 +1,6 @@
 from typing import Callable, Tuple
-
+import numpy as np
+from PIL import Image
 import torch
 import kagglehub
 
@@ -13,18 +14,41 @@ def get_transforms(img_h: int, img_w: int, in_bits: int) -> Tuple[Callable, Call
     '''Returns the preprocessing and augmentation transforms for the dataset.'''
     
     def pad_to_target(img):
-        '''Dataset images are smaller than first conv layer -> pad to target dimensions.'''
-        w, h = img.size
-        pad_left = max((img_w - w) // 2, 0)
-        pad_top  = max((img_h - h) // 2, 0)
-        pad_right = max(img_w - w - pad_left, 0)
-        pad_bottom = max(img_h - h - pad_top, 0)
-        return TF.pad(img, [pad_left, pad_top, pad_right, pad_bottom], fill=255)
+        '''Finds the gesture and aligns it to the bottom-center of the target frame without scaling.'''
+        # 1. Convert to grayscale and numpy
+        gray = img.convert('L')
+        arr = np.array(gray)
+        
+        # 2. Binarize to find the hand (Hand=0, BG=255)
+        if arr.mean() > 128:
+            binary_arr = np.where(arr < 120, 0, 255).astype(np.uint8)
+        else:
+            binary_arr = np.where(arr > 130, 0, 255).astype(np.uint8)
+
+        # 3. Find bounding box
+        coords = np.argwhere(binary_arr == 0)
+        if len(coords) == 0:
+            return Image.fromarray(binary_arr).resize((img_w, img_h))
+            
+        y0, x0 = coords.min(axis=0)
+        y1, x1 = coords.max(axis=0)
+        
+        # 4. Crop the hand at its natural size
+        hand_crop = Image.fromarray(binary_arr).crop((x0, y0, x1+1, y1+1))
+        cw, ch = hand_crop.size
+        
+        # 5. Place in target frame (Bottom-Aligned, Centered)
+        target = Image.new('L', (img_w, img_h), color=255) 
+        paste_x = (img_w - cw) // 2
+        paste_y = (img_h - ch) # Always bottom align
+        target.paste(hand_crop, (paste_x, paste_y))
+        
+        return target
 
     tfm_base = transforms.Compose([
         transforms.Grayscale(in_bits),
         transforms.Lambda(pad_to_target),
-        transforms.Lambda(lambda img: TF.invert(img)),
+        # Removed the inversion to keep Black Hand on White Background
         transforms.ToTensor(), 
     ])
 
