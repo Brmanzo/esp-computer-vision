@@ -85,7 +85,7 @@ class PackerModel():
         assert_resolvable(self._unpacked_i)
         assert_resolvable(self._flush_i)
         
-        u = int(self._unpacked_i.value) & ((1 << int(self._UnpackedWidth)) - 1)
+        u = int(self._unpacked_i.value) & ((1 << self._UnpackedWidth) - 1)
         flush = int(self._flush_i.value) & 1
         
         # 2. Packing logic

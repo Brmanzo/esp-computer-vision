@@ -101,7 +101,7 @@ class ConvLayerModel():
 
         # 4. Validity Map Generation (Based on PADDED dimensions)
         invalid_region = self._kernel_width - 1
-        S = int(self._Stride)
+        S = self._Stride
         span_w = (self._padded_width  - 1) - (self._kernel_width - 1)
         span_h = (self._padded_height - 1) - (self._kernel_width - 1)
 
@@ -249,8 +249,6 @@ class ConvLayerModel():
         Verifier. 
         """
         assert_resolvable(self._data_o)
-        if self._dut is not None:
-            w = int(self._dut.OutBits.value)
         packed = int(self._data_o.value.integer)
 
         check_idx = self._deqs - 1
@@ -258,11 +256,11 @@ class ConvLayerModel():
         check_c = check_idx % self._OW
 
         for ch in range(self._OutChannels):
-            raw = (packed >> (ch * w)) & ((1 << w) - 1)
-            if w == 1:
+            raw = (packed >> (ch * self._OutBits)) & ((1 << self._OutBits) - 1)
+            if self._OutBits == 1:
                 got = raw
             else:
-                got = sign_extend(raw, w)
+                got = sign_extend(raw, self._OutBits)
             
             exp = int(expected[ch])
 

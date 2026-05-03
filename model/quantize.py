@@ -1,6 +1,6 @@
 # model.quantize.py
 
-from   matplotlib.pylab import cast
+from   typing import cast, Optional
 import torch
 from   torch import nn
 import torch.nn.functional as F
@@ -60,14 +60,18 @@ class QuantizeWeight(torch.autograd.Function):
         return w_q
 
     @staticmethod
-    def backward(ctx, grad_output):
+    def backward(ctx, *grad_outputs):
         '''Backpropagation is straight-through: pass the gradient through unchanged, and return None for bits since it's not a learnable parameter.'''
+        grad_output = grad_outputs[0]
         # Return gradient for 'w', and None for 'bits'
         return grad_output, None
 
 class QuantConv2d(nn.Conv2d):
     '''Folds batchnorm into the convolutional weights and biases, then applies quantization to the folded weights. 
     This allows us to train a quantized model with batchnorm effects without needing separate BN layers in hardware.'''
+    running_mean: torch.Tensor
+    running_var: torch.Tensor
+
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, weight_bits=4, bias_bits=8, **kwargs):
         # Safely remove 'bias' from kwargs if the user passed it in
         kwargs.pop('bias', None)
@@ -86,10 +90,10 @@ class QuantConv2d(nn.Conv2d):
         self.eps       = 1e-5
         self.momentum  = 0.1
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
         # 1. The Dummy Pass: Standard float convolution to get pre-BN activations
         #    (None for bias because BN handles all biasing)
-        pre_act = F.conv2d(x, self.weight, None, self.stride, self.padding)
+        pre_act = F.conv2d(input, self.weight, None, self.stride, self.padding)
         
         # 2. Handle BatchNorm Statistics on the output of the convolution
         if self.training:
@@ -129,7 +133,7 @@ class QuantConv2d(nn.Conv2d):
             w_q = folded_w
 
         # 7. Execute the real convolution using the quantized integer weights and folded bias
-        return F.conv2d(x, w_q, folded_b, self.stride, self.padding)
+        return F.conv2d(input, w_q, folded_b, self.stride, self.padding)
 
 class QuantizeActivationSTE(torch.autograd.Function):
     '''Quantized Straight-Through Estimator for Activations.'''
@@ -168,8 +172,9 @@ class QuantizeActivationSTE(torch.autograd.Function):
         return x_q
 
     @staticmethod
-    def backward(ctx, grad_output):
+    def backward(ctx, *grad_outputs):
         '''Blocks gradients for activations outside the learned clipping range, and calculates gradient for the clipping parameter.'''
+        grad_output = grad_outputs[0]
         x, clip_val = ctx.saved_tensors
         bits = ctx.bits
 
@@ -201,6 +206,7 @@ class QuantizeActivation(nn.Module):
     def __init__(self, bits=1):
         super().__init__()
         self.bits = bits
+        self.clip_val: Optional[nn.Parameter]
         if bits > 1:
             # Initialize the learnable clipping threshold. 
             # 3.0 is a great starting point since BatchNorm keeps ~99% of values within [-3, 3]
@@ -208,6 +214,6 @@ class QuantizeActivation(nn.Module):
         else:
             self.clip_val = None
 
-    def forward(self, x):
+    def forward(self, input):
         '''Return Quantized Straight Through Estimator output for activations.'''
-        return QuantizeActivationSTE.apply(x, self.bits, self.clip_val)
+        return QuantizeActivationSTE.apply(input, self.bits, self.clip_val)

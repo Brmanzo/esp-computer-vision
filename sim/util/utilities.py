@@ -235,7 +235,7 @@ async def clock_start_sequence(clk_i, period=1, unit="ns"):
     c = Clock(clk_i, period, unit)
 
     # Start the clock low to avoid issues on the first RisingEdge
-    cocotb.start_soon(c.start(start_high=False))
+    cocotb.start_soon(c.start(start_high=False))  # pyrefly: ignore[unused-coroutine]
 
 async def reset_sequence(clk_i, reset_i, cycles, FinishClkFalling=True, active_level=True):
     reset_i.setimmediatevalue(not active_level)

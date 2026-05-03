@@ -12,9 +12,17 @@ requires-python = ">=3.8"
 where = ["."]
 include = ["model*"]
 
+[tool.pytest.ini_options]
+pythonpath = ["sim"]
+
+[tool.pyrefly]
+search_path = ["sim"]
+
 [[tool.mypy.overrides]]
 module = [
     "cocotb.*",
-    "cocotb_test.*"
+    "cocotb_test.*",
+    "kagglehub.*",
+    "torchvision.*"
 ]
 ignore_missing_imports = true

@@ -295,6 +295,7 @@ async def fill_test(dut):
     await RisingEdge(dut.clk_i)
 
     success = False
+    nconsumed = 0
     try:
         await im.wait(Depth)
         success = True
@@ -302,7 +303,7 @@ async def fill_test(dut):
         nconsumed = im.nconsumed()
 
     if(not success):
-        assert nconsumed != Depth, f"Error! Could not fill fifo with {Depth} elements in {Depth} cycles. Fifo consumed {nconsumed} elements."
+        assert nconsumed == Depth, f"Error! Could not fill fifo with {Depth} elements in {Depth} cycles. Fifo consumed {nconsumed} elements."
         
 @cocotb.test
 async def fill_empty_test(dut):
@@ -339,6 +340,7 @@ async def fill_empty_test(dut):
     await RisingEdge(dut.clk_i)
 
     success = False
+    nconsumed = 0
     try:
         await im.wait(Depth)
         success = True

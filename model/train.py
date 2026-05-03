@@ -1,251 +1,155 @@
 # model.train.py
 # Bradley Manzo 2026
-
-import kagglehub
-
 import torch
-from torch.utils.data import DataLoader, random_split
-from torchvision import datasets, transforms
-from torchvision.transforms import functional as TF
-from matplotlib import pyplot as plt
+import torch.nn as nn
+from torch.utils.data import DataLoader
 
 from pathlib import Path
-import matplotlib.pyplot as plt
+from typing import List, Tuple, Callable
 
-from .quantize import QSchedule
-from .model import cnn_model, QuantConv2d
-from .export import export_model_to_csv
-from .config import ModelConfig, InputDimensions
+from model.config     import ModelConfig
+from model.export     import export_model_to_csv, export_csv_to_sv
+from model.model      import cnn_model, QuantConv2d
+from model.plot       import plot_training
+from model.preprocess import prepare_data, get_transforms
+from model.globals    import get_hand_gesture_cfg
 
-IMG_H, IMG_W = 240, 320
-DATA_SPLIT = 0.8
-BEGIN_Q_EPOCHS = 20
-EPOCHS_PER_LAYER = 15
 
-# Hyperparameters
-LEARNING_RATE = 5e-4
-WEIGHT_DECAY  = 1e-5
-
-IN_BITS = 1
-
-train_acc_history = []
-test_acc_history = []
+def train_model(model: nn.Module, train_loader: DataLoader, test_loader: DataLoader, train_aug: Callable, cfg: ModelConfig, device: str, 
+                epochs: int, lr: float, weight_decay: float, model_save_path: Path) -> Tuple[List[float], List[float]]:
+    '''Executes the full training and progressive quantization schedule.'''
     
-def pad_to_target(img):
-    '''Dataset images are smaller than first conv layer -> pad to 320x240.'''
-    # img is PIL here
-    w, h = img.size
-    pad_left = max((IMG_W - w) // 2, 0)
-    pad_top  = max((IMG_H - h) // 2, 0)
-    pad_right = max(IMG_W - w - pad_left, 0)
-    pad_bottom = max(IMG_H - h - pad_top, 0)
-    return TF.pad(img, [pad_left, pad_top, pad_right, pad_bottom], fill=255)
+    begin_q_epochs = cfg.q_schedule[0]._q_start
+    opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+    loss_fn = torch.nn.CrossEntropyLoss()
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs - begin_q_epochs)
 
+    print(f"Training on {device} for {epochs} epochs with progressive quantization starting at epoch {begin_q_epochs}")
+    print("\n--- STARTING FULL-PRECISION TRAINING ---")
 
-tfm_train = transforms.Compose([
-    transforms.Grayscale(IN_BITS),  # Ensure images are single-channel grayscale
-    
-    # Pad the image to 320x240 (centers it and fills borders with white: 255)
-    transforms.Lambda(pad_to_target),
-    
-    # Invert colors to match Arducam capture
-    transforms.Lambda(lambda img: TF.invert(img)),
-    
-    # Convert to tensor
-    transforms.ToTensor(), 
-])
+    best_test_acc = 0.0
+    train_acc_history: List[float] = []
+    test_acc_history:  List[float] = []
 
-# Rotate by up to 15 degrees and fill borders with white
-train_aug = transforms.Compose([
-    transforms.RandomRotation(15, fill=1), 
-    transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), fill=1), 
-])
-
-# Import hand gesture dataset from Kaggle
-path = Path(kagglehub.dataset_download("roobansappani/hand-gesture-recognition"))
-dataset_root = path / "HandGesture" / "images"
-dataset = datasets.ImageFolder(dataset_root, transform=tfm_train)
-
-# Split dataset into 80% train and 20% test
-n = len(dataset) 
-n_train = int(DATA_SPLIT * n)
-n_test  = n - n_train
-train_ds, test_ds = random_split(dataset, [n_train, n_test],
-                                 generator=torch.Generator().manual_seed(0))
-
-# Configure DataLoaders on GPU for batch processing
-train_loader = DataLoader(train_ds, batch_size=32, shuffle=True, 
-                          num_workers=4, pin_memory=True)
-test_loader  = DataLoader(test_ds, batch_size=32, shuffle=False, 
-                          num_workers=4, pin_memory=True)
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-torch.backends.cudnn.benchmark = True
-
-num_classes = len(dataset.classes)
-
-cfg = ModelConfig(
-    input_dimensions = InputDimensions(320, 240),
-    in_channels      = [1, 8, 16, 24, 32],
-    in_bits          = [1, 1, 1, 1],  # Only the first 4 layers are binarized, the classifier is full precision
-    kernels          = [[3,2], [3,2], [3,2], [3], [1]],
-    padding          = 1,
-    stride           = 1,
-    num_classes      = num_classes,
-    bus_width        = 8,
-    bias_bits        = 8,
-    q_schedule       = [QSchedule(20, [5, 5, 5, 10, 20], 8, 4),
-                        QSchedule(30, [5, 5, 5, 10, 20], 8, 4),
-                        QSchedule(40, [5, 5, 5, 10, 20], 8, 4),
-                        QSchedule(50, [5, 5, 5, 10, 20], 8, 4),
-                        QSchedule(50, [10], 13, 13)]) # Classifier stays at 13 bits to preserve accuracy
-
-# Import CNN Model and set the optimizer, loss function, and scheduler for training
-model = cnn_model(config = cfg)
-model = model.to(device)
-
-model_layers = model.modules()
-assert len(cfg.q_schedule) == sum(1 for m in model_layers if isinstance(m, QuantConv2d)), "Schedule must have an entry for each QuantConv2d layer"
-
-EPOCHS = max(cfg.total_epochs() for cfg in cfg.q_schedule) 
-BEGIN_Q_EPOCHS = cfg.q_schedule[0]._q_start
-
-opt = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
-loss_fn = torch.nn.CrossEntropyLoss()
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=EPOCHS - BEGIN_Q_EPOCHS)
-
-print(f"Training on {device} for {EPOCHS} epochs with progressive quantization starting at epoch {BEGIN_Q_EPOCHS}")
-print("\n--- STARTING FULL-PRECISION TRAINING ---")
-
-best_test_acc = 0.0
-model_save_path = "gesture_net_quantized.pth"
-
-for epoch in range(EPOCHS):
-    if epoch == BEGIN_Q_EPOCHS:
-        print("\n--- STARTING PROGRESSIVE QUANTIZATION ---")
-        
-    # --------------------------------------- SCHEDULING LOGIC ---------------------------------------
-    quant_layer_idx = 0
-    bits_changed_this_epoch = False
-    for module in model.modules(): # Safely iterate directly
-        if isinstance(module, QuantConv2d):
-            # Fetch the target bits directly from your shiny new data structure
-            target_bits = cfg.q_schedule[quant_layer_idx].get_target_bits(epoch)
+    for epoch in range(epochs):
+        if epoch == begin_q_epochs:
+            print("\n--- STARTING PROGRESSIVE QUANTIZATION ---")
             
-            if target_bits is not None:
-                # Turning quantization ON for the first time
-                if not getattr(module, '_quantize', False): 
-                    module._quantize = True
-                    module._weight_bits = target_bits
-                    bits_changed_this_epoch = True
-                    print(f"Epoch {epoch:02d}: Layer {quant_layer_idx} quantization ON -> {target_bits}-bit")
-                    
-                # Dropping to a lower bit-width
-                elif getattr(module, '_weight_bits', None) != target_bits:
-                    module._weight_bits = target_bits
-                    bits_changed_this_epoch = True
-                    print(f"Epoch {epoch:02d}: Layer {quant_layer_idx} dropping bits -> {target_bits}-bit")
-                    
-            quant_layer_idx += 1
-    # Rezero the best test accuracy if any bits changed this epoch, so we record the most accurate model at the current quantization
-    if bits_changed_this_epoch:
-        best_test_acc = 0.0
-    # --------------------------------------- TRAINING LOGIC ---------------------------------------
-    model.train()
-    for x, y in train_loader:
-        x    = train_aug(x) 
-        x, y = x.to(device), y.to(device)
+        # 1. Scheduling Logic
+        quant_layer_idx = 0
+        bits_changed_this_epoch = False
+        for module in model.modules():
+            if isinstance(module, QuantConv2d):
+                target_bits = cfg.q_schedule[quant_layer_idx].get_target_bits(epoch)
+                if target_bits is not None:
+                    if not getattr(module, '_quantize', False): 
+                        module._quantize = True
+                        module._weight_bits = target_bits
+                        bits_changed_this_epoch = True
+                        print(f"Epoch {epoch:02d}: Layer {quant_layer_idx} quantization ON -> {target_bits}-bit")
+                    elif getattr(module, '_weight_bits', None) != target_bits:
+                        module._weight_bits = target_bits
+                        bits_changed_this_epoch = True
+                        print(f"Epoch {epoch:02d}: Layer {quant_layer_idx} dropping bits -> {target_bits}-bit")
+                quant_layer_idx += 1
         
-        logits = model(x)
-        loss   = loss_fn(logits, y)
-        
-        opt.zero_grad(set_to_none=True)
-        loss.backward()
-        
-        # CRITICAL RE-ADDITION: Prevent the weights from exploding on bit drops!
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        
-        opt.step()
+        if bits_changed_this_epoch:
+            best_test_acc = 0.0
 
-    model.eval()
-    train_correct = train_total = 0
-    test_correct  = test_total = 0
-    
-    with torch.no_grad():
-        # Evaluate Training Set
+        # 2. Training Logic
+        model.train()
         for x, y in train_loader:
+            x    = train_aug(x) 
             x, y = x.to(device), y.to(device)
             
-            # Evaluate on unaugmented training images
-            pred = model(x).argmax(1)
-            train_correct += (pred == y).sum().item()
-            train_total   += y.numel()
+            logits = model(x)
+            loss   = loss_fn(logits, y)
             
-        # Evaluate Test Set 
-        for x, y in test_loader:
-            x, y = x.to(device), y.to(device)
-            pred = model(x).argmax(1)
-            test_correct += (pred == y).sum().item()
-            test_total   += y.numel()
+            opt.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            opt.step()
 
-    # Compute accuracies
-    train_acc = train_correct / train_total
-    test_acc = test_correct / test_total
-
-    train_acc_history.append(train_acc)
-    test_acc_history.append(test_acc)
-    
-    # Increment epoch
-    scheduler.step()
-    print(f"epoch {epoch:02d} train_acc={train_acc:.3f} test_acc={test_acc:.3f}", end="")
-    if test_acc > best_test_acc:
-        best_test_acc = test_acc
-        torch.save(model.state_dict(), model_save_path)
-        print(f"  --> New best model saved! (Acc: {best_test_acc:.3f})")
-    else:
-        print("")
-
-# --------------------------------------- PLOTTING LOGIC ---------------------------------------
-plt.plot(train_acc_history, label="Train Accuracy", linewidth=2)
-plt.plot(test_acc_history, label="Test Accuracy", linewidth=2)
-
-colors = ['red', 'orange', 'green', 'blue', 'purple']
-assert len(cfg.q_schedule) == len(colors), "Need a color for each layer in the schedule"
-
-# Find the lowest accuracy on the graph to anchor our text
-min_acc = min(min(train_acc_history), min(test_acc_history))
-
-for layer_idx, (q_sched, color) in enumerate(zip(cfg.q_schedule, colors)):
-    # Offset text vertically so the 4 layers stack neatly instead of overlapping
-    y_offset = min_acc + (layer_idx * 0.05) 
-    
-    # Plot the starting point for this layer
-    plt.axvline(q_sched._q_start, color=color, linestyle='-', alpha=0.6)
-    plt.text(q_sched._q_start - 2, y_offset, f'L{layer_idx} Q-Start', rotation=90, color=color, fontsize=8)
-    
-    # Accumulate the epochs to step forward in time correctly
-    accumulated_epochs = q_sched._q_start
-    for i, duration in enumerate(q_sched._epochs_per_bit[:-1]): # Skip the final plateau duration for text labels
-        accumulated_epochs += duration
+        # 3. Evaluation Logic
+        model.eval()
+        train_correct = train_total = 0
+        test_correct  = test_total = 0
         
-        # Calculate the bit-width the layer is dropping TO
-        next_bits = max(q_sched._q_min_bits, q_sched._q_max_bits - i - 1)
+        with torch.no_grad():
+            for x, y in train_loader:
+                x, y = x.to(device), y.to(device)
+                pred = model(x).argmax(1)
+                train_correct += (pred == y).sum().item()
+                train_total   += y.numel()
+            for x, y in test_loader:
+                x, y = x.to(device), y.to(device)
+                pred = model(x).argmax(1)
+                test_correct += (pred == y).sum().item()
+                test_total   += y.numel()
+
+        train_acc = train_correct / train_total
+        test_acc = test_correct / test_total
+        train_acc_history.append(train_acc)
+        test_acc_history.append(test_acc)
         
-        # Plot the drop threshold
-        plt.axvline(accumulated_epochs, color=color, linestyle='--', alpha=0.3)
-        plt.text(accumulated_epochs + 1, y_offset, f'{next_bits}b', rotation=90, color=color, fontsize=8)
+        if epoch >= begin_q_epochs:
+            scheduler.step()
 
-plt.xlabel("Epoch")
-plt.ylabel("Accuracy")
-plt.title("Training and Test Accuracy with Quantization Schedule")
-plt.legend(loc="lower right")
-plt.grid(True, alpha=0.3)
+        print(f"epoch {epoch:02d} train_acc={train_acc:.3f} test_acc={test_acc:.3f}", end="")
+        if test_acc > best_test_acc:
+            best_test_acc = test_acc
+            torch.save(model.state_dict(), model_save_path)
+            print(f"  --> New best model saved! (Acc: {best_test_acc:.3f})")
+        else:
+            print("")
 
-print("\n--- TRAINING COMPLETE ---")
+    return train_acc_history, test_acc_history
 
-# 2. Extract from the best model the folded hardware parameters to CSV
-export_model_to_csv(model_save_path, config=cfg, output_csv="hardware_weights.csv")
+def main():
+    # 1. Set top-level parameters
+    IMG_H, IMG_W = 240, 320
+    DATA_SPLIT = 0.8
+    BATCH_SIZE = 32
+    IN_BITS = 1
+    LEARNING_RATE = 5e-4
+    WEIGHT_DECAY  = 1e-5
+    dataset_name = "roobansappani/hand-gesture-recognition"
+    datapath   = Path("model") / "data"
+    plot_path  = datapath / "training_accuracy.png"
+    model_path = datapath / "gesture_net_quantized.pth"
+    csv_path   = datapath / "hardware_weights.csv"
+    sv_path    = datapath / "hardware_weights.vh"
 
-# 3. Show the graph (Script will pause here until you close the window)
-plt.savefig("training_accuracy.png")  # Save the figure to a file
-plt.show()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    torch.backends.cudnn.benchmark = True
+
+    # 2. Prepare Data (This resolves num_classes)
+    train_loader, test_loader, num_classes = prepare_data(dataset_name, IMG_H, IMG_W, IN_BITS, DATA_SPLIT, BATCH_SIZE)
+    _, train_aug = get_transforms(IMG_H, IMG_W, IN_BITS)
+
+    # 3. Configure and Create Model
+    cfg = get_hand_gesture_cfg(num_classes, IMG_H, IMG_W)
+    model = cnn_model(config = cfg)
+    model = model.to(device)
+
+    # Verify schedule
+    model_layers = model.modules()
+    assert len(cfg.q_schedule) == sum(1 for m in model_layers if isinstance(m, QuantConv2d)), "Schedule must have an entry for each QuantConv2d layer"
+
+    # 4. Train Model
+    EPOCHS = max(q_sched.total_epochs() for q_sched in cfg.q_schedule)
+    train_acc_history, test_acc_history = train_model(
+        model, train_loader, test_loader, train_aug, cfg, device,
+        EPOCHS, LEARNING_RATE, WEIGHT_DECAY, model_path
+    )
+
+    # 4.5 Plot training history
+    plot_training(cfg, train_acc_history, test_acc_history, plot_path)
+
+    # 5. Export Hardware Parameters
+    print("\n--- EXPORTING HARDWARE WEIGHTS ---")
+    export_model_to_csv(model_path, config=cfg, output_csv=csv_path)
+    export_csv_to_sv(csv_path, sv_path)
+
+if __name__ == "__main__":
+    main()

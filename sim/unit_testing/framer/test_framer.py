@@ -97,7 +97,7 @@ class FramerModel():
     
     def consume(self):
         assert_resolvable(self._unpacked_i)
-        u = int(self._unpacked_i.value) & ((1 << int(self._UnpackedWidth)) - 1)
+        u = int(self._unpacked_i.value) & ((1 << self._UnpackedWidth) - 1)
         
         # Shift in new unpacked byte to accumulator
         self._acc |= (u << (self._UnpackedWidth * self._step))

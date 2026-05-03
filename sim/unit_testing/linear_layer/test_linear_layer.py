@@ -204,8 +204,8 @@ async def rate_tests(dut, in_rate: float, out_rate: float, N_vec: int = 200):
     WW = int(dut.WeightBits.value)
     BW = int(dut.BiasBits.value)
 
-    N_in  = int(N_vec)
-    N_out = int(N_vec)
+    N_in  = N_vec
+    N_out = N_vec
 
     # --- Unpack injected weights ---
     weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_0_INT"]), WW, OC, IC)

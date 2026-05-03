@@ -67,7 +67,7 @@ class PoolLayerModel():
         self._in_idx = 0
 
         invalid_region = self._kernel_width - 1
-        S = int(self._Stride)
+        S = self._Stride
         span_w = (self._input_width  - 1) - (self._kernel_width - 1)
         span_h = (self._input_height - 1) - (self._kernel_width - 1)
 
@@ -133,11 +133,11 @@ class PoolLayerModel():
 
         # Check validity
         idx = self._enqs
-        x = idx % int(self._input_width)
-        y = idx // int(self._input_width)
+        x = idx %  self._input_width
+        y = idx // self._input_width
         self._enqs += 1
 
-        if y >= int(self._input_height) or not self._valid_cycles[y, x]:
+        if y >= self._input_height or not self._valid_cycles[y, x]:
             return None
 
         # Compute expected

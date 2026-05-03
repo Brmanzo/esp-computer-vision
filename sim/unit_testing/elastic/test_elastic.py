@@ -288,6 +288,7 @@ async def fill_test(dut):
     await RisingEdge(dut.clk_i)
 
     success = False
+    nconsumed = 0
     try:
         # Give enough ns for the fifo to fill based on depth
         await im.wait((depth_p * 10) + 50) 
@@ -325,6 +326,7 @@ async def fill_empty_test(dut):
 
     # 1. Fill Phase
     success = False
+    nconsumed = 0
     try:
         await im.wait((depth_p * 10) + 50)
         success = True

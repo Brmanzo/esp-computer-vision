@@ -4,7 +4,7 @@
 import math
 from typing import List, Optional
 
-from .quantize import QSchedule
+from model.quantize import QSchedule
 
 class InputDimensions:
     '''Organizes spatial input dimensions, as well as term_count for the classifier.'''
@@ -142,7 +142,7 @@ class ModelConfig:
 
     def __init__(self, input_dimensions: InputDimensions, in_channels: List[int], 
                  in_bits: List[int], kernels: List[List[int]], 
-                 stride:  List[int] | int, padding: List[int] | int, bias_bits: int,
+                 stride:  List[int] | int, padding: List[int] | int, bias_bits: List[int] | int,
                  num_classes: int, bus_width: int, q_schedule: List[QSchedule]):
         
         # In channels length defines the number of layers
@@ -176,6 +176,10 @@ class ModelConfig:
             # Stride and padding can be fixed for every layer, or layer-specific
             c_stride = stride[i]  if isinstance(stride, list) else stride
             c_pad    = padding[i] if isinstance(padding, list) else padding
+            
+            # Layer-specific bias bits
+            c_bias_bits = bias_bits[i] if isinstance(bias_bits, list) else bias_bits
+
             # Weight bits are determined by the final quantized width
             c_weight_bits = q_schedule[i]._q_min_bits
             
@@ -183,8 +187,8 @@ class ModelConfig:
             if i < len(in_bits):
                 c_in_bits = in_bits[i]
             else:
+                assert current_out_bits is not None, "Input bit-width is undefined for this layer"
                 c_in_bits = current_out_bits
-                assert c_in_bits is not None, "Input bit-width is undefined for this layer"
 
             # 2. Check if this is the final layer (Classifier)
             if i == self.num_layers - 1:
@@ -195,7 +199,7 @@ class ModelConfig:
                     num_classes=num_classes, 
                     q_schedule=q_schedule[i], 
                     layer_num=i,
-                    bias_bits=self._bias_bits,
+                    bias_bits=c_bias_bits,
                     line_width_px=current_w, 
                     line_count_px=current_h
                 )
@@ -210,7 +214,7 @@ class ModelConfig:
             # 4. Create ConvConfig
             conv_cfg = ConvConfig(
                 in_ch=c_in_ch, in_bits=c_in_bits, out_bits=c_out_bits,
-                kernels=kernels, stride=c_stride, padding=c_pad, bias_bits=self._bias_bits,
+                kernels=kernels, stride=c_stride, padding=c_pad, bias_bits=c_bias_bits,
                 q_schedule=q_schedule[i], out_ch=c_out_ch, layer_num=i,
                 input_dims=InputDimensions(current_w, current_h)
             )

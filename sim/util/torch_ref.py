@@ -66,6 +66,7 @@ def torch_conv_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1, pa
 
 def torch_pool_ref(input_activation, kernel_size, stride=None, mode=0):
     x = to_torch_input(input_activation).to(torch.float32)
+    y = torch.zeros(1, 1, 1, 1)
     if mode == 0:
         y = F.max_pool2d(x, kernel_size=kernel_size, stride=stride, padding=0)
     elif mode == 1:

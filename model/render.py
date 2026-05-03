@@ -1,9 +1,11 @@
 # model.render.py
 # Bradley Manzo 2026
+from   datetime import datetime
+from   pathlib  import Path
+import sys
 
-from datetime import datetime
-from pathlib import Path
-from .config import ModelConfig, ConvConfig, PoolConfig, ClassifierConfig
+from model.config  import ModelConfig, ConvConfig, PoolConfig, ClassifierConfig
+from model.globals import HAND_GESTURE_CFG
 
 def render_header(BusBits):
     '''Renders the header of the CNN SystemVerilog file.'''
@@ -28,6 +30,8 @@ def render_header(BusBits):
         "  ,output [0:0] ready_o",
         "  ,output [BusBits-1:0] data_o", # FIXED: No longer [0:0]
         ");",
+        "",
+        "  `include \"injected_weights_0.vh\""
     ]
 
     return "\n".join(lines)
@@ -82,8 +86,8 @@ def render_conv_layer(cfg: ConvConfig):
         f"    ,.InChannels  ({cfg._in_ch})",
         f"    ,.OutChannels ({cfg._out_ch})",
         f"    ,.Stride      ({cfg._stride})",
-        f"    ,.Weights     (weights_{cfg._layer_num})",
-        f"    ,.Biases      (biases_{cfg._layer_num})",
+        f"    ,.Weights     (LAYER_{cfg._layer_num}_WEIGHTS)",
+        f"    ,.Biases      (LAYER_{cfg._layer_num}_BIASES)",
         f"    ,.Padding     ({cfg._padding})",
         f"  ) conv_layer_inst_{cfg._layer_num} (",
         "     .clk_i     (clk_i)",
@@ -136,8 +140,8 @@ def render_classifier_layer(cfg: ClassifierConfig):
         f"    ,.ClassCount ({cfg._num_classes})",
         f"    ,.WeightBits ({cfg._q_schedule._q_min_bits})",
         f"    ,.BiasBits   ({cfg._bias_bits})", # Bias bits are fixed to 8 for now since we haven't implemented quantized biases
-        f"    ,.Weights    (weights_{cfg._layer_num})",
-        f"    ,.Biases     (biases_{cfg._layer_num})",
+        f"    ,.Weights    (LAYER_{cfg._layer_num}_WEIGHTS)",
+        f"    ,.Biases     (LAYER_{cfg._layer_num}_BIASES)",
         f"  ) classifier_layer_inst_{cfg._layer_num} (",
         "     .clk_i   (clk_i)",
         "    ,.rst_i   (rst_i)",
@@ -181,3 +185,6 @@ def render_verilog(cfg: ModelConfig) -> None:
         print(render_classifier_layer(cfg.classifier_config), file=f)
         
         print(render_footer(), file=f)
+
+if __name__ == "__main__":
+   render_verilog(HAND_GESTURE_CFG)

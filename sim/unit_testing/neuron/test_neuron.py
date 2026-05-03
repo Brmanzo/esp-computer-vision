@@ -143,7 +143,7 @@ class NeuronModel():
 
         self.w = np.array(weights, dtype=int)
 
-        bias_bits = int(bias) & ((1 << self._BiasBits) - 1)
+        bias_bits = bias & ((1 << self._BiasBits) - 1)
         self.b = sign_extend(bias_bits, self._BiasBits)
 
         self._in_idx = 0

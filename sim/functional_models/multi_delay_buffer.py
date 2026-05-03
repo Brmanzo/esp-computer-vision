@@ -35,10 +35,10 @@ class MultiDelayBufferModel:
             if BufferWidth is None:
                 raise ValueError("BufferWidth must be provided")
 
-            delay = int(Delay)
-            buffer_rows = int(BufferRows)
-            input_channels = int(InputChannels)
-            buffer_width = int(BufferWidth)
+            delay          = Delay
+            buffer_rows    = BufferRows
+            input_channels = InputChannels
+            buffer_width   = BufferWidth
 
         self._Delay: int = delay
         self._BufferRows: int = buffer_rows

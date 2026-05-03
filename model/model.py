@@ -6,9 +6,8 @@ import torch.nn as nn
 
 BRAM_COUNT = 30 - 1 # Subtract 1 for the Skid Buffer BRAM on deframer
 
-from .config   import ModelConfig
-from .render   import render_verilog
-from .quantize import QuantConv2d, QuantizeActivation
+from model.config   import ModelConfig
+from model.quantize import QuantConv2d, QuantizeActivation
 
 class cnn_model(nn.Module):
     '''Construct the Pytorch CNN model based on provided Model Config.'''
@@ -17,7 +16,7 @@ class cnn_model(nn.Module):
         self.config = config
 
         # 1. Dynamically Build the Feature Extractor
-        feature_layers = []
+        feature_layers: list[nn.Module] = []
         
         # Iterate naturally over all feature layers in model config
         for layer_cfg in self.config.layers:
@@ -63,6 +62,7 @@ class cnn_model(nn.Module):
         # 3. Utilities
         self.ram_utilization()
         # Update cnn.sv with current architecture
+        from model.render import render_verilog
         render_verilog(self.config)
 
     def forward(self, x):
