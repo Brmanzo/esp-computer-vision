@@ -1,12 +1,11 @@
-from cocotb_test import simulator
 import numpy as np
 import os
 from   pathlib import Path
 import pytest
 
-from util.utilities  import runner, clock_start_sequence, reset_sequence
-from util.bitwise    import unpack_kernel_weights, pack_terms
-from util.gen_inputs import gen_kernels, gen_input_channels
+from util.utilities  import runner, clock_start_sequence, reset_sequence, auto_unpack, load_tests_from_csv, inject_weights_and_biases
+from util.bitwise    import unpack_kernel_weights, pack_terms, unpack_biases
+from util.gen_inputs import gen_kernels, gen_input_channels, gen_biases
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from functional_models.single_block import SingleBlockModel
 from functional_models.conv_layer   import output_width
@@ -16,69 +15,10 @@ tbpath = Path(__file__).parent
 import cocotb
 from   cocotb.triggers import RisingEdge, FallingEdge, with_timeout
 from   cocotb.result import SimTimeoutError
+from   cocotb_test import simulator
    
 import random
 random.seed(50)
-
-import csv
-
-def load_tests_from_csv(filepath):
-    test_cases = []
-    
-    with open(filepath, mode='r') as f:
-        reader = csv.DictReader(f)
-        
-        for row in reader:
-            # 1. Parse standard base parameters
-            C0_W  = int(row["C0_LineWidthPx"])
-            C0_H  = int(row["C0_LineCountPx"])
-            C0_IB = int(row["C0_InBits"])
-            C0_KW = int(row["C0_KernelWidth"])
-            C0_WB = int(row["C0_WeightBits"])
-            C0_IC = int(row["C0_InChannels"])
-            C0_OC = int(row["C0_OutChannels"])
-            C0_S  = int(row["C0_Stride"])
-            C0_P  = int(row["C0_Padding"])
-            
-            P0_KW = int(row["P0_KernelWidth"])
-            P0_M  = int(row["P0_Mode"])
-            
-            C1_KW = int(row["C1_KernelWidth"])
-            C1_WB = int(row["C1_WeightBits"])
-            C1_OC = int(row["C1_OutChannels"])
-            C1_S  = int(row["C1_Stride"])
-            C1_P  = int(row["C1_Padding"])
-            
-            P1_KW = int(row["P1_KernelWidth"])
-            P1_M  = int(row["P1_Mode"])
-            
-            seed  = int(row["Seed"])
-
-            # 2. Parse C0_OutBits (Hybrid Logic)
-            c0_outbits_raw = row["C0_OutBits"].strip().upper()
-            if c0_outbits_raw == "AUTO":
-                C0_OB = output_width(C0_IB, C0_WB, C0_KW, C0_IC)
-            else:
-                C0_OB = int(c0_outbits_raw)
-
-            # 3. Parse C1_OutBits (Hybrid Logic)
-            c1_outbits_raw = row["C1_OutBits"].strip().upper()
-            if c1_outbits_raw == "AUTO":
-                C1_OB = output_width(C0_OB, C1_WB, C1_KW, C0_OC)
-            else:
-                C1_OB = int(c1_outbits_raw)
-
-            # 4. Dynamically generate Kernels
-            C0_Weights = gen_kernels(C0_WB, C0_OC, C0_IC, C0_KW, seed=seed)
-            C1_Weights = gen_kernels(C1_WB, C1_OC, C0_OC, C1_KW, seed=seed)
-
-            # 5. Append to the test case list
-            test_cases.append((
-                C0_W, C0_H, C0_IB, C0_OB, C0_KW, C0_WB, C0_IC, C0_OC, C0_S, C0_P, C0_Weights,
-                P0_KW, P0_M, C1_OB, C1_KW, C1_WB, C1_OC, C1_S, C1_P, C1_Weights, P1_KW, P1_M
-            ))
-            
-    return test_cases
 
 timescale = "1ps/1ps"
 
@@ -183,75 +123,59 @@ class DoubleBlockModel:
             
         self._deqs += 1
 
-# Generate the list of tuples dynamically from the CSV
-TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"))
+# Format: ("Target_Var", "CSV_Column", lambda <parsed_keys_needed>: func(...))
+auto_rules = [
+    ("C0_OutBits", "C0_OutBits", lambda C0_InBits, C0_WeightBits, C0_KernelWidth, C0_InChannels, C0_BiasBits: output_width(C0_InBits, C0_WeightBits, C0_KernelWidth, C0_InChannels, C0_BiasBits)),
+    ("C1_OutBits", "C1_OutBits", lambda C0_OutBits, C1_WeightBits, C1_KernelWidth, C0_OutChannels, C1_BiasBits: output_width(C0_OutBits, C1_WeightBits, C1_KernelWidth, C0_OutChannels, C1_BiasBits))
+]
 
+# Format: ("Target_Var", lambda <parsed_keys_needed>: func(...))
+gen_rules = [
+    ("C0_Weights", lambda C0_WeightBits, C0_OutChannels, C0_InChannels, C0_KernelWidth: gen_kernels(C0_WeightBits, C0_OutChannels, C0_InChannels, C0_KernelWidth, seed=1234)),
+    ("C1_Weights", lambda C1_WeightBits, C1_OutChannels, C0_OutChannels, C1_KernelWidth: gen_kernels(C1_WeightBits, C1_OutChannels, C0_OutChannels, C1_KernelWidth, seed=1234)),
+    ("C0_Biases",  lambda C0_BiasBits, C0_OutChannels: gen_biases(C0_BiasBits, C0_OutChannels, seed=1234)),
+    ("C1_Biases",  lambda C1_BiasBits, C1_OutChannels: gen_biases(C1_BiasBits, C1_OutChannels, seed=1234))
+]
+
+# Generate the list of tuples dynamically from the CSV
+TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 # Pass the dynamically generated list directly into parametrize!
-@pytest.mark.parametrize("C0_LineWidthPx, C0_LineCountPx, C0_InBits, C0_OutBits, C0_KernelWidth, C0_WeightBits, C0_InChannels, C0_OutChannels, C0_Stride, C0_Padding, C0_Weights, " \
-                         "P0_KernelWidth, P0_Mode, C1_OutBits, C1_KernelWidth, C1_WeightBits, C1_OutChannels, C1_Stride, C1_Padding, C1_Weights, P1_KernelWidth, P1_Mode", 
-                         TEST_CASES)
-def test_each(test_name, simulator, C0_LineWidthPx, C0_LineCountPx, C0_InBits, C0_OutBits, C0_KernelWidth, C0_WeightBits, C0_InChannels, C0_OutChannels, C0_Stride, C0_Padding, C0_Weights, 
-                                    P0_KernelWidth, P0_Mode, 
-                                    C1_OutBits, C1_KernelWidth, C1_WeightBits, C1_OutChannels, C1_Stride, C1_Padding, C1_Weights, 
-                                    P1_KernelWidth, P1_Mode):
+@auto_unpack(TEST_CASES)
+def test_each(test_name, simulator, 
+              C0_LineWidthPx, C0_LineCountPx, C0_InBits, C0_OutBits,
+              C0_KernelWidth, C0_WeightBits, C0_BiasBits, C0_InChannels, C0_OutChannels,
+              C0_Stride, C0_Padding, C0_Weights, C0_Biases,  P0_KernelWidth, P0_Mode, 
+              C1_OutBits, C1_KernelWidth, C1_WeightBits, C1_BiasBits, C1_OutChannels, 
+              C1_Stride, C1_Padding, C1_Weights, C1_Biases, P1_KernelWidth, P1_Mode):
     parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
-    
-    # 1. Pop the weights out of the dictionary entirely
-    C0_Weights = parameters.pop('C0_Weights')
-    C1_Weights = parameters.pop('C1_Weights')
-    
+    parameters.pop('C0_Weights', None)
+    parameters.pop('C0_Biases', None)
+    parameters.pop('C1_Weights', None)
+    parameters.pop('C1_Biases', None)
     param_str = f"InBits_{C0_InBits}_OutBits0_{C0_OutBits}_OutBits1_{C1_OutBits}_test_{test_name}"
-    custom_work_dir = os.path.join(tbpath, "run", "double_block", param_str, simulator)
-    os.makedirs(custom_work_dir, exist_ok=True)
     
-    # 2. Calculate total bits to format the Verilog hex string correctly
-    C1_InChannels = C0_OutChannels
-    total_bits_0 = C0_OutChannels * C0_InChannels * (C0_KernelWidth**2) * C0_WeightBits
-    total_bits_1 = C1_OutChannels * C1_InChannels * (C1_KernelWidth**2) * C1_WeightBits
+    weight_bits_0 = C0_OutChannels * C0_InChannels * (C0_KernelWidth**2) * C0_WeightBits
+    weight_bits_1 = C1_OutChannels * C0_OutChannels * (C1_KernelWidth**2) * C1_WeightBits
 
-    mask_0 = (1 << total_bits_0) - 1
-    mask_1 = (1 << total_bits_1) - 1
-
-    packed_weights_0 = C0_Weights & mask_0
-    packed_weights_1 = C1_Weights & mask_1
-
-    hex_width_0 = (total_bits_0 + 3) // 4
-    hex_width_1 = (total_bits_1 + 3) // 4
-
-    # 3. Write weights AND ALL OTHER PARAMETERS to the header file
-    vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
-    with open(vh_path, "w") as f:
-        f.write(f"localparam logic signed [{total_bits_0-1}:0] INJECTED_WEIGHTS_0 = {total_bits_0}'h{packed_weights_0:0{hex_width_0}x};\n")
-        f.write(f"localparam logic signed [{total_bits_1-1}:0] INJECTED_WEIGHTS_1 = {total_bits_1}'h{packed_weights_1:0{hex_width_1}x};\n\n")
-
-        # Dynamically write ALL other parameters as Verilog macros!
-        for key, val in parameters.items():
-            f.write(f"`define {key} {val}\n")
-
-    # 4. Pass the massive integers strictly through the OS environment to Cocotb
-    os.environ["INJECTED_WEIGHTS_0_INT"] = str(C0_Weights)
-    os.environ["INJECTED_WEIGHTS_1_INT"] = str(C1_Weights)
-
-    # 5. EMPTY THE DICTIONARY to bypass the OS File Name error!
-    parameters.clear()
-
-    wrapper_path = os.path.join(tbpath, "tb_double_block.sv")
+    bias_bits_0 = C0_OutChannels * C0_BiasBits
+    bias_bits_1 = C1_OutChannels * C1_BiasBits
+    
+    custom_work_dir = inject_weights_and_biases(
+        simulator=simulator, parameters=parameters, param_str=param_str, 
+        tbpath=tbpath, test_class="each", Weights=C0_Weights, Biases=C0_Biases, 
+        weight_bits=weight_bits_0, bias_bits=bias_bits_0, layer=0)
+    
+    inject_weights_and_biases(
+        simulator=simulator, parameters=parameters, param_str=param_str, 
+        tbpath=tbpath, test_class="each", Weights=C1_Weights, Biases=C1_Biases, 
+        weight_bits=weight_bits_1, bias_bits=bias_bits_1, layer=1)
 
     runner(
-        simulator=simulator, 
-        timescale=timescale, 
-        tbpath=tbpath, 
-        params=parameters,   # <--- This is now completely empty! No massive strings generated.
-        pymodule="test_double_block",
-        testname=test_name, 
-        work_dir=custom_work_dir,
-        sim_build=custom_work_dir,
-        includes=[custom_work_dir],          
-        toplevel_override="tb_double_block", 
+        simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters,
+        pymodule="test_double_block", testname=test_name, work_dir=custom_work_dir,
+        sim_build=custom_work_dir, includes=[custom_work_dir], toplevel_override="tb_double_block", 
     )
 
 class RandomDataGenerator:
@@ -283,6 +207,7 @@ async def single_test(dut):
     C0_IC = int(dut.C0_InChannels.value)
     C0_OC = int(dut.C0_OutChannels.value)
     C0_WW = int(dut.C0_WeightBits.value)
+    C0_BB = int(dut.C0_BiasBits.value)
     C0_InBits  = int(dut.C0_InBits.value)
     C0_OutBits = int(dut.C0_OutBits.value)
     C0_P  = int(dut.C0_Padding.value)
@@ -297,6 +222,7 @@ async def single_test(dut):
     C1_IC = C0_OC
     C1_OC = int(dut.C1_OutChannels.value)
     C1_WW = int(dut.C1_WeightBits.value)
+    C1_BB = int(dut.C1_BiasBits.value)
     C1_InBits  = C0_OutBits
     C1_OutBits = int(dut.C1_OutBits.value)
     C1_P  = int(dut.C1_Padding.value)
@@ -328,12 +254,18 @@ async def single_test(dut):
     packed_weights_1 = int(os.environ["INJECTED_WEIGHTS_1_INT"])
     kernels_4d_1 = unpack_kernel_weights(packed_weights_1, C1_WW, C1_OC, C1_IC, C1_K)
 
+    packed_biases_0 = int(os.environ["INJECTED_BIASES_0_INT"])
+    biases_0 = unpack_biases(packed_biases_0, C0_BB, C0_OC)
+
+    packed_biases_1 = int(os.environ["INJECTED_BIASES_1_INT"])
+    biases_1 = unpack_biases(packed_biases_1, C1_BB, C1_OC)
+
     # 4. Setup configuration dictionaries
     conv_0_params = {
         "KernelWidth": C0_K, "LineWidthPx": C0_W, "LineCountPx": C0_H,
-        "InBits": C0_InBits, "OutBits": C0_OutBits,
+        "InBits": C0_InBits, "OutBits": C0_OutBits, "WeightBits": C0_WW, "BiasBits": C0_BB,
         "InChannels": C0_IC, "OutChannels": C0_OC, "Stride": C0_S,
-        "Padding": C0_P, "weights": kernels_4d_0
+        "Padding": C0_P, "weights": kernels_4d_0, "biases": biases_0
     }
     pool_0_params = {
         "KernelWidth": P0_K, "LineWidthPx": C0_W_out, "LineCountPx": C0_H_out,
@@ -343,9 +275,9 @@ async def single_test(dut):
     }
     conv_1_params = {
         "KernelWidth": C1_K, "LineWidthPx": P0_W_out, "LineCountPx": P0_H_out,
-        "InBits": C1_InBits, "OutBits": C1_OutBits,
+        "InBits": C1_InBits, "OutBits": C1_OutBits, "WeightBits": C1_WW, "BiasBits": C1_BB,
         "InChannels": C1_IC, "OutChannels": C1_OC, "Stride": C1_S,
-        "Padding": C1_P, "weights": kernels_4d_1
+        "Padding": C1_P, "weights": kernels_4d_1, "biases": biases_1
     }
     pool_1_params = {
         "KernelWidth": P1_K, "LineWidthPx": C1_W_out, "LineCountPx": C1_H_out,
@@ -391,6 +323,7 @@ async def rate_tests(dut, in_rate, out_rate):
     C0_IC = int(dut.C0_InChannels.value)
     C0_OC = int(dut.C0_OutChannels.value)
     C0_WW = int(dut.C0_WeightBits.value)
+    C0_BB = int(dut.C0_BiasBits.value)
     C0_InBits  = int(dut.C0_InBits.value)
     C0_OutBits = int(dut.C0_OutBits.value)
     C0_P  = int(dut.C0_Padding.value)
@@ -404,6 +337,7 @@ async def rate_tests(dut, in_rate, out_rate):
     C1_IC = C0_OC
     C1_OC = int(dut.C1_OutChannels.value)
     C1_WW = int(dut.C1_WeightBits.value)
+    C1_BB = int(dut.C1_BiasBits.value)
     C1_InBits  = C0_OutBits
     C1_OutBits = int(dut.C1_OutBits.value)
     C1_P  = int(dut.C1_Padding.value)
@@ -438,12 +372,18 @@ async def rate_tests(dut, in_rate, out_rate):
     packed_weights_1 = int(os.environ["INJECTED_WEIGHTS_1_INT"])
     kernels_4d_1 = unpack_kernel_weights(packed_weights_1, C1_WW, C1_OC, C1_IC, C1_K)
 
+    packed_biases_0 = int(os.environ["INJECTED_BIASES_0_INT"])
+    biases_0 = unpack_biases(packed_biases_0, C0_BB, C0_OC)
+
+    packed_biases_1 = int(os.environ["INJECTED_BIASES_1_INT"])
+    biases_1 = unpack_biases(packed_biases_1, C1_BB, C1_OC)
+
     # 4. Setup configuration dictionaries
     conv_0_params = {
         "KernelWidth": C0_K, "LineWidthPx": C0_W, "LineCountPx": C0_H,
-        "InBits": C0_InBits, "OutBits": C0_OutBits,
-        "InChannels": C0_IC, "OutChannels": C0_OC, "Stride": C0_S,
-        "Padding": C0_P, "weights": kernels_4d_0,
+        "InBits": C0_InBits, "OutBits": C0_OutBits, "WeightBits": C0_WW,
+        "BiasBits": C0_BB, "InChannels": C0_IC, "OutChannels": C0_OC, "Stride": C0_S,
+        "Padding": C0_P, "weights": kernels_4d_0, "biases": biases_0,
         "input_activation": input_activation # Let Conv0 record initial inputs
     }
     pool_0_params = {
@@ -454,9 +394,9 @@ async def rate_tests(dut, in_rate, out_rate):
     }
     conv_1_params = {
         "KernelWidth": C1_K, "LineWidthPx": P0_W_out, "LineCountPx": P0_H_out,
-        "InBits": C1_InBits, "OutBits": C1_OutBits,
+        "InBits": C1_InBits, "OutBits": C1_OutBits, "WeightBits": C1_WW,
         "InChannels": C1_IC, "OutChannels": C1_OC, "Stride": C1_S,
-        "Padding": C1_P, "weights": kernels_4d_1
+        "Padding": C1_P, "weights": kernels_4d_1, "biases": biases_1, "BiasBits": C1_BB
     }
     pool_1_params = {
         "KernelWidth": P1_K, "LineWidthPx": C1_W_out, "LineCountPx": C1_H_out,
@@ -502,13 +442,13 @@ async def rate_tests(dut, in_rate, out_rate):
         ref_block_0 = torch_single_block_ref(
             input_activation, kernels_4d_0, C0_S, 
             in_bits=C0_InBits, out_bits=C0_OutBits, 
-            mode=P0_M, pool_kernel_size=P0_K, padding=C0_P
+            mode=P0_M, pool_kernel_size=P0_K, padding=C0_P, biases=biases_0
         )
         
         final_ref = torch_single_block_ref(
             ref_block_0, kernels_4d_1, C1_S, 
             in_bits=C1_InBits, out_bits=C1_OutBits, 
-            mode=P1_M, pool_kernel_size=P1_K, padding=C1_P
+            mode=P1_M, pool_kernel_size=P1_K, padding=C1_P, biases=biases_1
         )
 
         assert np.allclose(output_activation, final_ref.numpy()), "Output activation does not match..."

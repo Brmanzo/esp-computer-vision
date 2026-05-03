@@ -60,7 +60,7 @@ class PoolLayerModel():
         self._OW = (self._input_width - self._kernel_width) // self._Stride + 1
         self._OH = (self._input_height - self._kernel_width) // self._Stride + 1
 
-        self._buf = [np.zeros((self._kernel_width,self._input_width))/0 for _ in range(self._InChannels)]
+        self._buf = [np.zeros((self._kernel_width,self._input_width), dtype=np.int64) for _ in range(self._InChannels)]
         self._deqs = 0
         self._enqs = 0
 

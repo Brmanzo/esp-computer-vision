@@ -10,10 +10,13 @@
 
 # Each file in the filelist is relative to the repository root.
 
+import csv
 import git
+import inspect
 import json
 import os
 from   pathlib import Path
+import pytest
 from   typing import Literal
 
 
@@ -274,7 +277,7 @@ def inject_params(parameters: dict, param: int, param_name: str, param_bits: int
     # 4. Pass the integer strictly through the OS environment to Cocotb testbench
     os.environ[f"INJECTED_{param_name.upper()}_INT"] = str(param)
 
-def inject_weights_and_biases(simulator: Literal['verilator', 'icarus'], parameters: dict, param_str: str, tbpath: Path, test_class: str, Weights: int, Biases: int, weight_bits: int, bias_bits: int):
+def inject_weights_and_biases(simulator: Literal['verilator', 'icarus'], parameters: dict, param_str: str, tbpath: Path, test_class: str, Weights: int, Biases: int, weight_bits: int, bias_bits: int, layer: int = 0):
     """Helper function to inject both weights and biases using the inject_params function."""
     parameters.pop('test_name', None)
     parameters.pop('simulator', None)
@@ -282,7 +285,69 @@ def inject_weights_and_biases(simulator: Literal['verilator', 'icarus'], paramet
     custom_work_dir = os.path.join(tbpath, "run", test_class, param_str, simulator)
     os.makedirs(custom_work_dir, exist_ok=True)
   
-    inject_params(parameters, Weights, "Weights", weight_bits, custom_work_dir)
-    inject_params(parameters,  Biases,  "Biases", bias_bits,   custom_work_dir)
+    inject_params(parameters, Weights, f"weights_{layer}", weight_bits, custom_work_dir)
+    inject_params(parameters,  Biases,  f"biases_{layer}", bias_bits,   custom_work_dir)
 
     return custom_work_dir
+
+def load_tests_from_csv(filepath, auto_rules, gen_rules):
+    """Parses CSV and executes dependency injection rules, returning dictionaries."""
+    test_cases = []
+    
+    with open(filepath, mode='r') as f:
+        reader = csv.DictReader(f)
+        
+        for row in reader:
+            # 1. Base Map: Assume CSV headers perfectly match internal variable names
+            parsed = {k: int(v) if v.lstrip('-').isdigit() else v for k, v in row.items()}
+            
+            # --- THE MAGIC AUTOWIRING FUNCTION ---
+            def execute_with_injected_deps(func):
+                sig = inspect.signature(func)
+                kwargs = {param: parsed[param] for param in sig.parameters}
+                return func(**kwargs)
+            # -------------------------------------
+
+            # 2. Process "AUTO" Rules
+            for var_name, csv_col, func in auto_rules:
+                raw_val = str(parsed.get(csv_col, "")).strip().upper()
+                if raw_val == "AUTO":
+                    parsed[var_name] = execute_with_injected_deps(func)
+                else:
+                    parsed[var_name] = int(raw_val)
+
+            # 3. Process Generation Rules
+            for var_name, func in gen_rules:
+                parsed[var_name] = execute_with_injected_deps(func)
+
+            test_cases.append(parsed)
+                
+    return test_cases
+
+def auto_unpack(test_cases_dicts):
+    """Converts dictionaries to tuples dynamically based on the test signature."""
+    def decorator(func):
+        if not test_cases_dicts:
+            return pytest.mark.parametrize("", [])(func)
+            
+        # 1. Introspect the test function signature
+        sig = inspect.signature(func)
+        
+        # 2. Get all args EXCEPT the ones handled by other decorators/fixtures
+        # Add any other standard pytest fixtures you use to this ignore list
+        ignore_list = ["test_name", "simulator"]
+        target_args = [param for param in sig.parameters if param not in ignore_list]
+        
+        # 3. Build the perfectly ordered tuples for Pytest
+        tuples_list = []
+        for case_dict in test_cases_dicts:
+            try:
+                tuples_list.append(tuple(case_dict[arg] for arg in target_args))
+            except KeyError as e:
+                raise ValueError(f"Missing required parameter {e} for {func.__name__}")
+        
+        # 4. Generate the Pytest string and execute
+        param_string = ", ".join(target_args)
+        return pytest.mark.parametrize(param_string, tuples_list)(func)
+        
+    return decorator

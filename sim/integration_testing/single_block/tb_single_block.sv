@@ -9,6 +9,7 @@ module tb_single_block #(
   ,parameter int unsigned C_KernelWidth = 3
   ,parameter int unsigned P_KernelWidth = 2
   ,parameter int unsigned C_WeightBits  = 2
+  ,parameter int unsigned C_BiasBits    = 8
   ,parameter int unsigned C_InChannels  = 1
   ,parameter int unsigned C_OutChannels = 1
   ,parameter int unsigned C_Stride      = 1
@@ -39,7 +40,8 @@ module tb_single_block #(
   localparam int unsigned P_LineWidthPx = p_in_dim(C_LineWidthPx, C_KernelWidth, C_Stride, C_Padding);
   localparam int unsigned P_LineCountPx = p_in_dim(C_LineCountPx, C_KernelWidth, C_Stride, C_Padding);
 
-  `include "injected_weights.vh"
+  `include "injected_weights_0.vh"
+  `include "injected_biases_0.vh"
 
   wire [0:0] pool_0_ready;
   wire [0:0] conv_0_valid;
@@ -52,11 +54,13 @@ module tb_single_block #(
     ,.OutBits     (C_OutBits)
     ,.KernelWidth (C_KernelWidth)
     ,.WeightBits  (C_WeightBits)
+    ,.BiasBits    (C_BiasBits)
     ,.InChannels  (C_InChannels)
     ,.OutChannels (C_OutChannels)
     ,.Stride      (C_Stride)
     ,.Padding     (C_Padding)
-    ,.Weights     (INJECTED_WEIGHTS)
+    ,.Weights     (INJECTED_WEIGHTS_0)
+    ,.Biases      (INJECTED_BIASES_0)
   ) conv_layer_inst_0 (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)

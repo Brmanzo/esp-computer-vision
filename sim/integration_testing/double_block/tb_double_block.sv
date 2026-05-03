@@ -1,33 +1,38 @@
 // Bradley Manzo, 2026
 
 `timescale 1ns / 1ps
-`include "injected_weights.vh" // Include at the very top
+`include "injected_weights_0.vh"
+`include "injected_biases_0.vh"
+`include "injected_weights_1.vh"
+`include "injected_biases_1.vh"
 
 module tb_double_block #(
    // Parameters default to the macros injected by the Python testbench
-   parameter int unsigned C0_LineWidthPx = `C0_LineWidthPx
-  ,parameter int unsigned C0_LineCountPx = `C0_LineCountPx
-  ,parameter int unsigned C0_InBits      = `C0_InBits
-  ,parameter int unsigned C0_OutBits     = `C0_OutBits
-  ,parameter int unsigned C0_KernelWidth = `C0_KernelWidth
-  ,parameter int unsigned C0_WeightBits  = `C0_WeightBits
-  ,parameter int unsigned C0_InChannels  = `C0_InChannels
-  ,parameter int unsigned C0_OutChannels = `C0_OutChannels
-  ,parameter int unsigned C0_Stride      = `C0_Stride
-  ,parameter int unsigned C0_Padding     = `C0_Padding
+   parameter int unsigned C0_LineWidthPx = 32
+  ,parameter int unsigned C0_LineCountPx = 24
+  ,parameter int unsigned C0_InBits      = 1
+  ,parameter int unsigned C0_OutBits     = 1
+  ,parameter int unsigned C0_KernelWidth = 3
+  ,parameter int unsigned C0_WeightBits  = 2
+  ,parameter int unsigned C0_BiasBits    = 8
+  ,parameter int unsigned C0_InChannels  = 1
+  ,parameter int unsigned C0_OutChannels = 2
+  ,parameter int unsigned C0_Stride      = 1
+  ,parameter int unsigned C0_Padding     = 1
 
-  ,parameter int unsigned P0_KernelWidth = `P0_KernelWidth
-  ,parameter int unsigned P0_Mode        = `P0_Mode 
+  ,parameter int unsigned P0_KernelWidth = 2
+  ,parameter int unsigned P0_Mode        = 0
 
-  ,parameter int unsigned C1_OutBits     = `C1_OutBits
-  ,parameter int unsigned C1_KernelWidth = `C1_KernelWidth
-  ,parameter int unsigned C1_WeightBits  = `C1_WeightBits
-  ,parameter int unsigned C1_OutChannels = `C1_OutChannels
-  ,parameter int unsigned C1_Stride      = `C1_Stride
-  ,parameter int unsigned C1_Padding     = `C1_Padding
+  ,parameter int unsigned C1_OutBits     = 1
+  ,parameter int unsigned C1_KernelWidth = 3
+  ,parameter int unsigned C1_WeightBits  = 2
+  ,parameter int unsigned C1_BiasBits    = 8
+  ,parameter int unsigned C1_OutChannels = 4
+  ,parameter int unsigned C1_Stride      = 1
+  ,parameter int unsigned C1_Padding     = 1
   
-  ,parameter int unsigned P1_KernelWidth = `P1_KernelWidth
-  ,parameter int unsigned P1_Mode        = `P1_Mode 
+  ,parameter int unsigned P1_KernelWidth = 2
+  ,parameter int unsigned P1_Mode        = 0
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -92,11 +97,13 @@ module tb_double_block #(
     ,.OutBits     (C0_OutBits)
     ,.KernelWidth (C0_KernelWidth)
     ,.WeightBits  (C0_WeightBits)
+    ,.BiasBits    (C0_BiasBits)
     ,.InChannels  (C0_InChannels)
     ,.OutChannels (C0_OutChannels)
     ,.Stride      (C0_Stride)
     ,.Padding     (C0_Padding)
-    ,.Weights     (INJECTED_WEIGHTS_0) // Fixed Name
+    ,.Weights     (INJECTED_WEIGHTS_0)
+    ,.Biases      (INJECTED_BIASES_0)
   ) conv_layer_inst_0 (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)
@@ -137,11 +144,13 @@ module tb_double_block #(
     ,.OutBits     (C1_OutBits)
     ,.KernelWidth (C1_KernelWidth)
     ,.WeightBits  (C1_WeightBits)
+    ,.BiasBits    (C1_BiasBits)
     ,.InChannels  (C0_OutChannels)
     ,.OutChannels (C1_OutChannels)
     ,.Stride      (C1_Stride)
     ,.Padding     (C1_Padding)
-    ,.Weights     (INJECTED_WEIGHTS_1) // Fixed Name
+    ,.Weights     (INJECTED_WEIGHTS_1)
+    ,.Biases      (INJECTED_BIASES_1)
   ) conv_layer_inst_1 (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)

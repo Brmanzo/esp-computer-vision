@@ -11,3 +11,10 @@ requires-python = ">=3.8"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["model*"]
+
+[[tool.mypy.overrides]]
+module = [
+    "cocotb.*",
+    "cocotb_test.*"
+]
+ignore_missing_imports = true

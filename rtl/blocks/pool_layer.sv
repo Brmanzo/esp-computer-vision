@@ -16,7 +16,8 @@ module pool_layer #(
   ,localparam int unsigned KernelArea   = KernelWidth * KernelWidth
 
   ,localparam int unsigned TargetRamBits  = (LineWidthPx <= 255) ? 16 : 8
-  ,localparam int unsigned ChannelsPerRam = TargetRamBits / ((KernelWidth - 1) * InBits)
+  ,localparam int unsigned KernelSize     = (((KernelWidth - 1) * InBits) > 0) ? ((KernelWidth - 1) * InBits) : 1
+  ,localparam int unsigned ChannelsPerRam = ((TargetRamBits / KernelSize) > 0) ? (TargetRamBits / KernelSize) : 1
   ,localparam int unsigned BufferCount    = (InChannels + ChannelsPerRam - 1) / ChannelsPerRam
 
   // Pooling layer kernel should have a stride equal to kernel width,

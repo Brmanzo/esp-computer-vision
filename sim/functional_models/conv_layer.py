@@ -38,7 +38,6 @@ class ConvLayerModel():
         self._dut = dut
         self._input_activation  = input_activation 
         self._output_activation = output_activation
-        self._biases = biases
 
         # 1. Parameter Extraction
         if dut is not None:
@@ -49,6 +48,7 @@ class ConvLayerModel():
             self._weight_width = int(dut.WeightBits.value)
             self._input_width  = int(dut.LineWidthPx.value)
             self._input_height = int(dut.LineCountPx.value)
+            self._bias_bits    = int(dut.BiasBits.value)
             self._InBits       = int(dut.InBits.value)
             self._OutBits      = int(dut.OutBits.value)
             self._InChannels   = int(dut.InChannels.value)
@@ -59,6 +59,7 @@ class ConvLayerModel():
             try:
                 self._kernel_width = int(kwargs["KernelWidth"])
                 self._weight_width = int(kwargs["WeightBits"])
+                self._bias_bits    = int(kwargs["BiasBits"])
                 self._input_width  = int(kwargs["LineWidthPx"])
                 self._input_height = int(kwargs["LineCountPx"])
                 self._InBits       = int(kwargs["InBits"])
@@ -74,6 +75,7 @@ class ConvLayerModel():
             raise ValueError("Weights must be provided to ConvLayerModel")
         if biases is None:
             biases = [0] * self._OutChannels
+        self._biases = biases
 
         # Dimensions scaled for padding
         self._padded_width  = self._input_width + 2 * self._Padding
@@ -83,7 +85,7 @@ class ConvLayerModel():
         self._OH = (self._padded_height - self._kernel_width) // self._Stride + 1
 
         # State Initialization
-        self._input_queue = queue.SimpleQueue() # Buffers real input while processing padding
+        self._input_queue: 'queue.SimpleQueue[List[int]]' = queue.SimpleQueue() # Buffers real input while processing padding
         self._r = 0
         self._c = 0
         self._x = 0 # Tracks internal padded X
