@@ -1,10 +1,12 @@
 # test_filter.py
+import os
 from   pathlib import Path
 import pytest
 
 from util.gen_inputs import gen_random_signed
 from util.bitwise    import sign_extend, pack_channels, unpack_channels
-from util.utilities  import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence
+from util.utilities  import runner, lint, assert_resolvable, clock_start_sequence, \
+                            sim_verbose, reset_sequence, load_tests_from_csv, auto_unpack
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 tbpath = Path(__file__).parent
 
@@ -44,25 +46,22 @@ tests = ['reset_test'
         ,'out_fuzz_test'
         ,'full_bw_test']
 
-# Test that binary tree can accomodate 
+auto_rules = [
+    ("AccBits", "AccBits", lambda InBits, WeightBits, KernelWidth, InChannels, BiasBits: acc_width(InBits, WeightBits, KernelWidth, InChannels, BiasBits)),
+    ("OutBits", "OutBits", lambda InBits, WeightBits, KernelWidth, InChannels, BiasBits: acc_width(InBits, WeightBits, KernelWidth, InChannels, BiasBits))
+]
+
+TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), auto_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("InBits, WeightBits, BiasBits,KernelWidth, InChannels, AccBits, OutBits",
-    [( 1, 2, 8, 3,  1, acc_width( 1, 2, 3,  1, 8), 1),
-     ( 1, 2, 8, 2,  2, acc_width( 1, 2, 2,  2, 8), acc_width( 1, 2, 2,  2, 8)),
-     ( 1, 3, 8, 3,  1, acc_width( 1, 3, 3,  1, 8), 1),
-     ( 8, 2, 8, 4,  1, acc_width( 8, 2, 4,  1, 8), acc_width( 8, 2, 4,  1, 8)),
-     ( 8, 2, 8, 3,  2, acc_width( 8, 2, 3,  2, 8), 1),
-     ( 8, 2, 8, 3, 16, acc_width( 8, 2, 3, 16, 8), 1),
-     ( 1, 2, 8, 3, 32, acc_width( 1, 2, 3, 32, 8), acc_width( 1, 2, 3, 32, 8)),
-    ],
-)
+@auto_unpack(TEST_CASES)
 
-def test_each(test_name, simulator, InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits):
+def test_each(test_name, simulator,
+              InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits):
     # This line must be first
     parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
+    test_name = parameters.pop('test_name')
+    simulator = parameters.pop('simulator')
     runner(simulator, timescale, tbpath, parameters, testname=test_name, pymodule="test_filter")
 
 @pytest.mark.parametrize("simulator", ["verilator"])
@@ -115,8 +114,9 @@ class FilterModel:
                 # Input bipolar mapping
                 if self._InBits == 1:
                     win = 1 if win == 1 else -1
+                if self._WeightBits == 1:
+                    wgt = 1 if wgt == 1 else -1
                 total += win * wgt
-        print(f"DEBUG: Total before bias: {total}, Bias: {p_bias}")
         # Add bias
         total += p_bias
         # match rtl logic: (sum_d > 0) ? 1 : 0
@@ -142,7 +142,8 @@ class FilterModel:
         if got != expected:
             print(f"DEBUG: Total Sum was likely {'positive' if expected == 1 else 'zero/negative'}")
             print(f"DEBUG: Raw RTL Bits: {bin(raw_out)}, Expected: {expected}, Got: {got}")
-        print(f"got: {got}, expected: {expected}")
+        if sim_verbose():
+            print(f"got: {got}, expected: {expected}")
         assert got == expected, f"Mismatch. Expected {expected}, got {got}"
         
 class RandomDataGenerator:

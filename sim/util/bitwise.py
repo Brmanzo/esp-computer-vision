@@ -1,5 +1,9 @@
 # Utility functions for bit manipulation, packing/unpacking, and sign extension.
 
+def twos_complement(val: int, bits: int) -> int:
+    mask = (1 << bits) - 1
+    return val & mask
+
 def sign_extend(value: int, width: int) -> int:
     mask = (1 << width) - 1
     value &= mask

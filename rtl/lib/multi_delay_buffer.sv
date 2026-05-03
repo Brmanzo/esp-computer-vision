@@ -7,7 +7,7 @@ module multi_delay_buffer #(
   ,parameter  int unsigned Delay         = 8
   ,parameter  int unsigned BufferRows    = 2
   ,parameter  int unsigned InputChannels = 1
-  ,localparam int unsigned AddrWidth     = $clog2(Delay)
+  ,localparam int unsigned AddrWidth     = Delay > 1 ? $clog2(Delay) : 1
   ,localparam int unsigned ChannelWidth  = BufferWidth * BufferRows
   ,localparam int unsigned RamWidth      = InputChannels * ChannelWidth
 )  (

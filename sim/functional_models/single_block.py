@@ -1,5 +1,5 @@
 
-from util.utilities import assert_resolvable
+from util.utilities import assert_resolvable, sim_verbose
 from util.bitwise import unpack_terms, sign_extend # Adjust imports to your project
 from functional_models.conv_layer import ConvLayerModel
 from functional_models.pool_layer import PoolLayerModel
@@ -89,7 +89,8 @@ class SingleBlockModel:
                 
             exp = int(expected[ch])
 
-            print(f"Integrated Output #{check_idx} (r={check_r}, c={check_c}) ch{ch}: expected {exp}, got {got}")
+            if sim_verbose():
+                print(f"Integrated Output #{check_idx} (r={check_r}, c={check_c}) ch{ch}: expected {exp}, got {got}")
 
             assert got == exp, (
                 f"Mismatch at Integrated Output #{check_idx} (r={check_r}, c={check_c}) ch{ch}: expected {exp}, got {got}"

@@ -1,0 +1,7 @@
+BufferWidth,Delay,BufferRows,InputChannels
+1,1,1,1
+1,8,2,1
+1,8,2,4
+2,16,4,10
+4,8,2,1
+

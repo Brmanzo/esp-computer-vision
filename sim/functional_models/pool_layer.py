@@ -3,7 +3,7 @@ from   pathlib import Path
 import numpy as np
 from   typing import List, Optional
 
-from util.utilities import assert_resolvable
+from util.utilities import assert_resolvable, sim_verbose
 from util.bitwise   import sign_extend, unpack_terms, pack_terms
 from util.gen_inputs import gen_input_channels
 
@@ -72,7 +72,7 @@ class PoolLayerModel():
         span_h = (self._input_height - 1) - (self._kernel_width - 1)
 
         assert span_w >= 0 and span_h >= 0, "Kernel exceeds image bounds"
-        assert (span_w % S) == 0 and (span_h % S) == 0, "Invalid configuration: Stride does not tile evenly"
+        # Note: stride need not evenly divide span — floor((span / S) + 1) output positions are produced.
         
         self._valid_cycles = np.ones((self._input_height, self._input_width), dtype=bool)
         self._valid_cycles[:invalid_region, :] = False
@@ -188,8 +188,8 @@ class PoolLayerModel():
                     got = sign_extend(got_raw, w)
                     
                 exp = int(expected[ch])
-
-                print(f"Output #{check_idx} (r={check_r}, c={check_c}) ch{ch}: expected {exp}, got {got}")
+                if sim_verbose():
+                    print(f"Output #{check_idx} (r={check_r}, c={check_c}) ch{ch}: expected {exp}, got {got}")
 
                 assert got == exp, (
                     f"Mismatch at output #{check_idx} (r={check_r}, c={check_c}) ch{ch}: expected {exp}, got {got} "

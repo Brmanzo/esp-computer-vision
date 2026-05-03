@@ -1,0 +1,10 @@
+InBits,AddendCount,OutBits
+1,2,AUTO
+1,4,AUTO
+2,1,AUTO
+2,2,AUTO
+2,3,AUTO
+4,5,AUTO
+8,8,AUTO
+8,16,AUTO
+8,32,AUTO

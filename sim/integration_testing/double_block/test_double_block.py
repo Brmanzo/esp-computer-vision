@@ -3,7 +3,8 @@ import os
 from   pathlib import Path
 import pytest
 
-from util.utilities  import runner, clock_start_sequence, reset_sequence, auto_unpack, load_tests_from_csv, inject_weights_and_biases
+from util.utilities  import runner, clock_start_sequence, reset_sequence, \
+                            sim_verbose, auto_unpack, load_tests_from_csv, inject_weights_and_biases
 from util.bitwise    import unpack_kernel_weights, pack_terms, unpack_biases
 from util.gen_inputs import gen_kernels, gen_input_channels, gen_biases
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
@@ -115,7 +116,8 @@ class DoubleBlockModel:
                 
             exp = int(expected[ch])
 
-            print(f"Integrated Output #{check_idx} (r={check_r}, c={check_c}) ch{ch}: expected {exp}, got {got}")
+            if sim_verbose():
+                print(f"Integrated Output #{check_idx} (r={check_r}, c={check_c}) ch{ch}: expected {exp}, got {got}")
 
             assert got == exp, (
                 f"Mismatch at Integrated Output #{check_idx} (r={check_r}, c={check_c}) ch{ch}: expected {exp}, got {got}"
@@ -191,7 +193,6 @@ class RandomDataGenerator:
 @cocotb.test
 async def reset_test(dut):
     """Test for Initialization"""
-    print("DUT objects:", dir(dut))
     clk_i = dut.clk_i
     rst_i = dut.rst_i
     await clock_start_sequence(clk_i)
@@ -452,7 +453,8 @@ async def rate_tests(dut, in_rate, out_rate):
         )
 
         assert np.allclose(output_activation, final_ref.numpy()), "Output activation does not match..."
-        print("Test passed! PyTorch matches double integrated model.")
+        if sim_verbose():
+            print("Test passed! PyTorch matches double integrated model.")
 
     except SimTimeoutError:
         assert 0, f"Timed out. Expected {l_out} handshakes. Got {om.nproduced()}"

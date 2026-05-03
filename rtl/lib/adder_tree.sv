@@ -25,7 +25,10 @@ module adder_tree #(
 
     // Initialize addends at leaves
     for (int i = 0; i < AddendCount; i++) begin
-      tree[0][i] = acc_t'(addends_i[i]);
+      if (InBits == 1)
+        tree[0][i] = (|addends_i[i]) ? acc_t'(1) : acc_t'(-1); // Map {0,1} -> {-1,+1}
+      else
+        tree[0][i] = acc_t'(addends_i[i]);
     end
 
     // Each successive level of the tree sums pairs of elements from the previous level,

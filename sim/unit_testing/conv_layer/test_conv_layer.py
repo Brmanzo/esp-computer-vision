@@ -4,7 +4,9 @@ import os
 from   pathlib import Path
 import pytest
 
-from util.utilities  import inject_weights_and_biases, runner, lint, clock_start_sequence, reset_sequence
+from util.utilities  import inject_weights_and_biases, runner, lint, \
+                            sim_verbose, clock_start_sequence, reset_sequence, \
+                            load_tests_from_csv, auto_unpack
 from util.bitwise    import unpack_kernel_weights, unpack_biases
 from util.gen_inputs import gen_kernels, gen_biases
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
@@ -29,51 +31,61 @@ tests = ['reset_test'
         ,'out_fuzz_test'
         ,'full_bw_test']
 
+# Format: ("Target_Var", "CSV_Column", lambda <parsed_keys_needed>: func(...))
+auto_rules = [
+    ("OutBits", "OutBits", lambda InBits, WeightBits, KernelWidth, InChannels, BiasBits: output_width(InBits, WeightBits, KernelWidth, InChannels, BiasBits))
+]
+
+# Format: ("Target_Var", lambda <parsed_keys_needed>: func(...))
+gen_rules = [
+    ("Weights", lambda WeightBits, OutChannels, InChannels, KernelWidth: gen_kernels(WeightBits, OutChannels, InChannels, KernelWidth, seed=1234)),
+    ("Biases",  lambda BiasBits, OutChannels: gen_biases(BiasBits, OutChannels, seed=1234))
+]
+
+TEST_CASES_WIDTH = load_tests_from_csv(os.path.join(tbpath, "test_cases_width.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("InBits, WeightBits, BiasBits, OutBits, KernelWidth, InChannels, OutChannels, Weights, Biases", 
-                         [(1, 2, 8,                        1, 2, 1, 1, gen_kernels(2, 1, 1, 2, seed=1234), gen_biases(8, 1, seed=1234)),
-                          (2, 2, 8, output_width(2, 2, 2, 1), 2, 1, 1, gen_kernels(2, 1, 1, 2, seed=1234), gen_biases(8, 1, seed=1234)),
-                          (2, 2, 8, output_width(2, 2, 5, 1), 5, 1, 1, gen_kernels(2, 1, 1, 5, seed=1234), gen_biases(8, 1, seed=1234)),
-                          (2, 3, 8, output_width(2, 3, 3, 1), 3, 1, 1, gen_kernels(3, 1, 1, 3, seed=1234), gen_biases(8, 1, seed=1234)), # Unsigned data_i
-                          (4, 5, 8, output_width(4, 5, 3, 1), 3, 1, 1, gen_kernels(5, 1, 1, 3, seed=1234), gen_biases(8, 1, seed=1234)),
-                          (8, 8, 8, output_width(8, 8, 3, 1), 3, 1, 1, gen_kernels(8, 1, 1, 3, seed=1234), gen_biases(8, 1, seed=1234)),
-                          ])
-def test_width(test_name, simulator, InBits, WeightBits, BiasBits, OutBits, KernelWidth, InChannels, OutChannels, Weights, Biases):
+@auto_unpack(TEST_CASES_WIDTH)
+def test_width(test_name, simulator,
+               InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
+               LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding):
     parameters = dict(locals())
+    parameters.pop("Weights", None)
+    parameters.pop("Biases", None)
     param_str = f"InBits_{InBits}_WeightBits_{WeightBits}_OutBits_{OutBits}_test_{test_name}"
-    total_weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
-    total_bias_bits   = OutChannels * BiasBits
+    
+    weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
+    bias_bits   = OutChannels * BiasBits
 
     custom_work_dir = inject_weights_and_biases(
         simulator=simulator, parameters=parameters, param_str=param_str, 
         tbpath=tbpath, test_class="width", Weights=Weights, Biases=Biases, 
-        weight_bits=total_weight_bits, bias_bits=total_bias_bits)
+        weight_bits=weight_bits, bias_bits=bias_bits)
 
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 
         testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
         toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")]
     )
+TEST_CASES_STRIDE = load_tests_from_csv(os.path.join(tbpath, "test_cases_stride.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("OutBits, KernelWidth, Stride, LineWidthPx, LineCountPx, Weights, Biases", 
-                         [(output_width(1, 2, 2, 1), 2, 2, 16, 12, gen_kernels(2, 1, 1, 2, seed=1234), gen_biases(8, 1, seed=1234)),
-                          (output_width(1, 2, 4, 1), 4, 4, 16, 12, gen_kernels(2, 1, 1, 4, seed=1234), gen_biases(8, 1, seed=1234)),
-                          (output_width(1, 2, 5, 1), 5, 2, 17, 13, gen_kernels(2, 1, 1, 5, seed=1234), gen_biases(8, 1, seed=1234))
-                          ])
-def test_stride(test_name, simulator, OutBits, KernelWidth, Stride, LineWidthPx, LineCountPx, Weights, Biases):
+@auto_unpack(TEST_CASES_STRIDE)
+def test_stride(test_name, simulator,
+                InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
+                LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding):
     parameters = dict(locals())
+    parameters.pop("Weights", None)
+    parameters.pop("Biases", None)
     param_str = f"KW_{KernelWidth}_S_{Stride}_test_{test_name}"
 
-    WeightBits, InChannels, OutChannels, BiasBits = 2, 1, 1, 8
-    total_weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
-    total_bias_bits   = OutChannels * BiasBits
+    weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
+    bias_bits   = OutChannels * BiasBits
 
     custom_work_dir = inject_weights_and_biases(
         simulator=simulator, parameters=parameters, param_str=param_str, 
         tbpath=tbpath, test_class="stride", Weights=Weights, Biases=Biases, 
-        weight_bits=total_weight_bits, bias_bits=total_bias_bits)
+        weight_bits=weight_bits, bias_bits=bias_bits)
     
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 
@@ -81,50 +93,50 @@ def test_stride(test_name, simulator, OutBits, KernelWidth, Stride, LineWidthPx,
         toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")]
     )
 
+TEST_CASES_PADDING = load_tests_from_csv(os.path.join(tbpath, "test_cases_padding.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("OutBits, KernelWidth, Padding, LineWidthPx, LineCountPx, Weights, Biases", 
-                         [(output_width(1, 2, 3, 1), 3, 1, 16, 12, gen_kernels(2, 1, 1, 3, seed=1234), gen_biases(8, 1, seed=1234)),
-                          (output_width(1, 2, 5, 1), 5, 2, 16, 12, gen_kernels(2, 1, 1, 5, seed=1234), gen_biases(8, 1, seed=1234)),
-                          ])
-def test_padding(test_name, simulator, OutBits, KernelWidth, Padding, LineWidthPx, LineCountPx, Weights, Biases):
+@auto_unpack(TEST_CASES_PADDING)
+def test_padding(test_name, simulator,
+                InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
+                LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding):
     parameters = dict(locals())
+    parameters.pop("Weights", None)
+    parameters.pop("Biases", None)
     param_str = f"KW_{KernelWidth}_P_{Padding}_test_{test_name}"
 
-    WeightBits, InChannels, OutChannels, BiasBits = 2, 1, 1, 8
-    total_weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
-    total_bias_bits = OutChannels * BiasBits
+    weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
+    bias_bits   = OutChannels * BiasBits
 
     custom_work_dir = inject_weights_and_biases(
         simulator=simulator, parameters=parameters, param_str=param_str, 
         tbpath=tbpath, test_class="padding", Weights=Weights, Biases=Biases, 
-        weight_bits=total_weight_bits, bias_bits=total_bias_bits)
+        weight_bits=weight_bits, bias_bits=bias_bits)
     
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 
         testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
         toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")]
     )
-
+TEST_CASES_CHANNELS = load_tests_from_csv(os.path.join(tbpath, "test_cases_channels.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("InBits, WeightBits, BiasBits, KernelWidth, OutBits, InChannels, OutChannels, Weights, Biases", 
-                         [(1, 2, 8, 3, 1, 16, 8, gen_kernels(2, 8, 16, 3, seed=1234), gen_biases(8, 8, seed=1234)),
-                          (1, 2, 8, 3, 1, 17, 8, gen_kernels(2, 8, 17, 3, seed=1234), gen_biases(8, 8, seed=1234)),
-                          (1, 2, 8, 3, 1,  8, 8, gen_kernels(2, 8, 8, 3, seed=1234), gen_biases(8, 8, seed=1234)),
-                          (4, 5, 8, 3, output_width(4, 5, 3, 4), 4, 5, gen_kernels(5, 5, 4, 3, seed=1234), gen_biases(8, 5, seed=1234))
-                          ])
-def test_channels(test_name, simulator, InBits, WeightBits, BiasBits, KernelWidth, OutBits, InChannels, OutChannels, Weights, Biases):
+@auto_unpack(TEST_CASES_CHANNELS)
+def test_channels(test_name, simulator,
+                InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
+                LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding):
     parameters = dict(locals())
+    parameters.pop("Weights", None)
+    parameters.pop("Biases", None)
     param_str = f"IC_{InChannels}_OC_{OutChannels}_test_{test_name}"
 
-    total_weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
-    total_bias_bits = OutChannels * BiasBits
+    weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
+    bias_bits   = OutChannels * BiasBits
    
     custom_work_dir = inject_weights_and_biases(
         simulator=simulator, parameters=parameters, param_str=param_str, 
         tbpath=tbpath, test_class="channels", Weights=Weights, Biases=Biases, 
-        weight_bits=total_weight_bits, bias_bits=total_bias_bits)
+        weight_bits=weight_bits, bias_bits=bias_bits)
 
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 
@@ -151,7 +163,6 @@ def test_style(simulator, LineWidthPx, InBits, OutBits):
 @cocotb.test
 async def reset_test(dut):
     """Test for Initialization"""
-    print("DUT objects:", dir(dut))
     clk_i = dut.clk_i
     rst_i = dut.rst_i
     await clock_start_sequence(clk_i)
@@ -168,6 +179,7 @@ async def single_test(dut):
     BW = int(dut.BiasBits.value)
     WW = int(dut.WeightBits.value)
     P  = int(dut.Padding.value)
+    S  = int(dut.Stride.value)
 
     # Calculate how many full rows of REAL data are consumed before the output row
     real_rows_before_out = max(0, (K - 1) - P)
@@ -183,10 +195,10 @@ async def single_test(dut):
 
     rate = 1
 
-    packed_weights = int(os.environ["INJECTED_WEIGHTS_INT"])
+    packed_weights = int(os.environ["INJECTED_WEIGHTS_0_INT"])
     kernels_4d = unpack_kernel_weights(packed_weights, WW, OC, IC, K)
 
-    packed_biases = int(os.environ.get("INJECTED_BIASES_INT", "0"))
+    packed_biases = int(os.environ.get("INJECTED_BIASES_0_INT", "0"))
     biases_2d = unpack_biases(packed_biases, BW, OC)
     
     model = ConvLayerModel(dut, weights=kernels_4d, biases=biases_2d)
@@ -256,8 +268,8 @@ async def rate_tests(dut, in_rate, out_rate):
     first_out_wait_ns = int((2 * (K - 1) * W + 2 * (K - 1) + 200) / slow)
     timeout_ns        = int((H_out * N_in + 500) / slow)
 
-    packed_weights = int(os.environ["INJECTED_WEIGHTS_INT"])
-    packed_biases  = int(os.environ.get("INJECTED_BIASES_INT", "0"))
+    packed_weights = int(os.environ["INJECTED_WEIGHTS_0_INT"])
+    packed_biases  = int(os.environ.get("INJECTED_BIASES_0_INT", "0"))
 
     kernels_4d = unpack_kernel_weights(packed_weights, WW, OC, IC, K)
     biases_2d  = unpack_biases(packed_biases, BW, OC)
@@ -294,24 +306,25 @@ async def rate_tests(dut, in_rate, out_rate):
     try:
         await om.wait(timeout_ns)
         # --- Print input ---
-        for ic in range(IC):
-            print(f"\nInput Activation for IC{ic}")
-            for r in range(H):
-                print(" ".join(f"{input_activation[ic][r][c]:2d}" for c in range(W)))
-
-        # --- Print kernels ---
-        for oc in range(OC):
-            print(f"\nKernel for OC{oc}")
+        if sim_verbose():
             for ic in range(IC):
-                print(f"  IC{ic}")
-                for r in range(K):
-                    print(" ".join(f"{kernels_4d[oc][ic][r][c]:4d}" for c in range(K)))
+                print(f"\nInput Activation for IC{ic}")
+                for r in range(H):
+                    print(" ".join(f"{input_activation[ic][r][c]:2d}" for c in range(W)))
 
-        # --- Print DUT-captured output (make sure output_activation is H_out x W_out) ---
-        for oc in range(OC):
-            print(f"\nOutput Activation (DUT) for OC{oc}")
-            for r in range(H_out):
-                print(" ".join(f"{output_activation[oc][r][c]:4d}" for c in range(W_out)))
+            # --- Print kernels ---
+            for oc in range(OC):
+                print(f"\nKernel for OC{oc}")
+                for ic in range(IC):
+                    print(f"  IC{ic}")
+                    for r in range(K):
+                        print(" ".join(f"{kernels_4d[oc][ic][r][c]:4d}" for c in range(K)))
+
+            # --- Print DUT-captured output (make sure output_activation is H_out x W_out) ---
+            for oc in range(OC):
+                print(f"\nOutput Activation (DUT) for OC{oc}")
+                for r in range(H_out):
+                    print(" ".join(f"{output_activation[oc][r][c]:4d}" for c in range(W_out)))
 
         # Verify against PyTorch reference convolution
         ref = torch_conv_ref(
@@ -323,11 +336,13 @@ async def rate_tests(dut, in_rate, out_rate):
             padding=int(dut.Padding.value),
             biases=biases_2d
         )
-    
-        for oc in range(OC):
-            print(f"\nExpected (PyTorch) for OC{oc}")
-            for r in range(H_out):
-                print(" ".join(f"{int(ref[oc, r, c]):4d}" for c in range(W_out)))
+        
+        if sim_verbose():
+            for oc in range(OC):
+                print(f"\nExpected (PyTorch) for OC{oc}")
+                for r in range(H_out):
+                    print(" ".join(f"{int(ref[oc, r, c]):4d}" for c in range(W_out)))
+
         assert np.allclose(output_activation, ref.int().numpy()), "Output activation does not match PyTorch reference"
     except SimTimeoutError:
         assert 0, (

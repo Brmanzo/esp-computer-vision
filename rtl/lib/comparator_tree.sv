@@ -21,27 +21,38 @@ module comparator_tree #(
   id_t id   [TreeLevels:0][TreeWidth-1:0];
 
   always_comb begin
-    // Initialize Tree as Minimum values, and IDs as 0s
+    // Initialize Tree: min signed for multi-bit, '0 (min unsigned) for 1-bit
     for (int level = 0; level <= TreeLevels; level++) begin
       for (int idx = 0; idx < TreeWidth; idx++) begin
-        tree[level][idx] = {1'b1, {(OutBits-1){1'b0}}};
+        tree[level][idx] = (InBits == 1) ? '0 : {1'b1, {(OutBits-1){1'b0}}};
         id[level][idx]   = '0;
       end
     end
 
-    // Initialize classes at leaves
+    // Initialize classes at leaves (no re-encoding; Python model uses raw values)
     for (int i = 0; i < ClassCount; i++) begin
       tree[0][i] = comp_t'(classes_i[i]);
-      id[0][i]   = id_t'(i); // Store original index
+      id[0][i]   = id_t'(i);
     end
 
-    // Each successive level of the tree compares pairs of elements from the previous level,
-    // effectively halving the number of elements at each level until only one maximum remains at the root
+    // Each successive level compares pairs; for 1-bit use unsigned bit[0] comparison
+    // to correctly order {0,1} (0 < 1 unsigned) instead of {0,-1} (signed 1-bit)
     for (int level = 0; level < TreeLevels; level++) begin
       for (int j = 0; j < TreeWidth; j++) begin
         if (j < (TreeWidth >> (level + 1))) begin
-          tree[level+1][j] = tree[level][2*j] >= tree[level][2*j+1] ? tree[level][2*j] : tree[level][2*j+1];
-          id[level+1][j]   = tree[level][2*j] >= tree[level][2*j+1] ? id[level][2*j] : id[level][2*j+1];
+          if (InBits == 1) begin
+            // Unsigned 1-bit: bit=1 beats bit=0; left wins on tie (>=)
+            if (tree[level][2*j][0] >= tree[level][2*j+1][0]) begin
+              tree[level+1][j] = tree[level][2*j];
+              id[level+1][j]   = id[level][2*j];
+            end else begin
+              tree[level+1][j] = tree[level][2*j+1];
+              id[level+1][j]   = id[level][2*j+1];
+            end
+          end else begin
+            tree[level+1][j] = tree[level][2*j] >= tree[level][2*j+1] ? tree[level][2*j] : tree[level][2*j+1];
+            id[level+1][j]   = tree[level][2*j] >= tree[level][2*j+1] ? id[level][2*j] : id[level][2*j+1];
+          end
         end
       end
     end

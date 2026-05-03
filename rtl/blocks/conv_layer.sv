@@ -25,8 +25,10 @@ module conv_layer #(
 
   ,parameter int unsigned Padding = 0
 
-  ,localparam int XBits = (LineWidthPx <= 1) ? 1 : $clog2(LineWidthPx + 2 * Padding + 1)
-  ,localparam int YBits = (LineCountPx <= 1) ? 1 : $clog2(LineCountPx + 2 * Padding + 1)
+  ,localparam int unsigned PaddedWidth  = LineWidthPx + (2 * Padding)
+  ,localparam int unsigned PaddedHeight = LineCountPx + (2 * Padding)
+  ,localparam int XBits = (LineWidthPx <= 1) ? 1 : $clog2(PaddedWidth + 1)
+  ,localparam int YBits = (LineCountPx <= 1) ? 1 : $clog2(PaddedHeight + 1)
 
   ,localparam int unsigned WeightIndex = InChannels * KernelArea * WeightBits
   ,parameter logic signed [OutChannels*WeightIndex-1:0] Weights = '0
@@ -158,7 +160,6 @@ module conv_layer #(
   /* --------------------------------------- Input Channel Logic --------------------------------------- */
   // Vertically partition channels and row buffers for each channel within RAM
   logic signed [InChannels-1:0][KernelWidth-1:0][InBits-1:0] row_buffers;
-  logic signed [InChannels-1:0][KernelWidth-1:1][InBits-1:0] row_buffer_taps;
   logic signed [InChannels-1:0][InBits-1:0] padded_data_i;
 
   generate
@@ -167,27 +168,34 @@ module conv_layer #(
               data_i[ch]
           );  // If padding, input 0, else input data
       assign row_buffers[ch][0] = padded_data_i[ch];  // Row buffer 0 is current data input
-      assign row_buffers[ch][KernelWidth-1:1] = row_buffer_taps[ch];
+    end
+
+    // Only buffer if kernel exceeds 1x1, (if so row_buffers is simply data_i)
+    if (KernelWidth > 1) begin : gen_delay_ram
+      logic signed [InChannels-1:0][KernelWidth-1:1][InBits-1:0] row_buffer_taps;
+
+      for (genvar ch = 0; ch < InChannels; ch++) begin : gen_data_input_taps
+        assign row_buffers[ch][KernelWidth-1:1] = row_buffer_taps[ch];
+      end
+
+      /* ---------------------------------- Buffer Generation Logic----------------------- */
+      // Maps the input channel delay buffers to IceStorm's 30 4kB block RAMs
+      multi_delay_ram #(
+            .BufferCount   (BufferCount)
+          , .ChannelsPerRam(ChannelsPerRam)
+          , .InBits        (InBits)
+          , .InChannels    (InChannels)
+          , .KernelWidth   (KernelWidth)
+          , .LineWidthPx   (PaddedWidth)  // Account for padding in line width
+      ) multi_delay_ram_inst (
+            .clk_i  (clk_i)
+          , .rst_i  (rst_i)
+          , .in_fire(in_fire)
+          , .data_i (padded_data_i)
+          , .data_o (row_buffer_taps)  // Row buffers >= 1 read from delay buffer
+      );
     end
   endgenerate
-
-  /* ---------------------------------- Buffer Generation Logic----------------------- */
-  // Maps the input channel delay buffers to IceStorm's 30 4kB block RAMs
-
-  multi_delay_ram #(
-        .BufferCount   (BufferCount)
-      , .ChannelsPerRam(ChannelsPerRam)
-      , .InBits        (InBits)
-      , .InChannels    (InChannels)
-      , .KernelWidth   (KernelWidth)
-      , .LineWidthPx   (LineWidthPx + 2 * Padding)  // Account for padding in line width
-  ) multi_delay_ram_inst (
-        .clk_i  (clk_i)
-      , .rst_i  (rst_i)
-      , .in_fire(in_fire)
-      , .data_i (padded_data_i)
-      , .data_o (row_buffer_taps)  // Row buffers >= 1 read from delay buffer
-  );
 
   /* ------------------------------------ Window Generation Logic ------------------------------------ */
   // Every input channel is represented within its own matrix and passed to every filter

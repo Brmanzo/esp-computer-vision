@@ -1,10 +1,13 @@
 # test_linear_layer.py
+# Bradley Manzo 2026
+
 import os
 from   pathlib import Path
 import pytest
 import shutil
 
-from util.utilities  import runner, lint, clock_start_sequence, reset_sequence
+from util.utilities  import runner, lint, clock_start_sequence, reset_sequence, \
+                            inject_weights_and_biases, load_tests_from_csv, auto_unpack
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from util.bitwise    import unpack_weights, unpack_biases
 from util.gen_inputs import gen_weights, gen_biases
@@ -29,54 +32,39 @@ tests = ['reset_test'
         ,'out_fuzz_test'
         ,'full_bw_test']
 
+# Format: ("Target_Var", "CSV_Column", lambda <parsed_keys_needed>: func(...))
+auto_rules = [
+    ("OutBits", "OutBits", lambda InBits, WeightBits, BiasBits, InChannels: output_width(InBits, WeightBits, BiasBits, InChannels))]
+
+# Format: ("Target_Var", lambda <parsed_keys_needed>: func(...))
+gen_rules = [
+    ("Weights", lambda WeightBits, OutChannels, InChannels: gen_weights(WeightBits, OutChannels, InChannels, seed=1234)),
+    ("Biases",  lambda BiasBits, OutChannels: gen_biases(BiasBits, OutChannels, seed=1234))
+]
+
+TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases_width.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize(
-    "InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases",
-    [
-        (1, 2, 1, output_width(1, 2, 1), 1, gen_weights(2, 1, 1, seed=1234), 2, gen_biases(2, 1)),
-        (2, 3, 1, output_width(2, 3, 1), 1, gen_weights(3, 1, 1, seed=1234), 3, gen_biases(3, 1)),
-        (4, 5, 1, output_width(4, 5, 1), 1, gen_weights(5, 1, 1, seed=1234), 5 ,gen_biases(5 ,1)),
-        (8, 8 ,1 ,output_width(8 ,8 ,1) ,1 ,gen_weights(8 ,1 ,1 ,seed=1234) ,8 ,gen_biases(8 ,1)),
-    ],
-)
-def test_width(test_name, simulator, InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases):
+@auto_unpack(TEST_CASES)
+def test_width(test_name, simulator,
+               InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases):
     parameters = dict(locals())
-    del parameters["test_name"]
-    del parameters["simulator"]
+    parameters.pop("test_name", None)
+    parameters.pop("simulator", None)
+    param_str = f"InBits_{InBits}_WeightBits_{WeightBits}_OutBits_{OutBits}_BiasBits_{BiasBits}_test_{test_name}"
+
 
     # Remove injected params so cocotb-runner doesn't pass them on CLI
-    del parameters["Weights"]
-    del parameters["Biases"]
+    parameters.pop("Weights", None)
+    parameters.pop("Biases", None)
 
-    param_str = f"InBits_{InBits}_WeightBits_{WeightBits}_OutBits_{OutBits}_BiasBits_{BiasBits}_test_{test_name}"
-    custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
-    if simulator.startswith("icarus") and os.path.exists(custom_work_dir):
-        shutil.rmtree(custom_work_dir)
-    os.makedirs(custom_work_dir, exist_ok=True)
+    weight_bits = int(OutChannels) * int(InChannels) * int(WeightBits)
+    bias_bits   = int(OutChannels) * int(BiasBits)
 
-    # ---- Emit injected_weights.vh ----
-    total_bits_w = int(OutChannels) * int(InChannels) * int(WeightBits)
-    vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
-    with open(vh_path, "w") as f:
-        hex_width = (total_bits_w + 3) // 4
-        f.write(
-            f"localparam logic signed [{total_bits_w-1}:0] INJECTED_WEIGHTS = "
-            f"{total_bits_w}'h{Weights:0{hex_width}x};\n"
-        )
-
-    total_bits_b = int(OutChannels) * int(BiasBits)
-    vhb_path = os.path.join(custom_work_dir, "injected_biases.vh")
-    with open(vhb_path, "w") as f:
-        hex_width = (total_bits_b + 3) // 4
-        f.write(
-            f"localparam logic signed [{total_bits_b-1}:0] INJECTED_BIASES = "
-            f"{total_bits_b}'h{Biases:0{hex_width}x};\n"
-        )
-
-    # ---- Pass big ints via env vars for cocotb ----
-    os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
-    os.environ["INJECTED_BIASES_INT"]  = str(Biases)
+    custom_work_dir = inject_weights_and_biases(
+        simulator=simulator, parameters=parameters, param_str=param_str, 
+        tbpath=tbpath, test_class="each", Weights=Weights, Biases=Biases, 
+        weight_bits=weight_bits, bias_bits=bias_bits, layer=0)  
 
     wrapper_path = os.path.join(tbpath, "tb_linear_layer.sv")
 
@@ -92,67 +80,32 @@ def test_width(test_name, simulator, InBits, WeightBits, InChannels, OutBits, Ou
         extra_sources=[wrapper_path],
     )
 
+TEST_CASES_CHANNELS = load_tests_from_csv(os.path.join(tbpath, "test_cases_channels.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize(
-    "InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases",
-    [
-        (1, 2,  2, output_width(1, 2, 1),    1, gen_weights(2,  1,  1, seed=1234), 2, gen_biases(2, 1)),
-        (2, 3,  2, output_width(2, 3, 2),    2, gen_weights(3,  2,  2, seed=1234), 3, gen_biases(3, 2)),
-        (4, 5,  4, output_width(4, 5, 4),    4, gen_weights(5,  4,  4, seed=1234), 5, gen_biases(5, 4)),
-        (8, 8, 32, output_width(8, 8, 32),  32, gen_weights(8, 32, 32, seed=1234), 8, gen_biases(8, 32)),
-    ],
-)
-def test_channels(test_name, simulator, InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases):
+@auto_unpack(TEST_CASES_CHANNELS)
+def test_channels(test_name, simulator,
+                  InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases):
     parameters = dict(locals())
-    del parameters["test_name"]
-    del parameters["simulator"]
-
-    # Remove injected params so cocotb-runner doesn't pass them on CLI
-    del parameters["Weights"]
-    del parameters["Biases"]
+    parameters.pop("test_name", None)
+    parameters.pop("simulator", None)
+    parameters.pop("Weights", None)
+    parameters.pop("Biases", None)
 
     param_str = f"InChannels_{InChannels}_OutChannels_{OutChannels}_test_{test_name}"
-    custom_work_dir = os.path.join(tbpath, "run", "channels", param_str, simulator)
-    if simulator.startswith("icarus") and os.path.exists(custom_work_dir):
-        shutil.rmtree(custom_work_dir)
-    os.makedirs(custom_work_dir, exist_ok=True)
+    weight_bits = int(OutChannels) * int(InChannels) * int(WeightBits)
+    bias_bits   = int(OutChannels) * int(BiasBits)
 
-    # ---- Emit injected_weights.vh ----
-    total_bits_w = int(OutChannels) * int(InChannels) * int(WeightBits)
-    vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
-    with open(vh_path, "w") as f:
-        hex_width = (total_bits_w + 3) // 4
-        f.write(
-            f"localparam logic signed [{total_bits_w-1}:0] INJECTED_WEIGHTS = "
-            f"{total_bits_w}'h{Weights:0{hex_width}x};\n"
-        )
-
-    total_bits_b = int(OutChannels) * int(BiasBits)
-    vhb_path = os.path.join(custom_work_dir, "injected_biases.vh")
-    with open(vhb_path, "w") as f:
-        hex_width = (total_bits_b + 3) // 4
-        f.write(
-            f"localparam logic signed [{total_bits_b-1}:0] INJECTED_BIASES = "
-            f"{total_bits_b}'h{Biases:0{hex_width}x};\n"
-        )
-
-    # ---- Pass big ints via env vars for cocotb ----
-    os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
-    os.environ["INJECTED_BIASES_INT"]  = str(Biases)
+    custom_work_dir = inject_weights_and_biases(
+        simulator=simulator, parameters=parameters, param_str=param_str,
+        tbpath=tbpath, test_class="channels", Weights=Weights, Biases=Biases,
+        weight_bits=weight_bits, bias_bits=bias_bits, layer=0)
 
     wrapper_path = os.path.join(tbpath, "tb_linear_layer.sv")
-
     runner(
-        simulator=simulator,
-        timescale=timescale,
-        tbpath=tbpath,
-        params=parameters,
-        testname=test_name,
-        work_dir=custom_work_dir,
-        includes=[custom_work_dir],        # so injected_*.vh can be `included
-        toplevel_override="tb_linear_layer",
-        extra_sources=[wrapper_path],
+        simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters,
+        testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
+        toplevel_override="tb_linear_layer", extra_sources=[wrapper_path],
     )
 
 @pytest.mark.parametrize("simulator", ["verilator"])
@@ -174,7 +127,6 @@ def test_style(simulator, InBits, WeightBits, InChannels, OutBits, OutChannels, 
 @cocotb.test
 async def reset_test(dut):
     """Test for Initialization"""
-    print("DUT objects:", dir(dut))
     clk_i = dut.clk_i
     rst_i = dut.rst_i
     await clock_start_sequence(clk_i)
@@ -195,8 +147,8 @@ async def single_test(dut):
     rate  = 1.0
 
     # ---- Unpack injected weights (and biases) ----
-    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_INT"]), WW, OC, IC)
-    biases_1d = unpack_biases(int(os.environ["INJECTED_BIASES_INT"]), BW, OC)
+    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_0_INT"]), WW, OC, IC)
+    biases_1d = unpack_biases(int(os.environ["INJECTED_BIASES_0_INT"]), BW, OC)
     
     # Instantiate PyTorch reference model
     linear = torch_linear_ref(weights_2d, biases_1d, IC, OC)
@@ -256,8 +208,8 @@ async def rate_tests(dut, in_rate: float, out_rate: float, N_vec: int = 200):
     N_out = int(N_vec)
 
     # --- Unpack injected weights ---
-    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_INT"]), WW, OC, IC)
-    biases_1d  = unpack_biases(int(os.environ["INJECTED_BIASES_INT"]), BW, OC)
+    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_0_INT"]), WW, OC, IC)
+    biases_1d  = unpack_biases(int(os.environ["INJECTED_BIASES_0_INT"]), BW, OC)
 
     # Instantiate PyTorch reference model
     linear = torch_linear_ref(weights_2d, biases_1d, IC, OC)

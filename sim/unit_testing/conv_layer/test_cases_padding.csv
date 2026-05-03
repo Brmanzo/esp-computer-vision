@@ -1,0 +1,4 @@
+InBits,WeightBits,OutBits,KernelWidth,LineWidthPx,LineCountPx,InChannels,OutChannels,BiasBits,Stride,Padding
+1,2,AUTO,3,16,12,1,1,8,1,0
+1,2,AUTO,3,16,12,1,1,8,1,1
+1,2,AUTO,5,16,12,1,1,8,1,2

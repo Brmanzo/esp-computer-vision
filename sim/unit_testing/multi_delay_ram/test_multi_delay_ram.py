@@ -1,9 +1,11 @@
 # test_multi_delay_ram.py
+import os
 from   pathlib import Path
 import pytest
 import queue
 
-from util.utilities import runner, lint, clock_start_sequence, reset_sequence
+from util.utilities import runner, lint, clock_start_sequence, reset_sequence, \
+                           sim_verbose, load_tests_from_csv, auto_unpack 
 from functional_models.multi_delay_buffer import MultiDelayBufferModel
 from util.bitwise import pack_terms
 from util.gen_inputs import gen_input_channels
@@ -37,34 +39,29 @@ def buffer_count(InBits: int, LineWidthPx: int, KernelWidth: int, InChannels: in
     ChannelsPerRam = int(channels_per_ram(InBits, LineWidthPx, KernelWidth))
     return str((InChannels + ChannelsPerRam - 1) // ChannelsPerRam)
 
+auto_rules = [
+    ("ChannelsPerRam", "ChannelsPerRam", lambda InBits, LineWidthPx, KernelWidth: channels_per_ram(InBits, LineWidthPx, KernelWidth)),
+    ("BufferCount",    "BufferCount",    lambda InBits, LineWidthPx, KernelWidth, InChannels: buffer_count(InBits, LineWidthPx, KernelWidth, InChannels))
+]
+TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), auto_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("InBits, LineWidthPx, KernelWidth, ChannelsPerRam, InChannels, BufferCount", 
-                         [("4", "258",  "3", channels_per_ram(4, 258, 3),  "1", buffer_count(4, 258, 3, 1))
-                         ,("1", "258",  "9", channels_per_ram(1, 258, 9),  "1", buffer_count(1, 258, 9, 1))
-                         ,("1", "258",  "3", channels_per_ram(1, 258, 3),  "4", buffer_count(1, 258, 3, 4))
-                         ,("8", "257",  "3", channels_per_ram(8, 257, 3),  "1", buffer_count(8, 257, 3, 1))
-                         ,("1", "257", "17", channels_per_ram(1, 257, 17), "1", buffer_count(1, 257, 17, 1))
-                         ,("1", "257",  "3", channels_per_ram(1, 257, 3),  "8", buffer_count(1, 257, 3, 8))
-                         ,("1", "260",  "3", channels_per_ram(1, 260, 3),  "32", buffer_count(1, 260, 3, 32))
-                         ,("4", "258",  "3", channels_per_ram(4, 258, 3),  "2", buffer_count(4, 258, 3, 2))])
+@auto_unpack(TEST_CASES)
 def test_each(test_name, simulator, InBits, LineWidthPx, KernelWidth, ChannelsPerRam, InChannels, BufferCount):
     # This line must be first
     parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
+    parameters.pop('test_name', None)
+    parameters.pop('simulator', None)
     runner(simulator, timescale, tbpath, parameters, testname=test_name)
 
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("InBits, LineWidthPx, KernelWidth, ChannelsPerRam, InChannels, BufferCount", 
-                         [("1", "8", "2", channels_per_ram(1, 8, 2), "1", buffer_count(1, 8, 2, 1))
-                         ])
+@auto_unpack(TEST_CASES)
 def test_all(simulator, InBits, LineWidthPx, KernelWidth, ChannelsPerRam, InChannels, BufferCount):
     # This line must be first
     parameters = dict(locals())
-    del parameters['simulator']
+    parameters.pop('simulator', None)   
     runner(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
@@ -140,7 +137,8 @@ class MultiDelayRamModel():
         got_packed = int(val)
         got = unpack_data_o_top(self._InBits, self._KernelWidth, self._InChannels, got_packed)
         
-        # print(f"OutputModel Check: got={got} expected={expected_words}")
+        if sim_verbose():
+            print(f"OutputModel Check: got={got} expected={expected_words}")
         assert got == expected_words, f"Mismatch: got={got} expected={expected_words}"
 
     # --- Your Existing Helpers ---

@@ -1,16 +1,17 @@
 # test_skid_buffer.py
-from   decimal import Decimal
+import os
 from   pathlib import Path
 import pytest
 
-from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence
+from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, \
+                           sim_verbose, reset_sequence, load_tests_from_csv, auto_unpack
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from util.gen_inputs import gen_random_unsigned
 tbpath = Path(__file__).parent
 
 import cocotb  
 from   cocotb.utils import get_sim_time
-from   cocotb.triggers import Timer,  RisingEdge, FallingEdge
+from   cocotb.triggers import Decimal, Timer,  RisingEdge, FallingEdge
 from   cocotb.result import SimTimeoutError
    
 import random
@@ -27,14 +28,15 @@ tests = ['reset_test'
          ,'fill_empty_test'
          ]
 
+TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"))
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("Width, Depth, HeadRoom", [(8, 16, 4), (8, 32, 8)])  
+@auto_unpack(TEST_CASES)
 def test_each(simulator, test_name, Width, Depth, HeadRoom):
     # retrieves simulators from simulator pytest param
     parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
+    parameters.pop('test_name', None)
+    parameters.pop('simulator', None)
     runner(simulator, timescale, tbpath, parameters, testname=test_name)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
@@ -120,7 +122,8 @@ class SkidBufModel():
             thresh = self._Depth - self._HeadRoom
             exp_hw = 1 if occ_hw >= thresh else 0
             got = int(self._dut.rts_o.value)
-            
+            if sim_verbose():
+                print(f"RTS Check: Expected {exp_hw}, Got {got}")
             assert got == exp_hw, (
                 f"rts mismatch @ {get_sim_time('ns')}ns: "
                 f"occ_model={self._occupancy} occ_hw={occ_hw} "

@@ -3,15 +3,15 @@
 
 `timescale 1ns / 1ps
 module framer #(
-   parameter int unsigned  UnpackedWidth  = 1
-  ,parameter int unsigned  PackedNum      = 8
-  ,parameter int unsigned  PackedWidth    = UnpackedWidth * PackedNum
-  ,parameter int unsigned  PacketLenElems = 1024 // Number of packed elements per packet
+   parameter  int unsigned  UnpackedWidth  = 1
+  ,parameter  int unsigned  PackedNum      = 8
+  ,parameter  int unsigned  PacketLenElems = 1024 // Number of packed elements per packet
+  ,localparam int unsigned  PackedWidth    = UnpackedWidth * PackedNum
 
-  ,parameter  logic [PackedWidth-1:0] TailByte0 = PackedWidth'($unsigned(165)) // 0xA5
-  ,parameter  logic [PackedWidth-1:0] TailByte1 = PackedWidth'($unsigned(90))  // 0x5A
-  ,parameter  logic [PackedWidth-1:0] WakeupCmd = PackedWidth'($unsigned(153))  // 0x99
-  ,localparam int unsigned CountWidth           = $clog2(PacketLenElems)
+  ,parameter  logic [PackedWidth-1:0] TailByte0  = PackedWidth'($unsigned(165)) // 0xA5
+  ,parameter  logic [PackedWidth-1:0] TailByte1  = PackedWidth'($unsigned(90))  // 0x5A
+  ,parameter  logic [PackedWidth-1:0] WakeupCmd  = PackedWidth'($unsigned(153))  // 0x99
+  ,localparam int unsigned            CountWidth = $clog2(PacketLenElems)
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -70,7 +70,6 @@ module framer #(
   wire  [0:0] clr_flush_req = pack_out_fire && rx_complete; // Clear flush request when packer fires after receiving last input
 
   logic [0:0] flush_req_d, flush_req_q;
-  logic [0:0] flushing;
 
   wire  [0:0] last_input = in_fire && counter_max;
 

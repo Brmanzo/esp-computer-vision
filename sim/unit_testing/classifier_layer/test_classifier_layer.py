@@ -8,7 +8,8 @@ import torch
 from   torch  import nn
 
 
-from util.utilities  import runner, lint, clock_start_sequence, reset_sequence
+from util.utilities  import runner, lint, clock_start_sequence, reset_sequence, \
+                            auto_unpack, load_tests_from_csv, inject_weights_and_biases
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from util.bitwise    import unpack_weights, unpack_biases
 from util.gen_inputs import gen_weights, gen_biases
@@ -32,63 +33,39 @@ tests = ['reset_test'
         ,'out_fuzz_test'
         ,'full_bw_test']
 
+gen_rules = [
+    ("Weights", lambda WeightBits, ClassCount, InChannels: gen_weights(WeightBits, ClassCount, InChannels, seed=1234)),
+    ("Biases",  lambda BiasBits, ClassCount: gen_biases(BiasBits, ClassCount, seed=1234)),
+]
+
+TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), gen_rules=gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("TermBits, TermCount, BusBits, InChannels, ClassCount, WeightBits, Weights, Biases, BiasBits", [
-    (1,  32, 8,  8, 10,  2, gen_weights( 8, 10, 2), gen_biases( 2, 10), 2),
-    (2,  64, 8, 16, 10,  4, gen_weights(16, 10, 4), gen_biases( 4, 10), 4),
-    (4, 128, 8, 24, 10,  5, gen_weights(24, 10, 5), gen_biases( 8, 10), 8),
-    (8, 256, 8, 32, 10,  8, gen_weights(32, 10,	8), gen_biases(16, 10),	16)
-])
-def test_each(test_name, simulator, TermBits, TermCount, BusBits, InChannels, ClassCount, WeightBits, Weights, BiasBits, Biases):
-    # This line must be first
+@auto_unpack(TEST_CASES)
+def test_each(test_name, simulator,
+              TermBits, TermCount, BusBits, InChannels,
+              ClassCount, WeightBits, Weights, BiasBits, Biases):
     parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
 
     # Remove injected params so cocotb-runner doesn't pass them on CLI
-    del parameters["Weights"]
-    del parameters["Biases"]
+    parameters.pop("Weights", None)
+    parameters.pop("Biases", None)
 
     param_str = f"TermBits_{TermBits}_WeightBits_{WeightBits}_BiasBits_{BiasBits}_test_{test_name}"
-    custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
-    if simulator.startswith("icarus") and os.path.exists(custom_work_dir):
-        shutil.rmtree(custom_work_dir)
-    os.makedirs(custom_work_dir, exist_ok=True)
+    
+    weight_bits = ClassCount * InChannels * WeightBits
+    bias_bits   = ClassCount * BiasBits
 
-    # ---- Emit injected_weights.vh ----
-    total_bits_w = int(ClassCount) * int(InChannels) * int(WeightBits)
-    vh_path = os.path.join(custom_work_dir, "injected_weights.vh")
-    with open(vh_path, "w") as f:
-        hex_width = (total_bits_w + 3) // 4
-        f.write(
-            f"localparam logic signed [{total_bits_w-1}:0] INJECTED_WEIGHTS = "
-            f"{total_bits_w}'h{Weights:0{hex_width}x};\n"
-        )
-
-    total_bits_b = int(ClassCount) * int(BiasBits)
-    vhb_path = os.path.join(custom_work_dir, "injected_biases.vh")
-    with open(vhb_path, "w") as f:
-        hex_width = (total_bits_b + 3) // 4
-        f.write(
-            f"localparam logic signed [{total_bits_b-1}:0] INJECTED_BIASES = "
-            f"{total_bits_b}'h{Biases:0{hex_width}x};\n"
-        )
-
-    # ---- Pass big ints via env vars for cocotb ----
-    os.environ["INJECTED_WEIGHTS_INT"] = str(Weights)
-    os.environ["INJECTED_BIASES_INT"]  = str(Biases)
-
+    custom_work_dir = inject_weights_and_biases(
+        simulator=simulator, parameters=parameters, param_str=param_str, 
+        tbpath=tbpath, test_class="each", Weights=Weights, Biases=Biases, 
+        weight_bits=weight_bits, bias_bits=bias_bits, layer=0)
+        
     wrapper_path = os.path.join(tbpath, "tb_classifier_layer.sv")
     runner(
-        simulator=simulator,
-        timescale=timescale,
-        tbpath=tbpath,
-        params=parameters,
-        testname=test_name,
-        work_dir=custom_work_dir,
-        includes=[custom_work_dir],        # so injected_*.vh can be `included
-        toplevel_override="tb_classifier_layer",
+        simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters,
+        pymodule="test_classifier_layer", testname=test_name, work_dir=custom_work_dir,
+        sim_build=custom_work_dir, includes=[custom_work_dir], toplevel_override="tb_classifier_layer", 
         extra_sources=[wrapper_path],
     )
 
@@ -133,8 +110,8 @@ async def single_test(dut):
     WW = int(dut.WeightBits.value)
     BW = int(dut.BiasBits.value)
 
-    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_INT"]), WW, OC, IC)
-    biases_1d = unpack_biases(int(os.environ["INJECTED_BIASES_INT"]), BW, OC)
+    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_0_INT"]), WW, OC, IC)
+    biases_1d = unpack_biases(int(os.environ["INJECTED_BIASES_0_INT"]), BW, OC)
 
     model = ClassifierLayerModel(dut, weights_2d, biases_1d)
     m = ModelRunner(dut, model)
@@ -169,8 +146,8 @@ async def rate_tests(dut, in_rate, out_rate):
     WW = int(dut.WeightBits.value)
     BW = int(dut.BiasBits.value)
 
-    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_INT"]), WW, OC, IC)
-    biases_1d = unpack_biases(int(os.environ["INJECTED_BIASES_INT"]), BW, OC)
+    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_0_INT"]), WW, OC, IC)
+    biases_1d = unpack_biases(int(os.environ["INJECTED_BIASES_0_INT"]), BW, OC)
 
     model = ClassifierLayerModel(dut, weights_2d, biases_1d)
     m = ModelRunner(dut, model)

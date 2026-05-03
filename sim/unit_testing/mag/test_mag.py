@@ -2,7 +2,8 @@
 from   pathlib import Path
 import pytest
 
-from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence
+from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, \
+                           sim_verbose, reset_sequence
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from util.gen_inputs import gen_input_channels
 tbpath = Path(__file__).parent
@@ -93,8 +94,10 @@ class MagModel():
         assert_resolvable(self._mag_o)
         got = self._mag_o.value.integer
 
-        print(f'gx_i: {gx}, gy_i: {gy}')
-        print(f'Got magnitude: {got}, Expected magnitude: {expected}')
+        if sim_verbose():
+            print(f'gx_i: {gx}, gy_i: {gy}')
+            print(f'Got magnitude: {got}, Expected magnitude: {expected}')
+
         assert abs((got > expected * (1 - self._tol)) or (got < expected * (1 + self._tol))), (
             f"Error! Output value on iteration {self._deqs} does not match expected. "
             f"Expected: {expected}. Got: {got}"

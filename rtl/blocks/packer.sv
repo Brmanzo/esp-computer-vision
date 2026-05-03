@@ -5,7 +5,7 @@
 module packer #(
    parameter  int unsigned UnpackedWidth = 2
   ,parameter  int unsigned PackedNum     = 4
-  ,parameter  int unsigned PackedWidth   = UnpackedWidth * PackedNum
+  ,localparam int unsigned PackedWidth   = UnpackedWidth * PackedNum
   ,localparam int unsigned CountWidth    = $clog2(PackedNum)
   ,localparam int unsigned OffsetWidth   = $clog2(PackedWidth)
 )  (

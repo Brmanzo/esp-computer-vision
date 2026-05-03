@@ -24,8 +24,8 @@ module tb_linear_layer #(
   ,output logic signed [OutChannels-1:0][OutBits-1:0] data_o
 );
 
-`include "injected_weights.vh"
-`include "injected_biases.vh"
+`include "injected_weights_0.vh"
+`include "injected_biases_0.vh"
 
 linear_layer #(
      .InBits     (InBits)
@@ -34,8 +34,8 @@ linear_layer #(
     ,.BiasBits   (BiasBits)
     ,.InChannels  (InChannels)
     ,.OutChannels (OutChannels)
-    ,.Weights     (INJECTED_WEIGHTS)
-    ,.Biases      (INJECTED_BIASES)
+    ,.Weights     (INJECTED_WEIGHTS_0)
+    ,.Biases      (INJECTED_BIASES_0)
   ) dut (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)

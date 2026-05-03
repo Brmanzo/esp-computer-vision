@@ -26,8 +26,8 @@ module tb_classifier_layer #(
   ,output [BusBits-1:0] class_o
 );
 
-`include "injected_weights.vh"
-`include "injected_biases.vh"
+`include "injected_weights_0.vh"
+`include "injected_biases_0.vh"
 
 classifier_layer #(
      .TermBits    (TermBits)
@@ -37,9 +37,9 @@ classifier_layer #(
     ,.ClassCount  (ClassCount)
     
     ,.WeightBits  (WeightBits)
-    ,.Weights     (INJECTED_WEIGHTS)
+    ,.Weights     (INJECTED_WEIGHTS_0)
     ,.BiasBits    (BiasBits)
-    ,.Biases      (INJECTED_BIASES)
+    ,.Biases      (INJECTED_BIASES_0)
   ) dut (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)

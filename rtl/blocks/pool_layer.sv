@@ -22,7 +22,7 @@ module pool_layer #(
 
   // Pooling layer kernel should have a stride equal to kernel width,
   // But strides greater than 1 can stride farther if necessary
-  ,parameter  int unsigned Stride       = KernelWidth
+  ,localparam int unsigned Stride      = KernelWidth
   ,localparam int unsigned StrideBits  = (Stride <= 1) ? 1 : $clog2(Stride)
 
   ,localparam int XBits = (LineWidthPx <= 1) ? 1 : $clog2(LineWidthPx)

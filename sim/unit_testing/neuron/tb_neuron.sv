@@ -13,8 +13,8 @@ module tb_neuron #(
    input  signed [InChannels-1:0][InBits-1:0] data_i
   ,output signed [OutBits-1:0]         data_o
 );
-  `include "injected_weights.vh"
-  `include "injected_bias.vh"
+  `include "injected_weights_0.vh"
+  `include "injected_biases_0.vh"
 
 neuron #(
      .InBits     (InBits)
@@ -22,8 +22,8 @@ neuron #(
     ,.WeightBits (WeightBits)
     ,.BiasBits   (BiasBits)
     ,.InChannels (InChannels)
-    ,.Weights    (INJECTED_WEIGHTS)
-    ,.Bias       (INJECTED_BIAS)
+    ,.Weights    (INJECTED_WEIGHTS_0)
+    ,.Bias       (INJECTED_BIASES_0)
   ) dut (
      .data_i  (data_i)
     ,.data_o  (data_o)

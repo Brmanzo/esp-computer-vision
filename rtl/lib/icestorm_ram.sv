@@ -7,7 +7,7 @@
 module icestorm_ram #(
    parameter  int unsigned Width     = 8
   ,parameter  int unsigned Depth     = 512
-  ,localparam int unsigned AddrWidth = $clog2(Depth)
+  ,localparam int unsigned AddrWidth = Depth > 1 ? $clog2(Depth) : 1
 )  (
    input [0:0] clk_i
   ,input [0:0] rst_i

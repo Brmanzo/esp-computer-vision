@@ -1,6 +1,8 @@
 // linear_layer.sv
 // Bradley Manzo, 2026
 
+`timescale 1ns / 1ps
+
 module linear_layer #(
    parameter int unsigned InBits      = 1
   ,parameter int unsigned OutBits     = 1

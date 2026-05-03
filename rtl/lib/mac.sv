@@ -20,8 +20,14 @@ module mac #(
 
   generate
     // Multiply
-    // If binary input, encode {0,1} as {-1,1} so that multiplication is just +/- the weight
-    if (InBits == 1) begin : gen_binary
+    if (InBits == 1 && WeightBits == 1) begin : gen_xnor
+      // Both input and weight are 1-bit {-1,+1} encoded: use XNOR multiplication
+      // same_bit → +1, different_bit → -1  (i.e. (-1*-1=+1, +1*+1=+1, +1*-1=-1, -1*+1=-1))
+      for (genvar i = 0; i < TermCount; i++) begin : gen_xnor_multiply
+        assign addends[i] = (window_i[i][0] == weights_i[i][0]) ? acc_t'(1) : acc_t'(-1);
+      end
+    // If binary input but multi-bit weight, encode {0,1} input as {-1,1}; weight stays signed
+    end else if (InBits == 1) begin : gen_binary
       for (genvar i = 0; i < TermCount; i++) begin : gen_binary_multiply
         assign addends[i] = window_i[i][0] ? acc_t'(weights_i[i]) : -acc_t'(weights_i[i]);
       end

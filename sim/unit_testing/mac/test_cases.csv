@@ -1,0 +1,10 @@
+InBits,WeightBits,TermCount,OutBits
+1,1,4,AUTO
+1,2,1,AUTO
+1,2,2,AUTO
+1,2,3,AUTO
+1,3,32,AUTO
+8,2,5,AUTO
+8,2,16,AUTO
+8,2,32,AUTO
+8,8,16,AUTO

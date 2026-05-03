@@ -2,11 +2,11 @@
 import numpy as np
 from   typing import List
 
-from util.bitwise import sign_extend, unpack_terms
-from util.bitwise    import pack_terms
+from util.utilities  import sim_verbose
+from util.bitwise    import sign_extend, unpack_terms, pack_terms
 from util.gen_inputs import gen_input_channels
 
-def output_width(width_in: int, weight_width: int, in_channels: int=1) -> str:
+def output_width(width_in: int, weight_width: int, bias_bits: int, in_channels: int=1) -> str:
     '''Calculates proper output width for given input width amount of accumulations.'''
     terms = in_channels
 
@@ -15,6 +15,8 @@ def output_width(width_in: int, weight_width: int, in_channels: int=1) -> str:
 
     max_sum = terms * max_val * max_weight
     abs_bits = max_sum.bit_length()
+    if bias_bits > abs_bits:
+        return str(bias_bits + 1)
     return str(abs_bits + 1)   # +1 for sign bit
 
     
@@ -61,6 +63,8 @@ class LinearLayerModel():
                 acc += int(self.w[oc][ic]) * input_vals[ic]
             expected.append(acc)
 
+        if self._OutBits == 1:
+            expected = [1 if x > 0 else 0 for x in expected]
         return [expected]
 
     def produce(self, expected):
@@ -69,5 +73,10 @@ class LinearLayerModel():
         
         for ch in range(self._OutChannels):
             got = got_raw[ch]
-            exp = sign_extend(expected[ch] & ((1 << self._OutBits) - 1), self._OutBits)
+            if self._OutBits == 1:
+                exp = expected[ch]
+            else:
+                exp = sign_extend(expected[ch] & ((1 << self._OutBits) - 1), self._OutBits)
+            if sim_verbose():
+                print(f"Output ch{ch}: expected {exp}, got {got}")
             assert got == exp, f"Mismatch ch{ch}: expected {exp}, got {got}"

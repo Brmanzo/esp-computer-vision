@@ -1,8 +1,10 @@
 # test_multi_delay_buffer.py
+import os
 from   pathlib import Path
 import pytest
 
-from util.utilities import runner, lint, clock_start_sequence, reset_sequence
+from util.utilities import runner, lint, clock_start_sequence, reset_sequence, \
+                           load_tests_from_csv, auto_unpack
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from util.gen_inputs import gen_input_channels
 from util.bitwise import pack_terms
@@ -25,26 +27,27 @@ tests = ['reset_test'
         ,'in_fuzz_test'
         ,'out_fuzz_test'
         ,'full_bw_test']
-
+TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"))
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("BufferWidth, Delay, BufferRows, InputChannels", 
-                         [("1", "8", "1", "1"), ("1", "8", "2", "4"), ("2", "16", "4", "10")])
-def test_each(test_name, simulator, BufferWidth, Delay, BufferRows, InputChannels):
+@auto_unpack(TEST_CASES)
+def test_each(test_name, simulator,
+              BufferWidth, Delay, BufferRows, InputChannels):
     # This line must be first
     parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
+    parameters.pop('test_name', None)
+    parameters.pop('simulator', None)
     runner(simulator, timescale, tbpath, parameters, testname=test_name)
 
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("BufferWidth, Delay, BufferRows, InputChannels", [("1", "8", "2", "1"), ("1", "8", "2", "4"), ("2", "16", "4", "10")])
-def test_all(simulator, BufferWidth, Delay, BufferRows, InputChannels):
+@auto_unpack(TEST_CASES)
+def test_all(simulator,
+             BufferWidth, Delay, BufferRows, InputChannels):
     # This line must be first
     parameters = dict(locals())
-    del parameters['simulator']
+    parameters.pop('simulator', None)
     runner(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
@@ -101,7 +104,6 @@ async def flush_dut(dut, duration):
 @cocotb.test
 async def reset_test(dut):
     """Test for Initialization"""
-    print("DUT objects:", dir(dut))
     clk_i = dut.clk_i
     rst_i = dut.rst_i
     await clock_start_sequence(clk_i)

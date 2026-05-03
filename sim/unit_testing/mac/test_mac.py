@@ -1,15 +1,16 @@
 # test_mac.py
-from   decimal import Decimal
+import os
 from   pathlib import Path
 import pytest
 
-from util.utilities import runner, lint, assert_resolvable
+from util.utilities import runner, lint, assert_resolvable, load_tests_from_csv, \
+                           sim_verbose, auto_unpack
 from util.bitwise   import sign_extend, pack_terms, unpack_terms
 from util.gen_inputs import gen_input_channels
 tbpath = Path(__file__).parent
 
 import cocotb
-from   cocotb.triggers import Timer
+from   cocotb.triggers import Timer, Decimal
    
 import random
 random.seed(50)
@@ -27,28 +28,25 @@ def output_width(in_width: int, weight_width: int, term_count: int) -> str:
     abs_bits = max_sum.bit_length()
     return str(abs_bits + 1)
 
+auto_rules = [
+    ("OutBits", "OutBits", lambda InBits, WeightBits, TermCount: output_width(InBits, WeightBits, TermCount))
+]
+
+TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), auto_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("InBits, WeightBits, TermCount, OutBits",
-    [( 1,  2,  2, output_width( 1,  2,  2)),
-     ( 1,  2,  3, output_width( 1,  2,  3)),
-     ( 1,  3, 32, output_width( 1,  3, 32)),
-     ( 8,  2,  5, output_width( 8,  2,  5)),
-     ( 8,  2, 16, output_width( 8,  2, 16)),
-     ( 8,  2, 32, output_width( 8,  2, 32)),
-    ],
-)
+@auto_unpack(TEST_CASES)
 
 def test_each(test_name, simulator, InBits, WeightBits, TermCount, OutBits):
     # This line must be first
     parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
+    parameters.pop('test_name', None)
+    parameters.pop('simulator', None)
     runner(simulator, timescale, tbpath, parameters, testname=test_name, pymodule="test_mac")
 
 @pytest.mark.parametrize("simulator", ["verilator"])
 @pytest.mark.parametrize("InBits, WeightBits, TermCount, OutBits", 
-                         [(1, 2, 2, output_width(1, 2, 2)), (2, 2, 3, output_width(2, 2, 3))])
+                         [(1, 2, 2, output_width(1, 2, 2))])
 def test_lint(simulator, InBits, WeightBits, TermCount, OutBits):
     # This line must be first
     parameters = dict(locals())
@@ -57,7 +55,7 @@ def test_lint(simulator, InBits, WeightBits, TermCount, OutBits):
 
 @pytest.mark.parametrize("simulator", ["verilator"])
 @pytest.mark.parametrize("InBits, WeightBits, TermCount, OutBits", 
-                         [(1, 2, 2, output_width(1, 2, 2)), (2, 2, 3, output_width(2, 2, 3))])
+                         [(1, 2, 2, output_width(1, 2, 2))])
 def test_style(simulator, InBits, WeightBits, TermCount, OutBits):
     # This line must be first
     parameters = dict(locals())
@@ -95,8 +93,13 @@ class MacModel():
             window_vals = [1 if x == 1 else -1 for x in self._window]
         else:
             window_vals = self._window
+
+        if self._WeightBits == 1:
+            weight_vals = [1 if x == 1 else -1 for x in self._weights]
+        else:
+            weight_vals = self._weights
             
-        addends = [w * x for w, x in zip(self._weights, window_vals)]
+        addends = [w * x for w, x in zip(weight_vals, window_vals)]
         return sign_extend(sum(addends), self._OutBits)
 
     def produce(self, expected):
@@ -104,7 +107,9 @@ class MacModel():
         got = sign_extend(int(self._sum_o.value.integer), self._OutBits)
         exp = int(expected)
 
-        print(f"Expected: {exp}, Got: {got}, window: {self._window}, weights: {self._weights}")
+        if sim_verbose():
+            print(f"Expected: {exp}, Got: {got}, window: {self._window}, weights: {self._weights}")
+        
         assert got == exp, (
             f"Mismatch. Expected {exp}, got {got}"
         )

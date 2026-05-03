@@ -1,8 +1,10 @@
 # test_global_max.py
+import os
 from   pathlib import Path
 import pytest
 
-from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence
+from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, \
+                           sim_verbose, reset_sequence, load_tests_from_csv, auto_unpack  
 from util.bitwise   import pack_terms, unpack_terms
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from util.gen_inputs import gen_input_channels
@@ -25,19 +27,16 @@ tests = ['reset_test'
         ,'out_fuzz_test'
         ,'full_bw_test']
 
+TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"))
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("InBits, TermCount, InChannels", [
-    (1, 16, 10),
-    (8, 9, 1),
-    (16, 17, 2),
-    (32, 33, 4)
-])
-def test_each(test_name, simulator, InBits, TermCount, InChannels):
-    # This line must be first
+@auto_unpack(TEST_CASES)
+def test_each(test_name, simulator,
+              InBits, TermCount, InChannels):
+
     parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
+    parameters.pop('test_name', None)
+    parameters.pop('simulator', None)
     runner(simulator, timescale, tbpath, parameters, testname=test_name, pymodule="test_global_max")
 
 # Opposite above, run all the tests in one simulation but reset
@@ -46,7 +45,7 @@ def test_each(test_name, simulator, InBits, TermCount, InChannels):
 def test_all(simulator):
     # This line must be first
     parameters = dict(locals())
-    del parameters['simulator']
+    parameters.pop('simulator', None)
     runner(simulator, timescale, tbpath, parameters, pymodule="test_global_max")
 
 @pytest.mark.parametrize("simulator", ["verilator"])
@@ -111,7 +110,9 @@ class GlobalMaxModel():
 
         expected_list = list(expected)
 
-        print(f"Produced output {got}, expected {expected_list} at time {get_sim_time(units='ns')}ns")
+        if sim_verbose():
+            print(f"Produced output {got}, expected {expected_list} at time {get_sim_time(units='ns')}ns")
+        
         assert got == expected_list, (
             f"Output mismatch. Expected {expected_list}, got {got}"
         )

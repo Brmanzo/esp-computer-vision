@@ -2,7 +2,7 @@
 import numpy as np
 from   typing import List
 
-from util.utilities  import assert_resolvable
+from util.utilities  import assert_resolvable, sim_verbose
 from util.bitwise    import unpack_terms, pack_terms
 from util.torch_ref  import torch_classifier_ref
 from util.gen_inputs import gen_input_channels
@@ -52,7 +52,7 @@ class ClassifierLayerModel:
             f"biases={biases!r}"
         )
 
-        self._sequence_buffer = []
+        self._sequence_buffer: list[list[int]] = []
 
     def consume(self):
         assert_resolvable(self._data_i)
@@ -110,10 +110,11 @@ class ClassifierLayerModel:
         expected_id, expected_logits = expected
         got_id = int(self._class_o.value.integer)
 
-        print(
-            f"Produced class {got_id}, expected {expected_id}"
-            f"logits={expected_logits} at time {get_sim_time(units='ns')}ns"
-        )
+        if sim_verbose():
+            print(
+                f"Produced class {got_id}, expected {expected_id}"
+                f"logits={expected_logits} at time {get_sim_time(units='ns')}ns"
+            )
 
         assert got_id == expected_id, (
             f"Class mismatch. Expected {expected_id}, got {got_id}"

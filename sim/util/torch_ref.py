@@ -117,3 +117,17 @@ def torch_linear_ref(weights_2d, biases_1d, InChannels, OutChannels):
     linear.bias.data   = torch.tensor(biases_1d, dtype=torch.float32)
 
     return linear
+
+def torch_neuron_ref(weights_1d, bias, InChannels):
+    # One output channel instantiates a single neuron
+    fc = nn.Linear(in_features=InChannels, out_features=1, bias=True)
+
+    # Disable gradient tracking
+    fc.weight.requires_grad = False
+    fc.bias.requires_grad = False
+
+    # Convert to float32 for deterministic conv math
+    fc.weight.data = torch.tensor([weights_1d], dtype=torch.float32)
+    fc.bias.data   = torch.tensor([bias], dtype=torch.float32)
+
+    return fc

@@ -1,8 +1,11 @@
-
+# test_icestorm_ram.py
+# Bradley Manzo 2026
+import os
 from   pathlib import Path
 import pytest
 
-from util.utilities  import runner, lint, clock_start_sequence, reset_sequence
+from util.utilities  import runner, lint, clock_start_sequence, reset_sequence, \
+                            auto_unpack, load_tests_from_csv
 
 tbpath = Path(__file__).parent
 
@@ -23,14 +26,16 @@ tests = ['reset_test',
          "conflict_test"
          ]
 
-@pytest.mark.parametrize("Width,Depth", [(8, 8), (11, 17)])
+TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"))
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-def test_each(test_name, simulator, Width, Depth):
+@auto_unpack(TEST_CASES)
+def test_each(test_name, simulator,
+              Width, Depth):
     # This line must be first
     parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
+    parameters.pop('test_name', None)
+    parameters.pop('simulator', None)
     runner(simulator, timescale, tbpath, parameters, testname=test_name)
 
 # Opposite above, run all the tests in one simulation but reset

@@ -1,7 +1,10 @@
+import os
 from   pathlib import Path
 import pytest
 
-from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence
+from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, \
+                           reset_sequence, load_tests_from_csv, auto_unpack, \
+                           sim_verbose
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from util.gen_inputs import gen_random_unsigned
 tbpath = Path(__file__).parent
@@ -22,17 +25,18 @@ tests = ['reset_test'
         ,'out_fuzz_test'
         ,'full_bw_test']
 
+TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"))
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("UnpackedWidth, PackedNum", [("2", "4"), ("1", "8")])
+@auto_unpack(TEST_CASES)
 def test_each(test_name, simulator, UnpackedWidth, PackedNum):
     parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
+    parameters.pop( 'test_name', None)
+    parameters.pop('simulator', None)
     runner(simulator, timescale, tbpath, parameters, testname=test_name, pymodule="test_unpacker")
 
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("UnpackedWidth, PackedNum", [("2", "4"), ("1", "8")])
+@auto_unpack(TEST_CASES)
 def test_all(simulator, UnpackedWidth, PackedNum):
     parameters = dict(locals())
     del parameters['simulator']
@@ -77,7 +81,8 @@ class UnpackerModel():
         got = int(self._unpacked_o.value) & self._mask
 
         self._deqs += 1
-        print(f'Output #{self._deqs}: Got unpacked: {got}, Expected: {expected}')
+        if sim_verbose():
+            print(f'Output #{self._deqs}: Got unpacked: {got}, Expected: {expected}')
 
         assert got == expected, (
             f"Mismatch on output #{self._deqs}: expected {expected}, got {got}"

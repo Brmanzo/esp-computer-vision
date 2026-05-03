@@ -1,15 +1,16 @@
 # test_adder_tree.py
-from   decimal import Decimal
+import os
 from   pathlib import Path
 import pytest
 
-from util.utilities import runner, lint, assert_resolvable
+from util.utilities import runner, lint, assert_resolvable, \
+                           load_tests_from_csv, auto_unpack, sim_verbose
 from util.bitwise import sign_extend, pack_terms, unpack_terms
 from util.gen_inputs import gen_input_channels
 tbpath = Path(__file__).parent
 
 import cocotb
-from cocotb.triggers import Timer
+from cocotb.triggers import Timer, Decimal
    
 import random
 random.seed(50)
@@ -26,23 +27,20 @@ def output_width(width_in: int, addend_count: int) -> str:
     abs_bits = max_sum.bit_length()
     return str(abs_bits + 1)
 
-# Test that binary tree can accomodate 
+auto_rules = [
+    ("OutBits", "OutBits", lambda InBits, AddendCount: output_width(InBits, AddendCount))
+]
+
+TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), auto_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("InBits, AddendCount, OutBits",
-    [( 2,  2, output_width( 2,  2)) # TODO: Test InBits=1
-    ,( 2,  3, output_width( 2,  3))
-    ,( 4,  5, output_width( 4,  5))
-    ,( 8,  8, output_width( 8,  8))
-    ,( 8, 16, output_width( 8, 16))
-    ,( 8, 32, output_width( 8, 32))
-    ])
+@auto_unpack(TEST_CASES)
 
-def test_each(test_name, simulator, InBits, OutBits, AddendCount):
-    # This line must be first
+def test_each(test_name, simulator,
+              InBits, OutBits, AddendCount):
     parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
+    parameters.pop('test_name', None)
+    parameters.pop('simulator', None)
     runner(simulator, timescale, tbpath, parameters, testname=test_name, pymodule="test_adder_tree")
 
 @pytest.mark.parametrize("simulator", ["verilator"])
@@ -87,7 +85,8 @@ class AdderTreeModel():
         got = sign_extend(int(self._sum_o.value.integer), self._OutBits)
         exp = int(expected)
 
-        print(f"Expected: {exp}, Got: {got}, Addends: {unpack_terms(int(self._addends_i.value.integer), self._InBits, self._AddendCount)}")
+        if sim_verbose():
+            print(f"Expected: {exp}, Got: {got}, Addends: {unpack_terms(int(self._addends_i.value.integer), self._InBits, self._AddendCount)}")
         assert got == exp, (
             f"Mismatch. Expected {exp}, got {got}"
         )

@@ -1,7 +1,9 @@
 
 from collections import deque
 from typing import Optional
-from util.bitwise import unpack_channels
+
+from util.utilities  import sim_verbose
+from util.bitwise    import unpack_channels
 
 class MultiDelayBufferModel:
     def __init__(
@@ -137,4 +139,6 @@ class MultiDelayBufferModel:
         )
 
         expected_list = list(expected)
+        if sim_verbose():
+            print(f"Output: got={got} expected={expected_list}")
         assert got == expected_list, f"Mismatch: got={got} expected={expected_list}"

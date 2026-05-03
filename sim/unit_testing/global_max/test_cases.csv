@@ -1,0 +1,5 @@
+InBits,TermCount,InChannels
+1,16,10
+8,9,1
+16,17,2
+32,33,4

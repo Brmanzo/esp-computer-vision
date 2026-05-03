@@ -1,8 +1,10 @@
 # test_packer.py
+import os
 from   pathlib import Path
 import pytest
 
-from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, reset_sequence
+from util.utilities import runner, lint, assert_resolvable, clock_start_sequence, \
+                           sim_verbose, reset_sequence, load_tests_from_csv, auto_unpack
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from util.gen_inputs import gen_random_unsigned
 tbpath = Path(__file__).parent
@@ -24,20 +26,22 @@ tests = ['reset_test'
         ,'full_bw_test'
         ,'flush_test']
 
+TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"))
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("UnpackedWidth, PackedNum", [("2", "4"), ("1", "8")])
-def test_each(test_name, simulator, UnpackedWidth, PackedNum):
+@auto_unpack(TEST_CASES)
+def test_each(test_name, simulator,
+              UnpackedWidth, PackedNum):
     # This line must be first
     parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
+    parameters.pop('test_name', None)
+    parameters.pop('simulator', None)
     runner(simulator, timescale, tbpath, parameters, testname=test_name, pymodule="test_packer")
 
 # Opposite above, run all the tests in one simulation but reset
 # between tests to ensure that reset is clearing all state.
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("UnpackedWidth, PackedNum", [("2", "4"), ("1", "8")])
+@auto_unpack(TEST_CASES)
 def test_all(simulator, UnpackedWidth, PackedNum):
     # This line must be first
     parameters = dict(locals())
@@ -104,7 +108,8 @@ class PackerModel():
         got = int(self._dut.packed_o.value) & ((1 << self._PackedWidth) - 1)
         self._deqs += 1
         
-        print (f"Produced output #{self._deqs}: 0x{got:X}, expected 0x{expected:X}")
+        if sim_verbose():
+            print (f"Produced output #{self._deqs}: 0x{got:X}, expected 0x{expected:X}")
         assert got == expected, f"Mismatch out #{self._deqs}: exp 0x{expected:X}, got 0x{got:X}"
 
 class RandomDataGenerator():

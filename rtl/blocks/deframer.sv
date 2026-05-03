@@ -7,7 +7,7 @@ module deframer #(
   ,parameter  int unsigned PackedNum          = 8
   ,localparam int unsigned PackedWidth        = UnpackedWidth * PackedNum
   ,parameter  int unsigned PacketLenElems     = 1024 // Number of packed elements per packet
-  ,localparam int unsigned CountWidth         = $clog2(PacketLenElems)
+  ,localparam int unsigned CountWidth         = $clog2(PacketLenElems + 1)
   ,localparam logic [CountWidth-1:0] MaxCount = CountWidth'(PacketLenElems)
   
   ,parameter logic [PackedWidth-1:0] HeaderByte0 = PackedWidth'($unsigned(165)) // 0xA5
@@ -66,17 +66,17 @@ module deframer #(
   // Current state logic
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
-      state_q <= Header0;
-      unpacked_q  <= '0;
-      valid_q <= 1'b0;
+      state_q       <= Header0;
+      unpacked_q    <= '0;
+      valid_q       <= 1'b0;
       last_output_q <= 1'b0;
     end else begin
-      unpacked_q  <= unpacked_d;
-      valid_q <= valid_d;
-      // Latch last_output to end forwarding state when ready_o
+      unpacked_q <= unpacked_d;
+      valid_q    <= valid_d;
+      // Latch "packet done" and hold until the state machine can advance
       if (state_q == Forward && last_output) last_output_q <= 1'b1;
-      if (state_q == Header0)                last_output_q <= 1'b0;
-      // Advance state while filtering and forwarding
+      if (state_q == Header0)               last_output_q <= 1'b0;
+      // Advance state: header states on in_fire, Forward once consumer acks last output
       if (((state_q != Forward) && in_fire) || last_output_q) begin
         state_q <= state_d;
       end

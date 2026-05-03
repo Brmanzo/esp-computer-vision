@@ -4,13 +4,15 @@ from   pathlib import Path
 import pytest
 import numpy as np
 
-from util.utilities  import runner, lint, clock_start_sequence, reset_sequence
+from util.utilities  import runner, lint, clock_start_sequence, reset_sequence, \
+                            sim_verbose, load_tests_from_csv, auto_unpack
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from util.torch_ref  import torch_pool_ref
 from functional_models.pool_layer import PoolLayerModel, RandomDataGenerator
 tbpath = Path(__file__).parent
 
 import cocotb
+import torch
 from   cocotb.triggers import RisingEdge, FallingEdge, with_timeout
 from   cocotb.result import SimTimeoutError
    
@@ -27,30 +29,30 @@ tests = ['reset_test'
         ,'out_fuzz_test'
         ,'full_bw_test']
 
+TEST_CASES_MAX = load_tests_from_csv(os.path.join(tbpath, "test_cases_max.csv"))
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, InBits, InChannels, PoolMode", 
-                         [("16", "16", "2", "1", "8","0"),
-                          ("16", "16", "4", "1", "9","0")])
-def test_max(test_name, simulator, LineWidthPx, LineCountPx, KernelWidth, InBits, InChannels, PoolMode):
+@auto_unpack(TEST_CASES_MAX)
+def test_max(test_name, simulator,
+             LineWidthPx, LineCountPx, KernelWidth, InBits, InChannels, PoolMode):
     # This line must be first
     parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
+    parameters.pop('test_name', None)
+    parameters.pop('simulator', None)
     param_str = f"InBits{InBits}_Channels{InChannels}_LineWidth{LineWidthPx}_LineCount{LineCountPx}_Kernel{KernelWidth}"
     custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
     runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
 
+TEST_CASES_AVG = load_tests_from_csv(os.path.join(tbpath, "test_cases_avg.csv"))
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, InBits, InChannels, PoolMode", 
-                         [("16", "16", "2", "1", "8", "1"),
-                          ("16", "16", "4", "1", "9", "1")])
-def test_avg(test_name, simulator, LineWidthPx, LineCountPx, KernelWidth, InBits, InChannels, PoolMode):
+@auto_unpack(TEST_CASES_AVG)
+def test_avg(test_name, simulator,
+             LineWidthPx, LineCountPx, KernelWidth, InBits, InChannels, PoolMode):
     # This line must be first
     parameters = dict(locals())
-    del parameters['test_name']
-    del parameters['simulator']
+    parameters.pop('test_name', None)
+    parameters.pop('simulator', None)
     param_str = f"InBits{InBits}_Channels{InChannels}_LineWidth{LineWidthPx}_LineCount{LineCountPx}_Kernel{KernelWidth}"
     custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
     runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
@@ -84,7 +86,6 @@ def test_style(simulator, LineWidthPx, LineCountPx, KernelWidth, InBits):
 @cocotb.test
 async def reset_test(dut):
     """Test for Initialization"""
-    print("DUT objects:", dir(dut))
     clk_i = dut.clk_i
     rst_i = dut.rst_i
     await clock_start_sequence(clk_i)
@@ -202,23 +203,25 @@ async def rate_tests(dut, in_rate, out_rate):
     # Now wait for exactly l_out output handshakes
     try:
         await om.wait(timeout_ns)
-        for ic in range(IC):
-            print(f"\nInput Activation for IC{ic}")
-            for r in range(H):
-                print(" ".join(f"{input_activation[ic][r][c]:2d}" for c in range(W)))
-        for oc in range(OC):
-            print(f"\nOutput Activation (DUT) for OC{oc}")
-            for r in range(H_out):
-                print(" ".join(f"{output_activation[oc][r][c]:4d}" for c in range(W_out)))
+        if sim_verbose():
+            for ic in range(IC):
+                print(f"\nInput Activation for IC{ic}")
+                for r in range(H):
+                    print(" ".join(f"{input_activation[ic][r][c]:2d}" for c in range(W)))
+            for oc in range(OC):
+                print(f"\nOutput Activation (DUT) for OC{oc}")
+                for r in range(H_out):
+                    print(" ".join(f"{output_activation[oc][r][c]:4d}" for c in range(W_out)))
 
         # Only compare against PyTorch if it is NOT 1-bit Avg Pooling
         if not (w == 1 and mode == 1):
             ref = torch_pool_ref(input_activation, kernel_size=K, stride=S, mode=mode)
-            for oc in range(OC):
-                print(f"\nExpected (PyTorch) for OC{oc}")
-                for r in range(H_out):
-                    print(" ".join(f"{int(ref[oc, r, c]):4d}" for c in range(W_out)))
-            assert np.allclose(output_activation, ref.int().numpy()), "Output activation does not match PyTorch reference"
+            if sim_verbose():
+                for oc in range(OC):
+                    print(f"\nExpected (PyTorch) for OC{oc}")
+                    for r in range(H_out):
+                        print(" ".join(f"{int(ref[oc, r, c]):4d}" for c in range(W_out)))
+            assert np.allclose(output_activation, torch.floor(ref).int().numpy()), "Output activation does not match PyTorch reference"
 
     except SimTimeoutError:
         assert 0, (

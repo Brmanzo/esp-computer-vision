@@ -28,6 +28,17 @@ from   cocotb.triggers import Decimal, Timer, ClockCycles, RisingEdge, FallingEd
 from   cocotb.types    import Logic
 from   cocotb.utils    import get_sim_time
 
+def sim_verbose() -> bool:
+    """Return True when the user passed VERBOSE=1 to make.
+
+    Usage in a cocotb test::
+
+        from util.utilities import sim_verbose
+        if sim_verbose():
+            print(f"weights = {weights}")
+    """
+    return os.environ.get("VERBOSE", "0").strip() == "1"
+
 def runner(simulator, timescale, tbpath, params, defs=[], testname=None, pymodule=None, jsonpath=None, jsonname="filelist.json", root=None, work_dir=None, sim_build=None, includes=None, toplevel_override=None, extra_sources=None):
     """Run the simulator on test n, with parameters params, and defines
     defs. If n is none, it will run all tests"""
@@ -290,7 +301,7 @@ def inject_weights_and_biases(simulator: Literal['verilator', 'icarus'], paramet
 
     return custom_work_dir
 
-def load_tests_from_csv(filepath, auto_rules, gen_rules):
+def load_tests_from_csv(filepath, auto_rules=None, gen_rules=None):
     """Parses CSV and executes dependency injection rules, returning dictionaries."""
     test_cases = []
     
@@ -309,16 +320,18 @@ def load_tests_from_csv(filepath, auto_rules, gen_rules):
             # -------------------------------------
 
             # 2. Process "AUTO" Rules
-            for var_name, csv_col, func in auto_rules:
-                raw_val = str(parsed.get(csv_col, "")).strip().upper()
-                if raw_val == "AUTO":
-                    parsed[var_name] = execute_with_injected_deps(func)
-                else:
-                    parsed[var_name] = int(raw_val)
+            if auto_rules:
+                for var_name, csv_col, func in auto_rules:
+                    raw_val = str(parsed.get(csv_col, "")).strip().upper()
+                    if raw_val == "AUTO":
+                        parsed[var_name] = execute_with_injected_deps(func)
+                    else:
+                        parsed[var_name] = int(raw_val)
 
             # 3. Process Generation Rules
-            for var_name, func in gen_rules:
-                parsed[var_name] = execute_with_injected_deps(func)
+            if gen_rules:
+                for var_name, func in gen_rules:
+                    parsed[var_name] = execute_with_injected_deps(func)
 
             test_cases.append(parsed)
                 

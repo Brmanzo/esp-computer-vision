@@ -20,7 +20,15 @@ test-all:
 	@set -e; \
 	for d in $(UNIT_TEST_DIRS); do \
 	  echo "Testing $${d#$(REPO_ROOT)/}"; \
-	  $(MAKE) -C "$$d" test; \
+	  $(MAKE) -C "$$d" test VERBOSE=0; \
+	done
+
+lint-all:
+	@set -e; \
+	for d in $(UNIT_TEST_DIRS); do \
+	  echo "Linting $${d#$(REPO_ROOT)/}"; \
+	  $(MAKE) -C "$$d" test lint VERBOSE=0; \
+	  $(MAKE) -C "$$d" lint; \
 	done
 
 .PHONY: test-one

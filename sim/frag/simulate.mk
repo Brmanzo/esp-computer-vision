@@ -5,6 +5,11 @@ REPO_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
 -include $(REPO_ROOT)/sim/frag/config.mk
 export PYTHONPATH := $(REPO_ROOT)/sim:$(PYTHONPATH)
 
+# Verbose flag: set VERBOSE=1 on the command line to enable verbose testbench output
+# e.g.  make test VERBOSE=1   or   make test-all VERBOSE=1
+VERBOSE ?= 0
+export VERBOSE
+
 # Default tool locations (can be overridden in environment or config.mk)
 IVERILOG  ?= iverilog
 VERILATOR ?= verilator
@@ -33,11 +38,11 @@ ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
 test: results.json
 
 # List all available tests without running them
-list-tests:
+test-list test-lists list-tests:
 	$(PYTHON3) -m pytest --collect-only -q
 
 results.json: $(FILELIST) $(SIM_SOURCES)
-	$(PYTHON3) -m pytest -rA $(if $(ARGS),-k "$(ARGS)",)
+	$(PYTHON3) -m pytest $(if $(filter 1,$(VERBOSE)),-rA -s,-q --tb=short) $(if $(ARGS),-k "$(ARGS)",)
 
 # lint runs the Verilator linter on your code.
 lint: lint-verilator lint-verible
@@ -82,6 +87,7 @@ vars-intro-help:
 sim-vars-help:
 	@echo "    VERILATOR: Override this variable to set the location of your verilator executable."
 	@echo "    IVERILOG: Override this variable to set the location of your iverilog executable."
+	@echo "    VERBOSE: Set to 1 to enable verbose testbench output (e.g. make test VERBOSE=1)."
 
 clean: sim-clean
 targets-help: sim-help
@@ -94,4 +100,4 @@ print-config:
 	@echo "config.mk included? (check by printing YOSYS=$(YOSYS))"
 	@echo "YOSYS=$(YOSYS)"
 
-.PHONY: all test lint lint-verilator lint-verible sim-clean extraclean sim-help vars-intro-help sim-vars-help clean targets-help vars-help help test results.json
+.PHONY: all test lint lint-verilator lint-verible sim-clean extraclean sim-help vars-intro-help sim-vars-help clean targets-help vars-help help test results.json test-list test-lists list-tests
