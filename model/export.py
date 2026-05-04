@@ -8,87 +8,107 @@ from   model.config  import ModelConfig
 from   model.globals import DATAPATH, HAND_GESTURE_CFG
 from   model.model   import cnn_model, QuantConv2d
 
-def get_hardware_weights(fused_layer: QuantConv2d):
-    '''Extracts the folded integer weights and biases directly from the QAT layer,
-       applying hardware-specific saturation constraints.'''
+def get_hardware_weights(fused_layer: QuantConv2d, previous_act_scale: float = 1.0):
+    '''Extracts the folded integer weights and biases directly from the QAT layer.
+    
+    Applies multi-bit activation scale compensation:
+    y = W * (x_hw * act_scale) + b  →  (W * act_scale) * x_hw + b
+    '''
 
-    # 1. Recreate the exact fold that happened during training
+    # 1. Recreate the exact BN fold that happened during training
     bn_scale = fused_layer.bn_weight / torch.sqrt(fused_layer.running_var + fused_layer.eps)
     folded_w = fused_layer.weight * bn_scale.view(-1, 1, 1, 1)
     folded_b = fused_layer.bn_bias - (fused_layer.running_mean * bn_scale)
 
+    # Factor in the scale of the activations coming into this layer!
+    folded_w = folded_w * previous_act_scale
+
     # 2. Retrieve the target bits directly from the layer
     target_bits = int(fused_layer._weight_bits)
-    # Fallback to 8 if you haven't updated the model class yet
-    bias_bits = getattr(fused_layer, '_bias_bits', 8) 
+    bias_bits = getattr(fused_layer, '_bias_bits', 8)
 
-    # 3. Quantize to extract the exact integer arrays the network learned
+    # 3. Quantize to hardware integers
     qmin = -(2 ** (target_bits - 1))
     qmax = (2 ** (target_bits - 1)) - 1
 
     max_abs = folded_w.abs().max()
     w_scale = max_abs / qmax if max_abs > 0 else 1.0
-    
-    # Extract integer weights
+
     q_weights = torch.round(folded_w / w_scale)
     q_weights = torch.clip(q_weights, qmin, qmax)
-    
-    # Extract integer bias (using the exact same scale to maintain relative magnitude)
+
     hw_bias = torch.round(folded_b / w_scale)
-    
-    # --- SAFETY CHECK: Hardware Bias Saturation ---
+
+    # Safety: clamp biases to hardware bit-width
     b_max_val = 2**(bias_bits - 1) - 1
     b_min_val = -2**(bias_bits - 1)
-    
+
     if (hw_bias > b_max_val).any() or (hw_bias < b_min_val).any():
-        print(f"  [WARNING] Bias saturating hardware limits! Max requested: {hw_bias.max().item():.0f}, Hardware Limit: {b_max_val}")
-        # Clamp to physical hardware limits to ensure bit-accuracy in simulation
+        print(f"  [WARNING] Bias saturating! Max={hw_bias.abs().max().item():.0f}, Limit={b_max_val}")
         hw_bias = torch.clamp(hw_bias, b_min_val, b_max_val)
-    
+
     return q_weights, hw_bias, float(w_scale)
 
 def export_model_to_csv(model_path: Path, config: ModelConfig, output_csv: Path):
     '''Loads the trained model, extracts the folded and quantized weights for
     each layer, and saves them to a CSV file for hardware implementation.'''
+    from model.quantize import QuantizeActivation
     device = "cpu"
 
-    # Initialize model using the new config architecture
     model = cnn_model(config=config).to(device)
     state = torch.load(model_path, map_location=device, weights_only=True)
     model.load_state_dict(state, strict=True)
     model.eval()
 
     all_hardware_data = []
+    current_act_scale = 1.0 # Input pixels are binarized {0, 1} or normalized, start at 1.0
 
-    print("Exporting Fused QAT layers to hardware CSV...")
+    print("Exporting Fused QAT layers to hardware CSV with scale propagation...")
 
-    # Dynamically grab all Fused modules
-    fused_layers = []
-    for name, module in model.named_modules():
+    # We must iterate through all modules to track activation scales correctly
+    # Features followed by Classifier
+    all_modules = list(model.features.children()) + list(model.classifier.children())
+
+    for module in all_modules:
         if isinstance(module, QuantConv2d):
-            fused_layers.append((name, module))
+            name = f"Layer_{len(all_hardware_data)}"
+            weight_bits = module._weight_bits
+            bias_bits   = module._bias_bits
+            print(f"  Processing {name} ({module.__class__.__name__}) with incoming scale {current_act_scale:.6f}...")
+            
+            # Extract compensated weights
+            w_int_tensor, b_hw, w_scale = get_hardware_weights(module, current_act_scale)
 
-    for name, fused_layer in fused_layers:
-        weight_bits = fused_layer._weight_bits
-        bias_bits   = fused_layer._bias_bits
-        print(f"  Processing {name} at {weight_bits}-bits...")
+            # Convert to numpy
+            w_int = w_int_tensor.to(torch.int32).cpu().numpy()
+            b_int = b_hw.to(torch.int32).cpu().numpy()
+
+            all_hardware_data.append({
+                "layer_name": name,
+                "weight_scale": w_scale,
+                "weights_shape": str(tuple(w_int.shape)),
+                "weight_bits" : weight_bits,
+                "weights_flat": w_int.flatten().tolist(),
+                "bias_bits" : bias_bits,
+                "bias_flat": b_int.flatten().tolist(),
+            })
         
-        # Extract folded weights, biases, and the scale
-        w_int_tensor, b_hw, w_scale = get_hardware_weights(fused_layer)
-
-        # Convert to numpy
-        w_int = w_int_tensor.to(torch.int8).cpu().numpy()
-        b_int = b_hw.to(torch.int32).cpu().numpy()
-
-        all_hardware_data.append({
-            "layer_name": name,
-            "weight_scale": w_scale, # Saved for debugging / reference math
-            "weights_shape": str(tuple(w_int.shape)),
-            "weight_bits" : weight_bits,
-            "weights_flat": w_int.flatten().tolist(),
-            "bias_bits" : bias_bits,
-            "bias_flat": b_int.flatten().tolist(),
-        })
+        elif isinstance(module, QuantizeActivation):
+            if module.bits == 1:
+                # 1-bit activation in PyTorch is {-1, 1}.
+                # In hardware it is {0, 1}. 
+                # The effective scale remains 1.0 because the weights/inputs
+                # are handled by XNOR logic which inherently maps {0, 1} back to {-1, 1}.
+                current_act_scale = 1.0
+            else:
+                qmax = (2 ** (module.bits - 1)) - 1
+                if module.clip_val is not None:
+                    clip = float(module.clip_val.abs().item())
+                    current_act_scale = clip / qmax
+                    print(f"  Detected Activation Scaling: {current_act_scale:.6f} (clip={clip:.3f}, qmax={qmax})")
+                else:
+                    current_act_scale = 1.0
+                    print(f"  Detected Activation Scaling: {current_act_scale:.6f} (Fixed Scale 1.0)")
 
     df = pd.DataFrame(all_hardware_data)
     df.to_csv(output_csv, index=False)

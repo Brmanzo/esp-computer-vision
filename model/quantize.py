@@ -138,7 +138,7 @@ class QuantConv2d(nn.Conv2d):
 class QuantizeActivationSTE(torch.autograd.Function):
     '''Quantized Straight-Through Estimator for Activations.'''
     @staticmethod
-    def forward(ctx, x, bits, clip_val=None):
+    def forward(ctx, x, bits, clip_val=None, learnable=True):
         '''Clipped and quantized within an integer range, then cast back to floats during forward pass.'''
         
         ctx.bits = bits
@@ -148,19 +148,22 @@ class QuantizeActivationSTE(torch.autograd.Function):
         if bits == 1:
             return torch.where(x > 0, 1.0, -1.0)
 
-        # 8-Bit Hardware-friendly symmetric quantization
+        # Multi-bit symmetric quantization
         qmin = -(2 ** (bits - 1))
         qmax = (2 ** (bits - 1)) - 1
 
-        if clip_val is None:
-            raise ValueError("clip_val must be provided when bits > 1")
+        if not learnable:
+            # Force scale to 1.0 to match hardware raw integer math
+            scale = 1.0
+            abs_clip = float(qmax)
+        else:
+            if clip_val is None:
+                raise ValueError("clip_val must be provided when bits > 1 and learnable=True")
+            # Use the learned clip_val
+            abs_clip = clip_val.abs().clamp(min=1e-4)
+            scale = abs_clip / qmax
 
-        # Use the learned clip_val instead of a dynamic batch maximum
-        # Clamp to a tiny minimum to avoid division by zero
-        abs_clip = clip_val.abs().clamp(min=1e-4)
-        scale = abs_clip / qmax
-
-        # Clamp inputs to the learned hardware range
+        # Clamp inputs to the clipping range
         x_c = torch.clamp(x, -abs_clip, abs_clip)
 
         # Quantize (Simulates hardware integer representation)
@@ -184,10 +187,10 @@ class QuantizeActivationSTE(torch.autograd.Function):
         # If binary activation, block gradients outside of [-1, 1]
         if bits == 1:
             grad_x[x.abs() > 1] = 0
-            return grad_x, None, None
+            return grad_x, None, None, None
 
         if clip_val is None:
-            return grad_x, None, None
+            return grad_x, None, None, None
 
         abs_clip = clip_val.abs()
 
@@ -199,21 +202,21 @@ class QuantizeActivationSTE(torch.autograd.Function):
             grad_clip_val = torch.sum(grad_output * (x > abs_clip).float()) - \
                             torch.sum(grad_output * (x < -abs_clip).float())
 
-        return grad_x, None, grad_clip_val
+        return grad_x, None, grad_clip_val, None
 
 class QuantizeActivation(nn.Module):
     '''Quantizes activations to a specified bit-width.'''
-    def __init__(self, bits=1):
+    def __init__(self, bits=1, learnable=True):
         super().__init__()
         self.bits = bits
+        self.learnable = learnable
         self.clip_val: Optional[nn.Parameter]
-        if bits > 1:
+        if bits > 1 and learnable:
             # Initialize the learnable clipping threshold. 
-            # 3.0 is a great starting point since BatchNorm keeps ~99% of values within [-3, 3]
             self.clip_val = nn.Parameter(torch.tensor(3.0)) 
         else:
             self.clip_val = None
 
     def forward(self, input):
         '''Return Quantized Straight Through Estimator output for activations.'''
-        return QuantizeActivationSTE.apply(input, self.bits, self.clip_val)
+        return QuantizeActivationSTE.apply(input, self.bits, self.clip_val, self.learnable)

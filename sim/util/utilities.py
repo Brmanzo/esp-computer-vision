@@ -288,6 +288,29 @@ def inject_params(parameters: dict, param: int, param_name: str, param_bits: int
     # 4. Pass the integer strictly through the OS environment to Cocotb testbench
     os.environ[f"INJECTED_{param_name.upper()}_INT"] = str(param)
 
+def inject_raw_param(parameters: dict, param: int, param_name: str, param_bits: int, work_dir: str, vh_name: str, env_name: str):
+    """
+    More flexible version of inject_params that allows specifying exact names.
+    """
+    # 1. Safely remove from CLI parameters dict
+    parameters.pop(param_name, None)
+
+    # 2. Calculate total bits and apply mask
+    mask = (1 << param_bits) - 1
+    packed_param = param & mask
+    hex_width = (param_bits + 3) // 4
+    
+    # 3. Write out the Verilog Header (.vh)
+    vh_path = os.path.join(work_dir, vh_name)
+    with open(vh_path, "w") as f:
+        f.write(
+            f"localparam logic signed [{param_bits-1}:0] {param_name} = "
+            f"{param_bits}'h{packed_param:0{hex_width}x};\n"
+        )
+
+    # 4. Pass via environment
+    os.environ[env_name] = str(param)
+
 def inject_weights_and_biases(simulator: Literal['verilator', 'icarus'], parameters: dict, param_str: str, tbpath: Path, test_class: str, Weights: int, Biases: int, weight_bits: int, bias_bits: int, layer: int = 0):
     """Helper function to inject both weights and biases using the inject_params function."""
     parameters.pop('test_name', None)

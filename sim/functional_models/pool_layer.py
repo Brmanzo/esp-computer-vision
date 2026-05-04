@@ -156,7 +156,7 @@ class PoolLayerModel():
             if self._r >= self._OH:
                 self._r = 0
 
-        return tuple(result)
+        return [tuple(result)]
 
     def consume(self):
         if self._dut is not None:

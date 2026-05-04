@@ -33,9 +33,10 @@ class cnn_model(nn.Module):
                 bias=False
             ))
             
-            # Stabilization: Add ReLU before quantization
-            feature_layers.append(nn.ReLU(inplace=True))
-            feature_layers.append(QuantizeActivation(bits=conv._out_bits))
+            feature_layers.append(QuantizeActivation(
+                bits=conv._out_bits,
+                learnable=(conv._out_bits == 1)
+            ))
             
             if pool is not None:
                 if pool._mode == 0:

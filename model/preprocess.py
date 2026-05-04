@@ -79,3 +79,10 @@ def prepare_data(dataset_download: str, img_h: int, img_w: int, in_bits: int, da
                               num_workers=4, pin_memory=True)
     
     return train_loader, test_loader, len(dataset.classes)
+def get_class_names(dataset_name: str = "roobansappani/hand-gesture-recognition") -> list[str]:
+    '''Returns the sorted list of class names from the dataset directory.'''
+    from pathlib import Path
+    import kagglehub
+    path = Path(kagglehub.dataset_download(dataset_name))
+    dataset_root = path / "HandGesture" / "images"
+    return sorted([d.name for d in dataset_root.iterdir() if d.is_dir()])

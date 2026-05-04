@@ -12,7 +12,7 @@ def sample_to_hex(sample_idx:int=0, path:Path=DATAPATH):
     dataset_name = "roobansappani/hand-gesture-recognition"
     if HAND_GESTURE_CFG.in_dims.height is None or HAND_GESTURE_CFG.in_dims.width is None or HAND_GESTURE_CFG._in_bits[0] is None:
         print("Error: HAND_GESTURE_CFG is missing input dimensions.")
-        return None
+        return None, None
     train_loader, test_loader, num_classes = prepare_data(
         dataset_name, 
         img_h      = HAND_GESTURE_CFG.in_dims.height,
@@ -33,7 +33,7 @@ def sample_to_hex(sample_idx:int=0, path:Path=DATAPATH):
     
     if img_t is None:
         print(f"Error: Sample index {sample_idx} out of range.")
-        return None
+        return None, None
     
     # 3. Save Visual Confirmation
     from torchvision.utils import save_image
@@ -52,38 +52,31 @@ def sample_to_hex(sample_idx:int=0, path:Path=DATAPATH):
     # If Mean > 0.5, the background is likely white (1), which might be wrong for hardware
     pixels = (img_t.flatten() > 0.5).int().tolist()
     
-    # 5. Save for Cocotb (JSON)
-    # import json
-    # json_path = DATAPATH / f"sample_{sample_idx}.json"
-    # if label is None:
-    #     print(f"Warning: Sample {sample_idx} not found in testloader. Using label 0.")
-    #     label = 0
+    return pixels, label
 
-    # sample_data = {
-    #     "sample_idx": sample_idx,
-    #     "label":  int(label),
-    #     "width":  HAND_GESTURE_CFG.in_dims.width,
-    #     "height": HAND_GESTURE_CFG.in_dims.height,
-    #     "mean":   mean_val,
-    #     "pixels": pixels
-    # }
-    # with open(json_path, 'w') as f:
-    #     json.dump(sample_data, f, indent=4)
-    # print(f"Saved cocotb-ready data to: {json_path}")
-
-    # # 6. Generate Verilog Hex (Legacy/Injection)
-    # packed_val = 0
-    # for i, p in enumerate(pixels):
-    #     packed_val |= (int(p) << i)
+def get_sample(sample_idx: int):
+    '''Returns preprocessed pixels and label for a specific dataset index.'''
+    dataset_name = "roobansappani/hand-gesture-recognition"
+    if HAND_GESTURE_CFG.in_dims.height is None or HAND_GESTURE_CFG.in_dims.width is None or HAND_GESTURE_CFG._in_bits[0] is None:
+        print("Error: HAND_GESTURE_CFG is missing input dimensions.")
+        return None, None
+    train_loader, test_loader, num_classes = prepare_data(
+        dataset_name, 
+        img_h      = HAND_GESTURE_CFG.in_dims.height,
+        img_w      = HAND_GESTURE_CFG.in_dims.width,
+        in_bits    = HAND_GESTURE_CFG._in_bits[0],
+        data_split = 0.8,
+        batch_size = 1
+    )
     
-    # total_bits = len(pixels)
-    # hex_str = f"{total_bits}'h{packed_val:x}"
-    
-    # # We output the hex to stdout so user can still redirect to .vh if they want
-    # print(f"\n// SystemVerilog Injection:")
-    # print(f"localparam logic [{total_bits-1}:0] SAMPLE_INPUT = {hex_str};")
-    
-    # return sample_data
+    for i, (batch_img, batch_label) in enumerate(test_loader):
+        if i == sample_idx:
+            img_t = batch_img[0]
+            label = int(batch_label[0])
+            pixels = (img_t.flatten() > 0.5).int().tolist()
+            return pixels, label
+            
+    return None, None
 
 if __name__ == "__main__":
     idx = int(sys.argv[1]) if len(sys.argv) > 1 else 0

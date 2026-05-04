@@ -51,6 +51,7 @@ My goal for this project is to implement a dynamic system that captures live dat
 - Dynamic HTML viewing of image over ESP32 Wi-Fi
 
 ## Milestones
+- **2026-05-03** — Verified Full CNN Integration in CocoTB using Pytorch
 - **2026-04-26** — Verified Classifier Layer with Pytorch amax-linear-argmax output
 - **2026-04-19** — Translate model specs into Pytorch Model, Verilog, and Testbench
 - **2026-04-06** — Mapped delay buffers to Icestorm BRAM, (8 channels/BRAM)
