@@ -180,11 +180,15 @@ class ModelConfig:
             # Layer-specific bias bits
             c_bias_bits = bias_bits[i] if isinstance(bias_bits, list) else bias_bits
 
-            # Weight bits are determined by the final quantized width
+            # Weight bits are determined by the final quantized width, but full precision 
+            # accumulation needs to account for the maximum possible width during training.
             c_weight_bits = q_schedule[i]._q_min_bits
+            c_max_weight_bits = q_schedule[i]._q_max_bits
             
             # 1. Determine In Bits
-            if i < len(in_bits):
+            if i == 0:
+                c_in_bits = in_bits[0]
+            elif i < len(in_bits) and in_bits[i] != -1:
                 c_in_bits = in_bits[i]
             else:
                 assert current_out_bits is not None, "Input bit-width is undefined for this layer"
@@ -206,10 +210,10 @@ class ModelConfig:
                 break # Classifier always concludes the model construction
 
             # 3. Otherwise, determine Out Bits for standard Conv layer
-            if i < len(in_bits) - 1:
+            if i < len(in_bits) - 1 and in_bits[i+1] != -1:
                 c_out_bits = in_bits[i+1]
             else:
-                c_out_bits = self.full_precision_acc_bits(c_in_ch, c_kernel, c_in_bits, c_weight_bits)
+                c_out_bits = self.full_precision_acc_bits(c_in_ch, c_kernel, c_in_bits, c_max_weight_bits)
 
             # 4. Create ConvConfig
             conv_cfg = ConvConfig(

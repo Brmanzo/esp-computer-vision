@@ -31,7 +31,8 @@ def render_header(BusBits):
         "  ,output [BusBits-1:0] data_o", # FIXED: No longer [0:0]
         ");",
         "",
-        "  `include \"injected_weights_0.vh\""
+        "  `include \"injected_weights_0.vh\"",
+        "",
     ]
 
     return "\n".join(lines)

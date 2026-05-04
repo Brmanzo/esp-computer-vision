@@ -79,7 +79,8 @@ module unpacker #(
   /* verilator lint_off UNUSEDSIGNAL */
   wire [ElasticWidth-1:0] elastic_out;
   assign unpacked_o = elastic_out[UnpackedWidth-1:0];
-  assign done_o = done;
+  // done_o now signals when the last element of a packed word is being consumed
+  assign done_o = elastic_out[UnpackedWidth] && valid_o && ready_i;
   // Elastic Buffer to decouple unpacking from downstream logic
   elastic #(
      .InBits(ElasticWidth)

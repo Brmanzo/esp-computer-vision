@@ -3,6 +3,7 @@ import pandas as pd
 import ast
 from   pathlib import Path
 from   datetime import datetime
+from   typing import Any
 
 from   model.config  import ModelConfig
 from   model.globals import DATAPATH, HAND_GESTURE_CFG
@@ -60,7 +61,7 @@ def export_model_to_csv(model_path: Path, config: ModelConfig, output_csv: Path)
     model.load_state_dict(state, strict=True)
     model.eval()
 
-    all_hardware_data = []
+    all_hardware_data: list[dict[str, Any]] = []
     current_act_scale = 1.0 # Input pixels are binarized {0, 1} or normalized, start at 1.0
 
     print("Exporting Fused QAT layers to hardware CSV with scale propagation...")

@@ -27,7 +27,6 @@ class QSchedule:
         epochs_passed = current_epoch - self._q_start
         accumulated_epochs = 0
         # walk through the schedule to find our current bit-width
-        # Walk through the schedule to find our current bit-width
         for i, duration in enumerate(self._epochs_per_bit):
             accumulated_epochs += duration
             if epochs_passed < accumulated_epochs:

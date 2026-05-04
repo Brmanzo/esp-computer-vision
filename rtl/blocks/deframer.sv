@@ -42,8 +42,6 @@ module deframer #(
   /* ---------------------------------------- Counter Logic ---------------------------------------- */
   logic [CountWidth-1:0] counter_q;
 
-  wire  [0:0] counter_max = (counter_q == MaxCount);
-
   /* verilator lint_off PINCONNECTEMPTY */
   counter #(
     .Width(CountWidth)
@@ -51,6 +49,7 @@ module deframer #(
     .clk_i(clk_i)
     ,.rst_i(rst_i || (state_q == Header0))
 
+    // Stop incrementing once we've reached the last element
     ,.up_i((state_q == Forward) && in_fire && !counter_max)
     ,.down_i(1'b0)
 
@@ -59,25 +58,15 @@ module deframer #(
   );
 
   /* ------------------------------------------- FSM Logic ------------------------------------------- */
-  wire  [0:0] last_output = (state_q == Forward) && out_fire && unpack_done && counter_max;
-  logic [0:0] last_output_q;
-  logic [UnpackedWidth-1:0] unpacked_q, unpacked_d;
-  logic [0:0] valid_q, valid_d;
+  // counter_max now signals when we are processing the VERY LAST word of the packet
+  wire  [0:0] counter_max = (counter_q == CountWidth'(PacketLenElems - 1));
   // Current state logic
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
       state_q       <= Header0;
-      unpacked_q    <= '0;
-      valid_q       <= 1'b0;
-      last_output_q <= 1'b0;
     end else begin
-      unpacked_q <= unpacked_d;
-      valid_q    <= valid_d;
-      // Latch "packet done" and hold until the state machine can advance
-      if (state_q == Forward && last_output) last_output_q <= 1'b1;
-      if (state_q == Header0)               last_output_q <= 1'b0;
-      // Advance state: header states on in_fire, Forward once consumer acks last output
-      if (((state_q != Forward) && in_fire) || last_output_q) begin
+      // Advance state: header states on in_fire, Forward once last word is accepted
+      if (((state_q != Forward) && in_fire) || (state_q == Forward && in_fire && counter_max)) begin
         state_q <= state_d;
       end
     end
@@ -101,30 +90,19 @@ module deframer #(
         end
       end
       Forward: begin
-        if (last_output_q && ready_i) state_d = Header0;
+        if (in_fire && counter_max) state_d = Header0;
       end
       default: state_d = Header0;
     endcase
   end
 
-  // Output data after header bytes have been received
-  always_comb begin
-    unpacked_d  = unpacked_q;
-    valid_d = valid_q;
-    case (state_q)   // Invalid data until forwarding
-      Header0: begin unpacked_d = '0;          valid_d = 1'b0;         end
-      Header1: begin unpacked_d = '0;          valid_d = 1'b0;         end
-      Forward: begin unpacked_d = unpack_data; valid_d = unpack_valid; end
-      default: begin unpacked_d = '0;          valid_d = 1'b0;         end
-    endcase
-  end
   /* --------------------------------------- Output Assignments --------------------------------------- */
-  // Assigning combinational data to output in same cycle as unpacker
-  assign unpacked_o = unpacked_d;
-  // Valid output only when forwarding valid data
-  assign valid_o = valid_d;
-  // Always ready for data during header states, when forwarding,
-  // we defer forward pressure to the unpacker module
+  // Output signals are driven directly by the unpacker to allow overlapping packets
+  assign unpacked_o = unpack_data;
+  assign valid_o    = unpack_valid;
+
+  // Always ready for data during header states. When forwarding,
+  // we defer pressure to the unpacker unless we are finishing the packet.
   assign ready_o = (state_q == Forward) ? unpack_ready : 1'b1;
 
 
@@ -138,12 +116,12 @@ module deframer #(
     ,.rst_i     (rst_i)
 
     ,.packed_i  (data_i)
-    ,.valid_i   ((state_q == Forward) && valid_i && !counter_max) // Inputs are only valid in forward state
+    ,.valid_i   ((state_q == Forward) && valid_i) // Inputs are only valid in forward state
     ,.ready_o   (unpack_ready)
 
     ,.unpacked_o(unpack_data)
     ,.valid_o   (unpack_valid)
-    ,.ready_i   ((state_q == Forward) && ready_i) // Only accept output in forward state
+    ,.ready_i   (ready_i) // Allow unpacker to finish even if FSM transitions to Header0
     ,.done_o    (unpack_done)
   );
 

@@ -86,7 +86,7 @@ async def full_cnn_test(dut) -> None:
     assert label is not None
     
     print(f"\n--- CNN VERIFICATION RESULTS (Sample {sample_idx}) ---")
-    print(f"Ground Truth:    {int(label)} ({class_names[int(label)]})")
+    print(f"Ground Truth:    {label} ({class_names[label]})")
     print(f"Hardware Output: {got_id} ({class_names[got_id]})")
     print(f"PyTorch Ref:     {torch_id} ({class_names[torch_id]})")
     

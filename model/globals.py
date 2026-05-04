@@ -11,7 +11,7 @@ def get_hand_gesture_cfg(num_classes: int = 10, img_h: int = 240, img_w: int = 3
     return ModelConfig(
         input_dimensions = InputDimensions(img_w, img_h),
         in_channels      = [1, 8, 16, 24, 32],
-        in_bits          = [1, 1, 1, 1, 24],
+        in_bits          = [1, 1, 1, 1, -1], # -1 indicates full precision
         kernels          = [[3,2], [3,2], [3,2], [3], [1]],
         padding          = 1,
         stride           = 1,
