@@ -1,6 +1,6 @@
 # classifier_layer.py
 import numpy as np
-from   typing import List
+from   typing import List, Optional
 
 from util.utilities  import assert_resolvable, sim_verbose
 from util.bitwise    import unpack_terms, pack_terms
@@ -21,26 +21,42 @@ class RandomDataGenerator:
         return (packed_din, raw_din)
 
 class ClassifierLayerModel:
-    def __init__(self, dut, weights: List[List[int]], biases: List[int]):
+    def __init__(self, dut=None, weights: Optional[List[List[int]]]=None, 
+                            biases:  Optional[List[int]]=None,
+                            **kwargs):
         self._dut = dut
-        self._data_i = dut.data_i
-        self._class_o = dut.class_o
 
-        # Global Max parameters
-        self._term_bits = int(dut.TermBits.value)
-        self._term_count = int(dut.TermCount.value)
-        self._term_counter = 0
-        self._current_max = None
+        if dut is not None:
+            # Interface Signals
+            self._data_i  = dut.data_i
+            self._class_o = dut.class_o
+            
+            # Global Max parameters
+            self._term_bits  = int(dut.TermBits.value)
+            self._term_count = int(dut.TermCount.value)
+            # Linear Parameters
+            self._in_channels = int(dut.InChannels.value)
+            self._class_count = int(dut.ClassCount.value)
+        else:
+            try:
+                self._term_bits   = int(kwargs["term_bits"])
+                self._term_count  = int(kwargs["term_count"])
+                self._in_channels = int(kwargs["in_channels"])
+                self._class_count = int(kwargs["class_count"])
+            except KeyError as e:
+                raise ValueError(f"Missing required parameter when dut is None: {e}")
 
-        # Linear Parameters
-        self._in_channels  = int(dut.InChannels.value)
-        self._class_count = int(dut.ClassCount.value)
-
-        # 2D array storing all weights in each filter: [OC][IC]
+        if weights is None:
+            raise ValueError("Weights must be provided to ClassifierLayerModel")
+        
         self.w = np.array(weights, dtype=int)
-        assert self.w.shape == (self._class_count, self._in_channels)
-
-        # 1D array storing bias for each output channel: [OC]
+        assert self.w.shape == (self._class_count, self._in_channels), (
+            f"Weights shape mismatch: got {self.w.shape}, expected ({self._class_count}, {self._in_channels}). "
+        )
+        
+        if biases is None:
+            biases = [0] * self._class_count
+            
         self.b = np.array(biases, dtype=int)
 
         # If scalar bias for OC=1, normalize to shape (1,)
@@ -49,16 +65,17 @@ class ClassifierLayerModel:
 
         assert self.b.shape == (self._class_count,), (
             f"Bias shape mismatch: got {self.b.shape}, expected ({self._class_count},). "
-            f"biases={biases!r}"
         )
 
+        self._term_counter = 0
         self._sequence_buffer: list[list[int]] = []
 
-    def consume(self):
-        assert_resolvable(self._data_i)
-        packed_in = int(self._data_i.value.integer)
-        x = unpack_terms(packed_in, self._term_bits, self._in_channels)
-
+    def step(self, x: List[int]) -> Optional[List[tuple]]:
+        """
+        Process a single input vector. Buffers until term_count is reached,
+        then performs the classification.
+        Returns [(class_id, logits)] on completion, otherwise None.
+        """
         # 1. Map values for 1-bit logic (0 -> -1) before buffering
         current_vector = [(1 if v == 1 else -1) if self._term_bits == 1 else v for v in x]
         self._sequence_buffer.append(current_vector)
@@ -82,38 +99,53 @@ class ClassifierLayerModel:
             for oc in range(self._class_count):
                 acc = self.b[oc]
                 for ic in range(self._in_channels):
-                    acc += self.w[oc][ic] * manual_max[ic]
+                    acc += int(self.w[oc][ic]) * int(manual_max[ic])
                 manual_logits.append(acc)
             
             manual_id = manual_logits.index(max(manual_logits))
 
             # --- CROSS-CHECK A vs B ---
-            # Use math.isclose or np.allclose if using floats, 
-            # but for integers, exact equality is expected.
-            assert manual_id == torch_id, (
+            assert manual_id == int(torch_id), (
                 f"Reference Mismatch! Internal Model: {manual_id}, Torch: {torch_id}. "
-                f"Check for tie-breaking or precision drift."
             )
 
             # Clean up for next handshake
             self._term_counter = 0
             self._sequence_buffer = []
 
-            # Return the golden data for produce() to check against BRAIN C (the DUT)
-            return [(torch_id, torch_logits)]
+            # Return the golden data
+            return [(int(torch_id), torch_logits)]
 
         return None
 
+    def consume(self):
+        if self._dut is None:
+            return None
+            
+        assert_resolvable(self._data_i)
+        packed_in = int(self._data_i.value.integer)
+        x = unpack_terms(packed_in, self._term_bits, self._in_channels)
+        
+        return self.step(x)
+
     def produce(self, expected):
+        if self._dut is None:
+            return
+            
         assert_resolvable(self._class_o)
 
-        expected_id, expected_logits = expected
+        if isinstance(expected, (list, tuple)):
+            expected_id = expected[0]
+            expected_logits = expected[1] if len(expected) > 1 else None
+        else:
+            expected_id = expected
+            expected_logits = None
         got_id = int(self._class_o.value.integer)
 
         if sim_verbose():
             print(
-                f"Produced class {got_id}, expected {expected_id}"
-                f"logits={expected_logits} at time {get_sim_time(units='ns')}ns"
+                f"Produced class {got_id}, expected {expected_id} "
+                f"at time {get_sim_time(units='ns')}ns"
             )
 
         assert got_id == expected_id, (

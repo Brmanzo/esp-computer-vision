@@ -5,7 +5,7 @@ from pathlib import Path
 from model.globals    import HAND_GESTURE_CFG, DATAPATH
 from model.preprocess import prepare_data, get_transforms
 
-def sample_to_hex(sample_idx=0):
+def sample_to_hex(sample_idx:int=0, path:Path=DATAPATH):
     '''Samples an image from the dataset, applies preprocessing, and returns a Verilog hex string.'''
     
     # 1. Load dataset using standard parameters from HAND_GESTURE_CFG
@@ -37,7 +37,7 @@ def sample_to_hex(sample_idx=0):
     
     # 3. Save Visual Confirmation
     from torchvision.utils import save_image
-    img_path = DATAPATH / f"sample_{sample_idx}.png"
+    img_path = path / f"sample_{sample_idx}.png"
     save_image(img_t, img_path)
     
     # Calculate stats to see if we should be inverting
