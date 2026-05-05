@@ -27,7 +27,7 @@ ice40.pdf: ice40.json
 
 synth-ice40: ice40.json
 ice40.json: $(TOP_SV) $(FILELIST) $(SYNTH_SOURCES)
-	$(YOSYS) -ql ice40.yslog -p 'read_verilog -sv $(TOP_SV) $(SYNTH_SOURCES); hierarchy -top top; synth_ice40 -dsp -top top; delete t:$$scopeinfo; clean -purge; write_json $@'
+	$(YOSYS) -ql ice40.yslog -p 'read_verilog -sv -DSYNTHESIS $(TOP_SV) $(SYNTH_SOURCES); hierarchy -top top; synth_ice40 -dsp -top top; delete t:$$scopeinfo; clean -purge; write_json $@'
 
 # These commands will always work.
 mapped.pdf: mapped.json
@@ -36,11 +36,11 @@ mapped.pdf: mapped.json
 
 synth-mapped: mapped.json
 mapped.json: $(FILELIST) $(SYNTH_SOURCES)
-	$(YOSYS) -ql mapped.yslog -p 'read_verilog -sv $(SYNTH_SOURCES); hierarchy -top $(ABSTRACT_TOP); synth_ice40 -dsp -top $(ABSTRACT_TOP); delete t:$$scopeinfo; clean -purge; write_json $@'
+	$(YOSYS) -ql mapped.yslog -p 'read_verilog -sv -DSYNTHESIS $(SYNTH_SOURCES); hierarchy -top $(ABSTRACT_TOP); synth_ice40 -dsp -top $(ABSTRACT_TOP); delete t:$$scopeinfo; clean -purge; write_json $@'
 
 synth-xilinx: mapped.json
 xilinx.json: $(FILELIST) $(SYNTH_SOURCES)
-	$(YOSYS) -ql xilinx.yslog -p 'read_verilog -sv $(SYNTH_SOURCES); hierarchy -top $(ABSTRACT_TOP); synth_xilinx -top $(ABSTRACT_TOP); xilinx_dsp; delete t:$$scopeinfo; clean -purge; write_json $@'
+	$(YOSYS) -ql xilinx.yslog -p 'read_verilog -sv -DSYNTHESIS $(SYNTH_SOURCES); hierarchy -top $(ABSTRACT_TOP); synth_xilinx -top $(ABSTRACT_TOP); xilinx_dsp; delete t:$$scopeinfo; clean -purge; write_json $@'
 
 xilinx.pdf: xilinx.json
 	$(NETLISTSVG) $< -o $(subst pdf,svg,$@)
@@ -53,7 +53,7 @@ abstract.pdf: abstract.json
 
 synth-abstract: abstract.json
 abstract.json: $(FILELIST) $(SYNTH_SOURCES)
-	$(YOSYS) -ql abstract.yslog -p 'read_verilog -sv $(SYNTH_SOURCES); hierarchy -top $(ABSTRACT_TOP); proc; opt; flatten; delete t:$$scopeinfo; clean -purge; write_json $@'
+	$(YOSYS) -ql abstract.yslog -p 'read_verilog -sv -DSYNTHESIS $(SYNTH_SOURCES); hierarchy -top $(ABSTRACT_TOP); proc; opt; flatten; delete t:$$scopeinfo; clean -purge; write_json $@'
 
 %.json:
 	@sv="$(call find_sv,$*)"; \
@@ -62,7 +62,7 @@ abstract.json: $(FILELIST) $(SYNTH_SOURCES)
 	  exit 1; \
 	fi; \
 	echo "[Yosys] $$sv -> $@ (top=$*)"; \
-	$(YOSYS) -ql $*.yslog -p "read_verilog -sv $$sv $(SYNTH_SOURCES); hierarchy -top $*; proc; opt; delete t:\$$scopeinfo; clean -purge; write_json $@"
+	$(YOSYS) -ql $*.yslog -p "read_verilog -sv -DSYNTHESIS $$sv $(SYNTH_SOURCES); hierarchy -top $*; proc; opt; delete t:\$$scopeinfo; clean -purge; write_json $@"
 
 %.pdf: %.json
 	$(NETLISTSVG) $< -o $(subst pdf,svg,$@)
@@ -75,7 +75,7 @@ abstract.json: $(FILELIST) $(SYNTH_SOURCES)
 	  exit 1; \
 	fi; \
 	echo "[Yosys] $$sv -> $@ (synth_ice40 top=$*)"; \
-	$(YOSYS) -ql $*.mapped.yslog -p "read_verilog -sv $$sv $(SYNTH_SOURCES); hierarchy -top $*; synth_ice40 -dsp -top $*; delete t:\$$scopeinfo; clean -purge; write_json $@"
+	$(YOSYS) -ql $*.mapped.yslog -p "read_verilog -sv -DSYNTHESIS $$sv $(SYNTH_SOURCES); hierarchy -top $*; synth_ice40 -dsp -top $*; delete t:\$$scopeinfo; clean -purge; write_json $@"
 
 %.mapped.pdf: %.mapped.json
 	$(NETLISTSVG) $< -o $(subst .pdf,.svg,$@)

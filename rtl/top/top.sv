@@ -34,7 +34,7 @@ module top #(
 
   dff #(
   ) sync_a (
-     .clk_i  (clk_25mhz_o)
+     .clk_i  (clk_12mhz_o)
     ,.reset_i(1'b0)
     ,.en_i   (1'b1)
     ,.d_i    (reset_n_async_unsafe_i & esp_rst_i)
@@ -49,7 +49,7 @@ module top #(
 
   dff #(
   ) sync_b (
-     .clk_i  (clk_25mhz_o)
+     .clk_i  (clk_12mhz_o)
     ,.reset_i(1'b0)
     ,.en_i   (1'b1)
     ,.d_i    (reset_sync_q)
@@ -61,7 +61,7 @@ module top #(
     for(genvar idx = 1; idx <= 3; idx++) begin : gen_sync
       dff #(
       ) sync_a ( 
-         .clk_i  (clk_25mhz_o)
+         .clk_i  (clk_12mhz_o)
         ,.reset_i(1'b0)
         ,.en_i   (1'b1)
         ,.d_i    (button_async_unsafe_i[idx])
@@ -70,7 +70,7 @@ module top #(
 
       dff #(
       ) sync_b (
-         .clk_i  (clk_25mhz_o)
+         .clk_i  (clk_12mhz_o)
         ,.reset_i(1'b0)
         ,.en_i   (1'b1)
         ,.d_i    (button_sync_q[idx])
@@ -113,22 +113,18 @@ wire [0:0] uart_tx;
 `endif
 
   uart_cnn #(
-     .WidthIn        (320)
-    ,.HeightIn       (240)
-    ,.KernelWidth    (3)
-    ,.WeightWidth    (2)
-    ,.BusWidth       (8)
-    ,.QuantizedWidth (1)
+     .WidthIn   (320)
+    ,.HeightIn  (240)
+    ,.BusBits   (8)
+    ,.InBits    (1)
   ) uart_cnn_inst (
-     .clk_i      (clk_25mhz_o)
+     .clk_i      (clk_12mhz_o)
     ,.rst_i      (rst_sync)
 
-    ,.button_i   (button_q[3:1])
     ,.rx_serial_i(uart_rx)
     ,.tx_serial_o(uart_tx)
 
     ,.uart_rts_o (rts)
-    ,.led_o      (led_o)
   );
 
 endmodule

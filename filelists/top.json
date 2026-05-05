@@ -1,31 +1,38 @@
 {
-    "top": "uart_sobel",
-    "files":
-    ["rtl/top/uart_sobel.sv"
-    ,"rtl/top/uart_cnn.sv"
-    ,"rtl/blocks/mag.sv"
-    ,"rtl/blocks/conv_layer.sv"
-    ,"rtl/blocks/pool_layer.sv"
-    ,"rtl/blocks/packer.sv"
-    ,"rtl/blocks/unpacker.sv"
-    ,"rtl/lib/counter.sv"
-    ,"rtl/lib/counter_roll.sv"
-    ,"rtl/lib/icestorm_ram.sv"
-    ,"rtl/lib/elastic.sv"
-    ,"rtl/vendor/dff.sv"
-    ,"rtl/vendor/inv.sv"
-    ,"boards/icebreakerV1_1a/SB_PLL40_2_PAD.sv"
-    ,"rtl/vendor/verilog-uart/uart_rx.v"
-    ,"rtl/vendor/verilog-uart/uart_tx.v"
-    ,"rtl/vendor/verilog-uart/uart.v"
-    ,"rtl/blocks/skid_buffer.sv"
-    ,"rtl/blocks/framer.sv"
-    ,"rtl/blocks/deframer.sv"
-    ,"rtl/lib/multi_delay_buffer.sv"
-    ,"rtl/lib/multi_delay_ram.sv"
-    ,"rtl/lib/mac.sv"
-    ,"rtl/lib/filter.sv"
-    ,"rtl/lib/window.sv"
-    ,"rtl/lib/adder_tree.sv"
+    "top": "uart_cnn",
+    "files": [
+        "rtl/top/uart_cnn.sv",
+        "rtl/blocks/conv_layer.sv",
+        "rtl/blocks/pool_layer.sv",
+        "rtl/blocks/unpacker.sv",
+        "rtl/lib/counter.sv",
+        "rtl/lib/counter_roll.sv",
+        "rtl/lib/icestorm_ram.sv",
+        "rtl/lib/elastic.sv",
+        "rtl/vendor/dff.sv",
+        "rtl/vendor/inv.sv",
+        "boards/icebreakerV1_1a/SB_PLL40_2_PAD.sv",
+        "rtl/vendor/verilog-uart/uart_rx.v",
+        "rtl/vendor/verilog-uart/uart_tx.v",
+        "rtl/vendor/verilog-uart/uart.v",
+        "rtl/blocks/skid_buffer.sv",
+        "rtl/blocks/framer.sv",
+        "rtl/blocks/deframer.sv",
+        "rtl/lib/multi_delay_buffer.sv",
+        "rtl/lib/multi_delay_ram.sv",
+        "rtl/lib/mac.sv",
+        "rtl/lib/filter.sv",
+        "rtl/lib/window.sv",
+        "rtl/lib/adder_tree.sv",
+        "rtl/blocks/class_framer.sv",
+        "rtl/blocks/classifier_layer.sv",
+        "rtl/blocks/cnn.sv",
+        "rtl/blocks/linear_layer.sv",
+        "rtl/lib/comparator_tree.sv",
+        "rtl/lib/global_max.sv",
+        "rtl/lib/max.sv",
+        "rtl/lib/avg.sv",
+        "rtl/lib/neuron.sv",
+        "rtl/lib/neuron_dsp.sv"
     ]
 }
