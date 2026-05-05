@@ -22,6 +22,7 @@
         "rtl/lib/multi_delay_ram.sv",
         "rtl/lib/mac.sv",
         "rtl/lib/filter.sv",
+        "rtl/lib/filter_dsp.sv",
         "rtl/lib/window.sv",
         "rtl/lib/adder_tree.sv",
         "rtl/blocks/class_framer.sv",

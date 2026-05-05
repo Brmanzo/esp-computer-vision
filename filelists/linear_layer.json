@@ -1,8 +1,9 @@
 {
     "top": "linear_layer",
-    "files":
-    ["rtl/blocks/linear_layer.sv"
-    ,"rtl/lib/neuron.sv"
-    ,"rtl/lib/adder_tree.sv"
+    "files": [
+        "rtl/blocks/linear_layer.sv",
+        "rtl/lib/neuron.sv",
+        "rtl/lib/adder_tree.sv",
+        "rtl/lib/neuron_dsp.sv"
     ]
 }

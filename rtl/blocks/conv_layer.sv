@@ -24,6 +24,7 @@ module conv_layer #(
   ,localparam int unsigned StrideBits = (Stride <= 1) ? 1 : $clog2(Stride)
 
   ,parameter int unsigned Padding = 0
+  ,parameter int unsigned UseDSP  = 0 // Set to 1 to use sequential DSP filters
 
   ,localparam int unsigned PaddedWidth  = LineWidthPx + (2 * Padding)
   ,localparam int unsigned PaddedHeight = LineCountPx + (2 * Padding)
@@ -54,8 +55,8 @@ module conv_layer #(
     longint unsigned max_input, max_weight, worst_case_sum;
     int unsigned wc_bits;
     begin
-      max_input = (64'd1 << (input_bits - 1));
-      max_weight = (64'd1 << (weight_bits - 1));
+      max_input = (input_bits <= 2) ? 64'd1 : (64'd1 << (input_bits - 1));
+      max_weight = (weight_bits <= 2) ? 64'd1 : (64'd1 << (weight_bits - 1));
       worst_case_sum = longint'(kernel_area) * max_input * max_weight * longint'(in_channels);
 
       wc_bits = $clog2(worst_case_sum + 1) + 1;  // assign to function name
@@ -172,10 +173,13 @@ module conv_layer #(
 
     // Only buffer if kernel exceeds 1x1, (if so row_buffers is simply data_i)
     if (KernelWidth > 1) begin : gen_delay_ram
-      logic signed [InChannels-1:0][KernelWidth-1:1][InBits-1:0] row_buffer_taps;
+      localparam int unsigned ChannelDelayBits = (KernelWidth - 1) * InBits;
+      logic [InChannels * ChannelDelayBits - 1 : 0] row_buffer_taps;
 
       for (genvar ch = 0; ch < InChannels; ch++) begin : gen_data_input_taps
-        assign row_buffers[ch][KernelWidth-1:1] = row_buffer_taps[ch];
+        for (genvar k = 1; k < KernelWidth; k++) begin : gen_row_taps
+          assign row_buffers[ch][k] = row_buffer_taps[(ch*ChannelDelayBits + (k-1)*InBits) +: InBits];
+        end
       end
 
       /* ---------------------------------- Buffer Generation Logic----------------------- */
@@ -239,25 +243,47 @@ module conv_layer #(
   /* ------------------------------------ Filter Logic ------------------------------------ */
   generate
     for (genvar ch = 0; ch < OutChannels; ch++) begin : gen_row_buffer_delayed
-      filter #(
-         .InBits     (InBits)
-        ,.OutBits    (OutBits)
-        ,.KernelWidth(KernelWidth)
-        ,.WeightBits (WeightBits)
-        ,.AccBits    (AccBits)
-        ,.InChannels (InChannels)
-      ) filter_inst (
-         .clk_i    (clk_i)
-        ,.rst_i    (rst_i)
-        ,.valid_i  (window_valid)
-        ,.ready_o  (filter_ready[ch])
-        ,.windows_i(windows_q)
-        ,.weights_i(Weights[ch*WeightIndex+:WeightIndex])
-        ,.bias_i   (Biases[ch*BiasBits+:BiasBits])
-        ,.ready_i  (ready_i)
-        ,.valid_o  (filter_valid[ch])
-        ,.data_o   (data_o[ch])
-      );
+      if (UseDSP) begin : gen_filter_dsp
+        filter_dsp #(
+           .InBits     (InBits)
+          ,.OutBits    (OutBits)
+          ,.KernelWidth(KernelWidth)
+          ,.WeightBits (WeightBits)
+          ,.AccBits    (AccBits)
+          ,.InChannels (InChannels)
+          ,.Bias       (Biases[ch*BiasBits+:BiasBits])
+        ) filter_inst (
+           .clk_i    (clk_i)
+          ,.rst_i    (rst_i)
+          ,.valid_i  (window_valid)
+          ,.ready_o  (filter_ready[ch])
+          ,.windows_i(windows_q)
+          ,.weights_i(Weights[ch*WeightIndex+:WeightIndex])
+          ,.ready_i  (ready_i)
+          ,.valid_o  (filter_valid[ch])
+          ,.data_o   (data_o[ch])
+        );
+      end else begin : gen_filter_lut
+        filter #(
+           .InBits     (InBits)
+          ,.OutBits    (OutBits)
+          ,.KernelWidth(KernelWidth)
+          ,.WeightBits (WeightBits)
+          ,.AccBits    (AccBits)
+          ,.InChannels (InChannels)
+          ,.Bias       (Biases[ch*BiasBits+:BiasBits])
+        ) filter_inst (
+           .clk_i    (clk_i)
+          ,.rst_i    (rst_i)
+          ,.valid_i  (window_valid)
+          ,.ready_o  (filter_ready[ch])
+          ,.windows_i(windows_q)
+          ,.weights_i(Weights[ch*WeightIndex+:WeightIndex])
+          ,.ready_i  (ready_i)
+          ,.valid_o  (filter_valid[ch])
+          ,.data_o   (data_o[ch])
+        );
+      end
     end
   endgenerate
 

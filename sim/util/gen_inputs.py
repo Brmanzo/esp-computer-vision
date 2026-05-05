@@ -11,6 +11,8 @@ def gen_random_signed(width, rng):
     """Generates a single signed (or BNN binary) integer."""
     if width == 1:
         return rng.randint(0, 1)
+    if width == 2:
+        return rng.choice([0, 1, 3])
     max_val = (1 << (width - 1)) - 1
     min_val = -(1 << (width - 1))
     return rng.randint(min_val, max_val)

@@ -96,6 +96,7 @@ def render_conv_layer(cfg: ConvConfig):
         f"    ,.Weights     (LAYER_{cfg._layer_num}_WEIGHTS)",
         f"    ,.Biases      (LAYER_{cfg._layer_num}_BIASES)",
         f"    ,.Padding     ({cfg._padding})",
+        f"    ,.UseDSP      ({cfg._use_dsp})",
         f"  ) conv_layer_inst_{cfg._layer_num} (",
         "     .clk_i     (clk_i)",
         "    ,.rst_i     (rst_i)",
@@ -149,6 +150,7 @@ def render_classifier_layer(cfg: ClassifierConfig):
         f"    ,.BiasBits   ({cfg._bias_bits})", # Bias bits are fixed to 8 for now since we haven't implemented quantized biases
         f"    ,.Weights    (LAYER_{cfg._layer_num}_WEIGHTS)",
         f"    ,.Biases     (LAYER_{cfg._layer_num}_BIASES)",
+        f"    ,.UseDSP     ({cfg._use_dsp})",
         f"  ) classifier_layer_inst_{cfg._layer_num} (",
         "     .clk_i   (clk_i)",
         "    ,.rst_i   (rst_i)",

@@ -16,7 +16,7 @@ module multi_delay_ram #(
   ,input  [0:0] in_fire
   ,input  signed [InChannels-1:0][InBits-1:0] data_i
   
-  ,output signed [InChannels-1:0][KernelWidth-1:1][InBits-1:0] data_o
+  ,output [InChannels * (KernelWidth-1) * InBits - 1 : 0] data_o
 );
 
   // Targetting IceStorm's 30 4kB embedded block RAMs
@@ -30,8 +30,11 @@ module multi_delay_ram #(
   //    max parameters for 1 channel:    3x3 kernel with 8 bit inputs or 17x17 kernel with 1 bit inputs
   //    max channels: 8 with parameters: 3x3 kernel with 1 bit inputs
 
+  localparam int unsigned ChannelDelayBits = (KernelWidth - 1) * InBits;
+  localparam int unsigned BufferBits       = ChannelsPerRam * ChannelDelayBits;
+
   logic [BufferCount-1:0][ChannelsPerRam-1:0][InBits-1:0] data_i_padded;
-  logic [BufferCount-1:0][ChannelsPerRam-1:0][KernelWidth-1:1][InBits-1:0] data_o_padded;
+  logic [BufferCount-1:0][BufferBits-1:0] data_o_padded;
 
   generate
     for (genvar buf_idx = 0; buf_idx < BufferCount; buf_idx++) begin : gen_ram_buffers
@@ -42,7 +45,7 @@ module multi_delay_ram #(
       for (genvar ch = 0; ch < ChannelsPerRam; ch++) begin : gen_padded_connections
         if (FirstCh + ch < InChannels) begin : gen_data_connections
           assign data_i_padded[buf_idx][ch] = data_i[FirstCh + ch];
-          assign data_o[FirstCh + ch] = data_o_padded[buf_idx][ch];
+          assign data_o[(FirstCh + ch)*ChannelDelayBits +: ChannelDelayBits] = data_o_padded[buf_idx][ch*ChannelDelayBits +: ChannelDelayBits];
         end else begin : gen_zero_connections
           assign data_i_padded[buf_idx][ch] = '0;
         end

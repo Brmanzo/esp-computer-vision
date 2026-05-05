@@ -147,9 +147,13 @@ class QuantizeActivationSTE(torch.autograd.Function):
         if bits == 1:
             return torch.where(x > 0, 1.0, -1.0)
 
-        # Multi-bit symmetric quantization
-        qmin = -(2 ** (bits - 1))
-        qmax = (2 ** (bits - 1)) - 1
+        # Multi-bit quantization
+        if bits == 2:
+            # Special case for ternary activations {-1, 0, 1}
+            qmin, qmax = -1, 1
+        else:
+            qmin = -(2 ** (bits - 1))
+            qmax = (2 ** (bits - 1)) - 1
 
         if not learnable:
             # Force scale to 1.0 to match hardware raw integer math
@@ -183,8 +187,8 @@ class QuantizeActivationSTE(torch.autograd.Function):
         grad_x = grad_output.clone()
         grad_clip_val = None
 
-        # If binary activation, block gradients outside of [-1, 1]
-        if bits == 1:
+        # If binary or ternary activation, block gradients outside of [-1, 1]
+        if bits == 1 or bits == 2:
             grad_x[x.abs() > 1] = 0
             return grad_x, None, None, None
 
@@ -212,7 +216,9 @@ class QuantizeActivation(nn.Module):
         self.clip_val: Optional[nn.Parameter]
         if bits > 1 and learnable:
             # Initialize the learnable clipping threshold. 
-            self.clip_val = nn.Parameter(torch.tensor(3.0)) 
+            # Ternary (bits=2) needs a smaller threshold than multi-bit to avoid a huge dead zone.
+            init_val = 1.0 if bits == 2 else 3.0
+            self.clip_val = nn.Parameter(torch.tensor(init_val)) 
         else:
             self.clip_val = None
 

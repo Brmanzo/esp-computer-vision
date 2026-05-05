@@ -1,4 +1,4 @@
-from typing import Callable, Tuple
+from typing import Callable, Tuple, Optional
 import numpy as np
 from PIL import Image
 import torch
@@ -59,7 +59,7 @@ def get_transforms(img_h: int, img_w: int, in_bits: int) -> Tuple[Callable, Call
 
     return tfm_base, train_aug
 
-def prepare_data(dataset_download: str, img_h: int, img_w: int, in_bits: int, data_split: float, batch_size: int) -> Tuple[DataLoader, DataLoader, int]:
+def prepare_data(dataset_download: str, img_h: int, img_w: int, in_bits: int, data_split: float, batch_size: int, max_classes: Optional[int] = None) -> Tuple[DataLoader, DataLoader, int]:
     '''Downloads the dataset and returns DataLoaders along with the number of classes.'''
     path = Path(kagglehub.dataset_download(dataset_download))
     dataset_root = path / "HandGesture" / "images"
@@ -67,6 +67,15 @@ def prepare_data(dataset_download: str, img_h: int, img_w: int, in_bits: int, da
     tfm_base, _ = get_transforms(img_h, img_w, in_bits)
     dataset = datasets.ImageFolder(dataset_root, transform=tfm_base)
     
+    # Constrain classes if requested
+    if max_classes is not None:
+        target_classes = sorted(dataset.classes)[:max_classes]
+        dataset.classes = target_classes
+        dataset.class_to_idx = {cls: i for i, cls in enumerate(target_classes)}
+        # Filter samples to only include the first max_classes
+        dataset.samples = [s for s in dataset.samples if s[1] < max_classes]
+        dataset.targets = [s[1] for s in dataset.samples]
+
     n = len(dataset) 
     n_train = int(data_split * n)
     n_test  = n - n_train

@@ -14,6 +14,7 @@ class cnn_model(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
         self.config = config
+        self._is_fine_tuning = False
 
         # 1. Dynamically Build the Feature Extractor
         feature_layers: list[nn.Module] = []
@@ -35,7 +36,7 @@ class cnn_model(nn.Module):
             
             feature_layers.append(QuantizeActivation(
                 bits=conv._out_bits,
-                learnable=(conv._out_bits == 1)
+                learnable=(conv._out_bits <= 2)
             ))
             
             if pool is not None:
@@ -62,6 +63,9 @@ class cnn_model(nn.Module):
             ),
         )
         
+        # 2b. Initialize Weights
+        self.apply(self._init_weights)
+
         # 3. Utilities
         self.ram_utilization()
         # Update cnn.sv with current architecture
@@ -82,6 +86,12 @@ class cnn_model(nn.Module):
         x = torch.flatten(x, 1)
         
         return x
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Conv2d) or isinstance(m, QuantConv2d):
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
 
     def ram_utilization(self) -> None:
         rams = BRAM_COUNT

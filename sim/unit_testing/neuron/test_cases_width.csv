@@ -4,3 +4,4 @@ InBits,WeightBits,InChannels,OutBits,BiasBits
 2,3,1,AUTO,3
 4,5,1,AUTO,5
 8,8,1,AUTO,8
+13,2,16,AUTO,32

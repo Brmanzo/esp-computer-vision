@@ -31,6 +31,13 @@ module mac #(
       for (genvar i = 0; i < TermCount; i++) begin : gen_binary_multiply
         assign addends[i] = window_i[i][0] ? acc_t'(weights_i[i]) : -acc_t'(weights_i[i]);
       end
+    // If ternary input, use MUX-based multiply
+    end else if (InBits == 2) begin : gen_ternary
+      for (genvar i = 0; i < TermCount; i++) begin : gen_ternary_multiply
+        assign addends[i] = (window_i[i] == 2'sb01) ?   acc_t'(weights_i[i]) :
+                            (window_i[i] == 2'sb11) ? - acc_t'(weights_i[i]) :
+                                                         acc_t'(0);
+      end
     // Otherwise multiply normally
     end else begin : gen_normal
       for (genvar i = 0; i < TermCount; i++) begin : gen_normal_multiply
@@ -40,13 +47,20 @@ module mac #(
   endgenerate
 
   // Accumulate the products using a balanced adder tree to minimize the critical path
-  adder_tree #(
-     .InBits     (OutBits) // products are sign extended to output width
-    ,.OutBits    (OutBits)
-    ,.AddendCount(TermCount)
-  ) adder_inst (
-     .addends_i(addends)
-    ,.sum_o    (sum_o)
-  );
+  always_comb begin 
+    sum_o = acc_t'(0);
+    for (int i = 0; i < TermCount; i++) begin : gen_acc
+      sum_o += addends[i];
+    end
+  end
+  
+  // adder_tree #(
+  //    .InBits     (OutBits) // products are sign extended to output width
+  //   ,.OutBits    (OutBits)
+  //   ,.AddendCount(TermCount)
+  // ) adder_inst (
+  //    .addends_i(addends)
+  //   ,.sum_o    (sum_o)
+  // );
 
 endmodule

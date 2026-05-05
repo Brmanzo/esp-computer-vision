@@ -18,7 +18,7 @@ module multi_delay_buffer #(
   ,input  [0:0]       valid_i
   ,output [0:0]       ready_o
 
-  ,output signed [InputChannels-1:0][BufferRows-1:0][BufferWidth-1:0] data_o
+  ,output [RamWidth-1:0] data_o
 
   ,output [0:0] valid_o
   ,input  [0:0] ready_i
@@ -88,13 +88,6 @@ module multi_delay_buffer #(
     ,.rd_data_o (ram_rd)
   );
 
-  // Assign data off of RAM read to output buses
-  generate
-    for (genvar ch = 0; ch < InputChannels; ch++) begin : gen_out_ch
-      for (genvar r = 0; r < BufferRows; r++) begin : gen_data_o
-        assign data_o[ch][r] = channel_rd[ch][(r+1)*BufferWidth-1 -: BufferWidth];
-      end
-    end
-  endgenerate
+  assign data_o = ram_rd;
 
 endmodule

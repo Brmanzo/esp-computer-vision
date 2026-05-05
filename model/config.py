@@ -19,7 +19,8 @@ class ConvConfig:
     def __init__(self, in_ch: int, in_bits: int,
                  out_bits: int, kernels: List[List[int]], stride: int, 
                  padding: int, q_schedule: QSchedule, layer_num: int, bias_bits: int, 
-                 out_ch: Optional[int] = None, input_dims: Optional[InputDimensions] = None):
+                 use_dsp: int = 0, out_ch: Optional[int] = None, 
+                 input_dims: Optional[InputDimensions] = None):
         
         self._input_dims = input_dims or InputDimensions(None, None)
         self._layer_num  = layer_num
@@ -38,6 +39,7 @@ class ConvConfig:
 
         self._stride  = stride
         self._padding = padding
+        self._use_dsp = use_dsp
 
         # Input logic
         # If first layer, always take top level inputs
@@ -60,18 +62,19 @@ class ConvConfig:
         self._valid_o = f"conv_{self._layer_num}_valid"
         self._data_o  = f"conv_{self._layer_num}_data"
         # If this is the last layer, connect to classifier
-        if self._layer_num == len(kernels) - 2:
-            self._ready_i = f"classifier_ready"
-        # If the next layer is a conv, connect to that conv
-        elif len(kernels[self._layer_num]) == 1:
-            self._ready_i = f"conv_{self._layer_num + 1}_ready"
-        # Otherwise, connect to the next layer's pool
-        else:
+        # Priority 1: If this block has a pooling layer, connect to it
+        if len(kernels[self._layer_num]) > 1:
             self._ready_i = f"pool_{self._layer_num}_ready"
+        # Priority 2: If this is the last block, connect to the classifier
+        elif self._layer_num == len(kernels) - 2:
+            self._ready_i = f"classifier_ready"
+        # Priority 3: Connect to the next layer's conv
+        else:
+            self._ready_i = f"conv_{self._layer_num + 1}_ready"
 
 class PoolConfig:
     '''Parameterizes each pooling layer for pytorch training, hardware generation, and cocotb verification.'''
-    def __init__(self, in_ch: int, in_bits: int, kernel: int, mode: str, layer_num: int, 
+    def __init__(self, in_ch: int, in_bits: int, kernel: int, mode: str, layer_num: int, num_layers: int,
                  line_width_px: Optional[int] = None, line_count_px: Optional[int] = None):
         self._input_dims = InputDimensions(line_width_px, line_count_px)
         self._layer_num  = layer_num
@@ -90,8 +93,12 @@ class PoolConfig:
         self._valid_i = f"conv_{self._layer_num}_valid"
         self._data_i  = f"conv_{self._layer_num}_data"
 
-        # Pool layers are always followed by the next layer's conv block
-        self._ready_i = f"conv_{self._layer_num + 1}_ready"
+        # Pool layers are always followed by the next layer's conv block, 
+        # unless it's the last feature layer which connects to the classifier.
+        if self._layer_num == num_layers - 2:
+            self._ready_i = f"classifier_ready"
+        else:
+            self._ready_i = f"conv_{self._layer_num + 1}_ready"
 
         # Pool layers are never at the immediate head or tail, so we don't need to
         # account for global input or output connections here.
@@ -102,7 +109,10 @@ class PoolConfig:
 class ClassifierConfig:
     '''Parameterizes the final classifier layer for pytorch training, hardware generation, and cocotb verification.'''
     def __init__(self, in_ch: int, in_bits: int, out_bits: int, num_classes: int, bias_bits: int,
-                 q_schedule: QSchedule, layer_num: int, line_width_px: Optional[int] = None, line_count_px: Optional[int] = None):
+                 q_schedule: QSchedule, layer_num: int, kernels: List[List[int]], 
+                 use_dsp: int = 0, line_width_px: Optional[int] = None, 
+                 line_count_px: Optional[int] = None):
+        self._use_dsp     = use_dsp
         self._in_ch       = in_ch
         self._in_bits     = in_bits
         self._out_bits    = out_bits
@@ -113,9 +123,13 @@ class ClassifierConfig:
 
         self._term_count = InputDimensions(line_width_px, line_count_px).term_count  # Classifier doesn't have spatial dimensions
 
-        # Classifier layers are always connected to the final solitary conv layer
-        self._valid_i = f"conv_{self._layer_num - 1}_valid"
-        self._data_i  = f"conv_{self._layer_num - 1}_data"
+        # Classifier layers are connected to the last feature block (either conv or pool)
+        if len(kernels[self._layer_num - 1]) > 1:
+            self._valid_i = f"pool_{self._layer_num - 1}_valid"
+            self._data_i  = f"pool_{self._layer_num - 1}_data"
+        else:
+            self._valid_i = f"conv_{self._layer_num - 1}_valid"
+            self._data_i  = f"conv_{self._layer_num - 1}_data"
 
         # Classifier layers are always followed by the next layer's conv block
         self._ready_i = f"ready_i"
@@ -141,9 +155,12 @@ class ModelConfig:
         return acc_bits
 
     def __init__(self, input_dimensions: InputDimensions, in_channels: List[int], 
-                 in_bits: List[int], kernels: List[List[int]], 
-                 stride:  List[int] | int, padding: List[int] | int, bias_bits: List[int] | int,
-                 num_classes: int, bus_width: int, q_schedule: List[QSchedule]):
+                 in_bits: List[int], kernels: List[List[int]], stride:  List[int] | int, 
+                 padding: List[int] | int, bias_bits: List[int] | int,
+                 num_classes: int, bus_width: int, q_schedule: List[QSchedule],
+                 use_dsp: Optional[List[int]] = None):
+        
+        self.num_classes = num_classes
         
         # In channels length defines the number of layers
         self.num_layers = len(in_channels)
@@ -161,6 +178,7 @@ class ModelConfig:
 
         # Quantization schedule for each layer, used in training, and also to determine bit-widths for weights and activations
         self.q_schedule = q_schedule
+        self.use_dsp    = use_dsp or ([0] * self.num_layers)
 
         # --- Running State Variables ---
         # These track the dimensions and bit-widths as data flows through the network
@@ -203,6 +221,8 @@ class ModelConfig:
                     num_classes=num_classes, 
                     q_schedule=q_schedule[i], 
                     layer_num=i,
+                    kernels=kernels,
+                    use_dsp=self.use_dsp[i],
                     bias_bits=c_bias_bits,
                     line_width_px=current_w, 
                     line_count_px=current_h
@@ -220,7 +240,8 @@ class ModelConfig:
                 in_ch=c_in_ch, in_bits=c_in_bits, out_bits=c_out_bits,
                 kernels=kernels, stride=c_stride, padding=c_pad, bias_bits=c_bias_bits,
                 q_schedule=q_schedule[i], out_ch=c_out_ch, layer_num=i,
-                input_dims=InputDimensions(current_w, current_h)
+                input_dims=InputDimensions(current_w, current_h),
+                use_dsp=self.use_dsp[i]
             )
     
             # 5. Update Spatial Dimensions (Post-Conv)
@@ -237,7 +258,8 @@ class ModelConfig:
                 p_kernel = kernels[i][1]
                 pool_cfg = PoolConfig(
                     in_ch=c_out_ch, in_bits=c_out_bits, kernel=p_kernel, mode="max",
-                    layer_num=i, line_width_px=current_w, line_count_px=current_h
+                    layer_num=i, num_layers=self.num_layers,
+                    line_width_px=current_w, line_count_px=current_h
                 )
                 # Pooling divides next layer's input dimensions by kernel width
                 if current_w is not None:

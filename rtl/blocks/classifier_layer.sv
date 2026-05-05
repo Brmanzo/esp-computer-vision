@@ -16,6 +16,7 @@ module classifier_layer #(
   ,localparam int unsigned WeightIndex = InChannels * WeightBits
   ,parameter logic signed [ClassCount*WeightIndex-1:0] Weights = '0
   ,parameter logic signed [ClassCount*BiasBits-1:0]    Biases  = '0
+  ,parameter int unsigned UseDSP  = 0
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -34,8 +35,8 @@ module classifier_layer #(
     input int unsigned input_width, weight_width, in_channels;
     longint unsigned max_input, max_weight, worst_case_sum;
     begin
-      max_input      = (64'd1 << input_width) - 1;
-      max_weight     = (64'd1 << (weight_width - 1)) - 1;
+      max_input      = (input_width <= 2) ? 64'd1 : (64'd1 << (input_width - 1));
+      max_weight     = (weight_width <= 2) ? 64'd1 : (64'd1 << (weight_width - 1));
       worst_case_sum = max_input * max_weight * longint'(in_channels);
 
       acc_width = $clog2(worst_case_sum + 1) + 1; // assign to function name
@@ -78,6 +79,7 @@ module classifier_layer #(
     ,.OutChannels (ClassCount)
     ,.Weights     (Weights)
     ,.Biases      (Biases)
+    ,.UseDSP      (UseDSP)
   ) linear_layer_inst (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)
