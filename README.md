@@ -79,9 +79,9 @@ My goal for this project is to implement a dynamic system that captures live dat
 - [Wire Jumpers](https://www.mouser.com/ProductDetail/Bud-Industries/BC-32626?qs=35lE6QEawPl6Nhk5Cl2jpw%3D%3D&mgh=1&utm_id=22173219802&utm_source=google&utm_medium=cpc&utm_marketing_tactic=amermsp&gad_source=1&gad_campaignid=22282221042&gclid=CjwKCAiA1obMBhAbEiwAsUBbIheD_8AtmTq2KaObIIA5rpbOFelhm25I9fOf8Q4eUZeYwtdDEaLhrxoCDswQAvD_BwE)
 
 ## Firmware Installation
-| Component | Version |
-|----------|---------|
-|Espressif toolchain | v6.1 (dev-1280-gb33c9cd7ce)|
+| Component           | Version                     |
+| ------------------- | --------------------------- |
+| Espressif toolchain | v6.1 (dev-1280-gb33c9cd7ce) |
 
 ```bash
 # Clone the repository
@@ -115,17 +115,17 @@ idf.py build flash monitor
 ```
 
 ## Hardware Installation
-| Component | Version |
-|----------|---------|
-| Yosys | 0.57 (git 3aca86049) |
-| nextpnr-ice40 | 0.6-3build5 |
-| Verilator | 5.020 |
-| Icarus Verilog | 12.0 |
-| Verible | v0.0-4051-g9fdb |
-| cocotb | 1.9.1 |
-| Python | 3.12.3 |
-| Netlistsvg | 1.0.2 |
-| librsvg (rsvg-convert) | 2.58.0 |
+| Component              | Version              |
+| ---------------------- | -------------------- |
+| Yosys                  | 0.57 (git 3aca86049) |
+| nextpnr-ice40          | 0.6-3build5          |
+| Verilator              | 5.020                |
+| Icarus Verilog         | 12.0                 |
+| Verible                | v0.0-4051-g9fdb      |
+| cocotb                 | 1.9.1                |
+| Python                 | 3.12.3               |
+| Netlistsvg             | 1.0.2                |
+| librsvg (rsvg-convert) | 2.58.0               |
 
 ```bash
 # Within a Python virtual environment run
@@ -144,30 +144,70 @@ GND         - GND     (PMOD1B)
 ```
 ### Synthesizing for Icebreaker Board
 ```bash
+# To check FPGA resource utilization
+make util
+
+# To generate a schematic of the hardware run
+make <MODULE>.pdf
+
 # within repo root run
 make bitstream
 
 # then flash the resulting ice40.bin using
 iceprog ice40.bin
+
+# To clean the current repository
+make clean
 ```
 
 ### Unit Testing
 ```bash
 # within sim/unit_testing/ open the module you'd like to test, then run
-make test
+make test VERBOSE=[0|1]
+
+# List available tests
+make list-tests
+
+# Run specific test(s) via keyword
+make test <KEYWORD>
+
+# Lint module and dependencies with Verilator and Verible
+make lint
+
+# To test all unit tests from root
+make test-all
+
+# To lint all unit tests from root
+make lint-all
+
+# To clean all unit tests from root
+make clean-all
 ```
 
 ## Model Training
 ```bash
+# To sample a preprocessed dataset item
+python3 -m model.sample <INDEX>
+
+# To train the model using the specs in globals.py
 python3 -m model.train
+
+# To fine tune the model post-training
+python3 -m model.train --finetune
+
+# To export model weights to verilog header file
+python3 -m model.export
+
+# To render the cnn.sv from the specs in globals.py
+python3 -m model.render
 ```
 
 ## Credits
-|Author| Source|
-|----------|---------|
-|Arducam | [RPI Pico Cam Project](https://github.com/ArduCAM/RPI-Pico-Cam) |
-|Alex Forencich | [Verilog-Uart Interface](https://github.com/alexforencichverilog-uart)|
-|Dustin Richmond |  [CSE 225 ASIC Design Course](https://courses.engineering.ucsc.edu/courses/cse225)|
+| Author          | Source                                                                            |
+| --------------- | --------------------------------------------------------------------------------- |
+| Arducam         | [RPI Pico Cam Project](https://github.com/ArduCAM/RPI-Pico-Cam)                   |
+| Alex Forencich  | [Verilog-Uart Interface](https://github.com/alexforencichverilog-uart)            |
+| Dustin Richmond | [CSE 225 ASIC Design Course](https://courses.engineering.ucsc.edu/courses/cse225) |
 
 ## License
 
