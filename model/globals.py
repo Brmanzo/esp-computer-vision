@@ -10,8 +10,8 @@ def get_hand_gesture_cfg(num_classes: int = 8, img_h: int = 240, img_w: int = 32
     '''Returns the standard hardware-aware ModelConfig for the hand-gesture recognition task.'''
     return ModelConfig(
         input_dimensions = InputDimensions(img_w, img_h),
-        in_channels      = [1, 4, 4, 6],
-        in_bits          = [1, 1, 1, 8], # Truncate Layer 2 output to 10 bits
+        in_channels      = [1, 4, 5, 7], # [1, 4, 4, 6],
+        in_bits          = [1, 1, 1, 5], # 1, 1, 1, 8 Truncate Layer 2 output to 10 bits
         kernels          = [[3,2], [3,2], [3,2], [1]],
         padding          = 1,
         stride           = 1,
@@ -21,7 +21,7 @@ def get_hand_gesture_cfg(num_classes: int = 8, img_h: int = 240, img_w: int = 32
         q_schedule       = [QSchedule(40, [5, 5, 5, 10, 20], 8, 4),
                             QSchedule(50, [5, 5, 5, 10, 20], 8, 4),
                             QSchedule(60, [5, 5, 5, 10, 20], 8, 4),
-                            QSchedule(70, [50], 10, 10)],
+                            QSchedule(70, [50], 8, 8)], # 10,10
         use_dsp          = [0, 0, 1, 2]) # Layer 2 uses 6 DSPs (UseDSP=1), Classifier uses 1 DSP (UseDSP=2)
 
 HAND_GESTURE_CFG = get_hand_gesture_cfg()
