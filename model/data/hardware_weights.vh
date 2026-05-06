@@ -1,14 +1,14 @@
 // Auto-generated hardware parameters
-// Date: May 06, 2026 02:28 AM
+// Date: May 06, 2026 10:15 AM
 
-localparam logic signed [143:0] LAYER_0_WEIGHTS = 144'hef0ffe1f1d15610b01252dbf3c9000f02103;
-localparam logic signed [ 31:0] LAYER_0_BIASES  = 32'h5fb06fb;
+localparam logic signed [143:0] LAYER_0_WEIGHTS = 144'hfe3f1fe712f020e0050011c5f03f3ca41d6a;
+localparam logic signed [ 31:0] LAYER_0_BIASES  = 32'hfbfbfb05;
 
-localparam logic signed [719:0] LAYER_1_WEIGHTS = 720'h120fc00f04f0bbc27522e15a140d4dc32d5f000001f10110000101000ff000000f0001000ff000f0010111000ff0000f0220000110f0423c211b0fd10c33fdc110242dd0d354f0d131d20100b0f00210f102ffefc50f2ed21110;
-localparam logic signed [ 39:0] LAYER_1_BIASES  = 40'hfffdfc00fd;
+localparam logic signed [719:0] LAYER_1_WEIGHTS = 720'hf20e0f0de0f103011e04f0b4e011f1d20d0e1110221f211c0f2ce211de5dff2f1e02f02111e24e0e1fd03dfe0d347f1203b2d020231000000f00000000000000f00f0000011f001000000010011000000000000000000f000010;
+localparam logic signed [ 39:0] LAYER_1_BIASES  = 40'hfefeff01fe;
 
-localparam logic signed [1259:0] LAYER_2_WEIGHTS = 1260'hf01000010feeffe7ebe14ff110e00e0feff1f262c564f02110e01f1011002f02ef10030f11f1e1f01fefff1eef1cef1de04103b5f2a23fd221e3e3cfe4cfb50c1300322e0003f2ef2010212cf01000f0020eeed2f0e212f0feff1ee1df0efbbdfe30ddeee222474110d1dfeedb9115f0e0e0dd0e00d211fe010d10e11f21e1001ddeff3d02d11e00f01e00f011f110010f000ff01ff00e0000001101000;
-localparam logic signed [  55:0] LAYER_2_BIASES  = 56'he4fce5e8f4eef2;
+localparam logic signed [1259:0] LAYER_2_WEIGHTS = 1260'h1000f0ff3011120104f012ff01fd0100030f21e0ff0ff000000010010000110ff0f100f00f00f0ff000000011000f00110000110000000f0f1f01f0f0ff0f0100f00001cff221100121020fe1dee10df0e112fefee0eeef0f1fff1021001f210200c3f00eeff0ff1eb0f1111205120eeaf10000e00fe0ff00f05d26e25d0ee71b51d1210010030e0fe1ff0ef10f20f10110f000000ffe010011e21f0101;
+localparam logic signed [  55:0] LAYER_2_BIASES  = 56'hfff7f6f3ecf9fd;
 
-localparam logic signed [447:0] LAYER_3_WEIGHTS = 448'h1de4d830eef5dc0501e3e6fa44fae5faeafee400ddfe0ed6e0e8313c5a0af82ef8311f2401077f191b01e809caecfc2912fbf1d7682f21f5;
-localparam logic signed [255:0] LAYER_3_BIASES  = 256'ha2000000230000007b00000051ffffff89ffffff510000005dffffffe1;
+localparam logic signed [447:0] LAYER_3_WEIGHTS = 448'h2513f50debdde0df0d15fbc9e018013ae7ede8c7edf2addb9bc714217dce0a180a3013447f1e4874ff09ced2d2dba4c60be041bd425acef8;
+localparam logic signed [255:0] LAYER_3_BIASES  = 256'h9e00000139000001aa000000f4fffffd37fffffd9f00000263fffffffb;

@@ -165,8 +165,7 @@ class PoolLayerModel():
             raw_val = unpack_terms(packed, int(self._dut.InBits.value), self._InChannels)
 
             # Call the pure math pipeline
-            expected = self.step(raw_val, in_fire=True)
-            return [expected] if expected is not None else None
+            return self.step(raw_val, in_fire=True)
 
     def produce(self, expected):
         if self._dut is not None:
