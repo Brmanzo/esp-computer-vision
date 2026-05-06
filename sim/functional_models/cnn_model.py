@@ -89,7 +89,7 @@ class CNNModel:
             "LineCountPx": cfg._input_dims.height,
             "InBits":      cfg._in_bits,
             "OutBits":     cfg._out_bits,
-            "WeightBits":  cfg._weight_bits,
+            "WeightBits":  cfg._q_schedule._q_min_bits,
             "BiasBits":    cfg._bias_bits,
             "InChannels":  cfg._in_ch,
             "OutChannels": cfg._out_ch,

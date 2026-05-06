@@ -188,15 +188,16 @@ make clean-all
 ## Model Design
 ```python
 # Schedule the weight quantization per layer using QSchedule
-QSchedule(
-  # Epoch to conclude full precision weights, and begin quantization
-  40,
-  # Epochs to train on every quantized bit-width, from initial to final 
-  [5, 5, 5, 10, 20],
-  # Initial quantized weight bit-width
-  8,
-  # Final quantized weight bit-width
-  4)
+  QSchedule(
+    # Epoch to conclude full precision weights, and begin quantization
+    40,
+    # Epochs to train on every quantized bit-width, from initial to final 
+    [5, 5, 5, 10, 20],
+    # Initial quantized weight bit-width
+    8,
+    # Final quantized weight bit-width
+    4
+  )
 ```
 
 ```python
@@ -227,7 +228,8 @@ QSchedule(
                         QSchedule(70, [50], 8, 8)],
     # Optional SB_MAC16 DSP allocation per layer
     # (0 = default comb logic, 1 = 1 DSP per channel, 2 = 1 DSP per layer)
-    use_dsp          = [0, 0, 1, 2])
+    use_dsp          = [0, 0, 1, 2]
+  )
 ```
 
 ```bash

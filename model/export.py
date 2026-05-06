@@ -109,8 +109,9 @@ def export_model_to_csv(model_path: Path, config: ModelConfig, output_csv: Path)
                     current_act_scale = clip / qmax
                     print(f"  Detected Activation Scaling: {current_act_scale:.6f} (clip={clip:.3f}, qmax={qmax})")
                 else:
-                    current_act_scale = 1.0
-                    print(f"  Detected Activation Scaling: {current_act_scale:.6f} (Fixed Scale 1.0)")
+                    # Handle fixed power-of-two scaling (shift)
+                    current_act_scale = 2.0 ** module.shift
+                    print(f"  Detected Activation Scaling: {current_act_scale:.6f} (Fixed Shift {module.shift})")
 
     df = pd.DataFrame(all_hardware_data)
     df.to_csv(output_csv, index=False)

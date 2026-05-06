@@ -60,8 +60,6 @@ module filter_dsp #(
             valid_r      <= 1'b0;
         end else begin
             if (in_fire) begin
-                windows_q    <= windows_i;
-                weights_q    <= weights_i;
                 if (TotalTerms > 1) begin
                     busy_q       <= 1'b1;
                     term_counter <= 1; // Start from second term on next cycle
@@ -84,9 +82,10 @@ module filter_dsp #(
     end
 
     /* ------------------------- DSP Mapping ------------------------- */
-    // Flatten the captured data for the multiplexer
-    wire signed [TotalTerms-1:0][InBits-1:0]     flat_windows = windows_q;
-    wire signed [TotalTerms-1:0][WeightBits-1:0] flat_weights = weights_q;
+    // Flatten the input data for the multiplexer. This is safe because
+    // the conv_layer stalls and holds the window stable while busy_q is high.
+    wire signed [TotalTerms-1:0][InBits-1:0]     flat_windows = windows_i;
+    wire signed [TotalTerms-1:0][WeightBits-1:0] flat_weights = weights_i;
 
     /* ------------------------ Serialization Logic ------------------------ */
     wire [TermBits-1:0] mux_idx = in_fire ? '0 : term_counter;

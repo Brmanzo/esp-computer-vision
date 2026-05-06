@@ -35,7 +35,8 @@ class cnn_model(nn.Module):
             
             feature_layers.append(QuantizeActivation(
                 bits=conv._out_bits,
-                learnable=(conv._out_bits <= 2)
+                learnable=(conv._out_bits <= 2),
+                shift=conv._shift
             ))
             
             if pool is not None:
@@ -88,9 +89,18 @@ class cnn_model(nn.Module):
 
     def _init_weights(self, m):
         if isinstance(m, nn.Conv2d) or isinstance(m, QuantConv2d):
-            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            # Check if it's a low-bit layer to use more conservative initialization
+            bits = getattr(m, '_weight_bits', 8)
+            actual_bits = bits if isinstance(bits, int) else getattr(bits, '_q_min_bits', 8)
+            
+            if actual_bits <= 2:
+                nn.init.normal_(m.weight, mean=0, std=0.01)
+            else:
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
+
 
     def rams_per_layer_feature(self, layer_cfg: ConvConfig | PoolConfig) -> int:
         if layer_cfg._kernel_width == 1:

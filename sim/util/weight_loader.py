@@ -37,7 +37,7 @@ def load_weights_from_vh(vh_path: str, config: ModelConfig) -> Tuple[Dict[str, A
         if w_name in raw_integers and cfg._out_ch is not None:
             unpacked_dict[w_name] = unpack_kernel_weights(
                 raw_integers[w_name], 
-                cfg._weight_bits, 
+                cfg._q_schedule._q_min_bits, 
                 cfg._out_ch, 
                 cfg._in_ch, 
                 cfg._kernel_width

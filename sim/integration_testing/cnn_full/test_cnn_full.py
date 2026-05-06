@@ -38,7 +38,7 @@ async def full_cnn_test(dut) -> None:
         B_int = int(os.environ[f"LAYER_{i}_BIASES_INT"])
         if cfg._bias_bits is None or cfg._bias_bits is None or cfg._out_ch is None:
             raise ValueError("Bias bits must be non-zero")
-        weights_dict[f"LAYER_{i}_WEIGHTS"] = unpack_kernel_weights(W_int, cfg._weight_bits, cfg._out_ch, cfg._in_ch, cfg._kernel_width)
+        weights_dict[f"LAYER_{i}_WEIGHTS"] = unpack_kernel_weights(W_int, cfg._q_schedule._q_min_bits, cfg._out_ch, cfg._in_ch, cfg._kernel_width)
         weights_dict[f"LAYER_{i}_BIASES"] = unpack_biases(B_int, cfg._bias_bits, cfg._out_ch)
         
     c_idx = len(config.layers)
@@ -124,9 +124,9 @@ def test_full() -> None:
         
         # Weights
         w_name = f"LAYER_{i}_WEIGHTS"
-        if cfg._weight_bits is None or cfg._out_ch is None or cfg._in_ch is None or cfg._kernel_width is None:
+        if cfg._q_schedule._q_min_bits is None or cfg._out_ch is None or cfg._in_ch is None or cfg._kernel_width is None:
             raise ValueError("Weight bits must be non-zero")
-        w_bits = cfg._out_ch * cfg._in_ch * cfg._kernel_width * cfg._kernel_width * cfg._weight_bits
+        w_bits = cfg._out_ch * cfg._in_ch * cfg._kernel_width * cfg._kernel_width * cfg._q_schedule._q_min_bits
         vh_w = f"layer_{i}_weights.vh"
         inject_raw_param(params, raw_dict[w_name], w_name, w_bits, work_dir, vh_w, f"{w_name}_INT")
         includes.append(f'`include "{vh_w}"')
@@ -169,6 +169,7 @@ def test_full() -> None:
         params=params,
         pymodule="test_cnn_full",
         testname=testname,
+        jsonname="cnn_full.json",
         work_dir=work_dir,
         sim_build=work_dir,
         includes=[work_dir],
