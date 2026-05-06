@@ -16,39 +16,40 @@ def get_hardware_weights(fused_layer: QuantConv2d, previous_act_scale: float = 1
     y = W * (x_hw * act_scale) + b  →  (W * act_scale) * x_hw + b
     '''
 
-    # 1. Recreate the exact BN fold that happened during training
-    bn_scale = fused_layer.bn_weight / torch.sqrt(fused_layer.running_var + fused_layer.eps)
-    folded_w = fused_layer.weight * bn_scale.view(-1, 1, 1, 1)
-    folded_b = fused_layer.bn_bias - (fused_layer.running_mean * bn_scale)
+    with torch.no_grad():
+        # 1. Recreate the exact BN fold that happened during training
+        bn_scale = fused_layer.bn_weight / torch.sqrt(fused_layer.running_var + fused_layer.eps)
+        folded_w = fused_layer.weight * bn_scale.view(-1, 1, 1, 1)
+        folded_b = fused_layer.bn_bias - (fused_layer.running_mean * bn_scale)
 
-    # Factor in the scale of the activations coming into this layer!
-    folded_w = folded_w * previous_act_scale
+        # Factor in the scale of the activations coming into this layer!
+        folded_w = folded_w * previous_act_scale
 
-    # 2. Retrieve the target bits directly from the layer
-    target_bits = int(fused_layer._weight_bits)
-    bias_bits = getattr(fused_layer, '_bias_bits', 8)
+        # 2. Retrieve the target bits directly from the layer
+        target_bits = int(fused_layer._weight_bits)
+        bias_bits = getattr(fused_layer, '_bias_bits', 8)
 
-    # 3. Quantize to hardware integers
-    qmin = -(2 ** (target_bits - 1))
-    qmax = (2 ** (target_bits - 1)) - 1
+        # 3. Quantize to hardware integers
+        qmin = -(2 ** (target_bits - 1))
+        qmax = (2 ** (target_bits - 1)) - 1
 
-    max_abs = folded_w.abs().max()
-    w_scale = max_abs / qmax if max_abs > 0 else 1.0
+        max_abs = folded_w.abs().max()
+        w_scale = max_abs / qmax if max_abs > 0 else 1.0
 
-    q_weights = torch.round(folded_w / w_scale)
-    q_weights = torch.clip(q_weights, qmin, qmax)
+        q_weights = torch.round(folded_w / w_scale)
+        q_weights = torch.clip(q_weights, qmin, qmax)
 
-    hw_bias = torch.round(folded_b / w_scale)
+        hw_bias = torch.round(folded_b / w_scale)
 
-    # Safety: clamp biases to hardware bit-width
-    b_max_val = 2**(bias_bits - 1) - 1
-    b_min_val = -2**(bias_bits - 1)
+        # Safety: clamp biases to hardware bit-width
+        b_max_val = 2**(bias_bits - 1) - 1
+        b_min_val = -2**(bias_bits - 1)
 
-    if (hw_bias > b_max_val).any() or (hw_bias < b_min_val).any():
-        print(f"  [WARNING] Bias saturating! Max={hw_bias.abs().max().item():.0f}, Limit={b_max_val}")
-        hw_bias = torch.clamp(hw_bias, b_min_val, b_max_val)
+        if (hw_bias > b_max_val).any() or (hw_bias < b_min_val).any():
+            print(f"  [WARNING] Bias saturating! Max={hw_bias.abs().max().item():.0f}, Limit={b_max_val}")
+            hw_bias = torch.clamp(hw_bias, b_min_val, b_max_val)
 
-    return q_weights, hw_bias, float(w_scale)
+        return q_weights, hw_bias, float(w_scale.item() if torch.is_tensor(w_scale) else w_scale)
 
 def export_model_to_csv(model_path: Path, config: ModelConfig, output_csv: Path):
     '''Loads the trained model, extracts the folded and quantized weights for

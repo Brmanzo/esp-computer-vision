@@ -7,3 +7,4 @@ InBits,LineWidthPx,KernelWidth,ChannelsPerRam,InChannels,BufferCount
 1,257,3,AUTO,8,AUTO
 1,260,3,AUTO,32,AUTO
 4,258,3,AUTO,2,AUTO
+5,80,2,AUTO,7,AUTO

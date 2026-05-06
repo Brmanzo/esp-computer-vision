@@ -19,6 +19,7 @@ RTL designed and tested on icebreaker V1.1a FPGA for hardware acceleration.
   - [Hardware Installation](#hardware-installation)
     - [Synthesizing for Icebreaker Board](#synthesizing-for-icebreaker-board)
     - [Unit Testing](#unit-testing)
+  - [Model Design](#model-design)
   - [Model Training](#model-training)
   - [Credits](#credits)
   - [License](#license)
@@ -182,6 +183,56 @@ make lint-all
 
 # To clean all unit tests from root
 make clean-all
+```
+
+## Model Design
+```python
+# Schedule the weight quantization per layer using QSchedule
+QSchedule(
+  # Epoch to conclude full precision weights, and begin quantization
+  40,
+  # Epochs to train on every quantized bit-width, from initial to final 
+  [5, 5, 5, 10, 20],
+  # Initial quantized weight bit-width
+  8,
+  # Final quantized weight bit-width
+  4)
+```
+
+```python
+# In globals.py, customize the model architecture using ModelConfig
+# Specifies Pytorch model, cnn.sv, and functional verification model
+  ModelConfig(
+    input_dimensions = InputDimensions(img_w, img_h),
+    # Input Channels per layer, length determines model size
+    in_channels      = [1, 4, 5, 7],
+    # Input Activation width per layer, clamped and rounded to signed int
+    in_bits          = [1, 1, 1, 5],
+    # Conv_layer kernel width and optional pool_layer kernel width per layer
+    kernels          = [[3,2], [3,2], [3,2], [1]],
+    # Padding for all Conv_layers, can be int or list
+    padding          = 1,
+    # Stride for all Conv_layers, can be int or list
+    stride           = 1,
+    # Output width of classifier (number of classes)
+    num_classes      = num_classes,
+    # Output width of final class ID
+    bus_width        = 8,
+    # Bias width per layer, can be int or list
+    bias_bits        = [8, 8, 8, 32],
+    # Progressive Quantization Scheduling per layer
+    q_schedule       = [QSchedule(40, [5, 5, 5, 10, 20], 8, 4),
+                        QSchedule(50, [5, 5, 5, 10, 20], 8, 4),
+                        QSchedule(60, [5, 5, 5, 10, 20], 8, 4),
+                        QSchedule(70, [50], 8, 8)],
+    # Optional SB_MAC16 DSP allocation per layer
+    # (0 = default comb logic, 1 = 1 DSP per channel, 2 = 1 DSP per layer)
+    use_dsp          = [0, 0, 1, 2])
+```
+
+```bash
+# To report BRAM and DSP Usage along with model architecture
+python3 -m model.model
 ```
 
 ## Model Training

@@ -16,7 +16,7 @@ from model.preprocess import prepare_data, get_transforms
 from model.globals    import get_hand_gesture_cfg
 
 
-def train_model(model: nn.Module, train_loader: DataLoader, test_loader: DataLoader, train_aug: Callable, cfg: ModelConfig, device: str, 
+def train_model(model: nn.Module, train_loader: DataLoader, test_loader: DataLoader, train_aug: Callable, cfg: ModelConfig, device: str, global_max:float,
                 epochs: int, lr: float, weight_decay: float, model_save_path: Path, initial_best_acc: float = 0.0, is_fine_tuning: bool = False) -> Tuple[List[float], List[float]]:
     '''Executes the full training and progressive quantization schedule.'''
     
@@ -48,7 +48,8 @@ def train_model(model: nn.Module, train_loader: DataLoader, test_loader: DataLoa
 
     for epoch in range(epochs):
         if epoch == begin_q_epochs:
-            print("\n--- STARTING PROGRESSIVE QUANTIZATION ---")
+            if not getattr(model, '_is_fine_tuning', False):
+                print("\n--- STARTING PROGRESSIVE QUANTIZATION ---")
             
         # 1. Scheduling Logic
         quant_layer_idx = 0
@@ -119,7 +120,11 @@ def train_model(model: nn.Module, train_loader: DataLoader, test_loader: DataLoa
         if test_acc > best_test_acc:
             best_test_acc = test_acc
             torch.save(model.state_dict(), model_save_path)
-            print(f"  --> New best model saved! (Acc: {best_test_acc:.3f})")
+            if test_acc >= global_max:
+                global_max = test_acc
+                print(f"\033[32m  --> New best model saved! (Acc: {best_test_acc:.3f})\033[0m")
+            else:
+                print(f"\033[93m  --> New best model saved! (Acc: {best_test_acc:.3f} but not global max)\033[0m")
         else:
             print("")
 
@@ -147,6 +152,7 @@ def main():
     IN_BITS = 1
     LEARNING_RATE = args.lr
     WEIGHT_DECAY  = 1e-5
+    global_max = 0.0
     
     dataset_name = "roobansappani/hand-gesture-recognition"
     datapath   = Path("model") / "data"
@@ -198,18 +204,19 @@ def main():
                 correct += (pred == y).sum().item()
                 total   += y.numel()
         initial_acc = correct / total
+        global_max = initial_acc
         print(f"Loaded model accuracy: {initial_acc:.3f}")
 
         # Run for specified epochs at fine-tune LR
         train_acc_history, test_acc_history = train_model(
-            model, train_loader, test_loader, train_aug, cfg, device,
+            model, train_loader, test_loader, train_aug, cfg, device, global_max,
             epochs=args.epochs, lr=1e-3, weight_decay=1e-6, model_save_path=model_path,
             initial_best_acc=initial_acc, is_fine_tuning=True
         )
     else:
         EPOCHS = args.epochs
         train_acc_history, test_acc_history = train_model(
-            model, train_loader, test_loader, train_aug, cfg, device,
+            model, train_loader, test_loader, train_aug, cfg, device, global_max,
             epochs=EPOCHS, lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY, model_save_path=model_path
         )
 

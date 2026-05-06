@@ -4,10 +4,9 @@
 import torch
 import torch.nn as nn
 
-BRAM_COUNT = 30 - 1 # Subtract 1 for the Skid Buffer BRAM on deframer
-
-from model.config   import ModelConfig
+from model.config   import ModelConfig, ConvConfig, PoolConfig
 from model.quantize import QuantConv2d, QuantizeActivation
+from model.globals  import get_hand_gesture_cfg, BRAM_COUNT, DSP_COUNT
 
 class cnn_model(nn.Module):
     '''Construct the Pytorch CNN model based on provided Model Config.'''
@@ -93,22 +92,56 @@ class cnn_model(nn.Module):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
+    def rams_per_layer_feature(self, layer_cfg: ConvConfig | PoolConfig) -> int:
+        if layer_cfg._kernel_width == 1:
+            return 0
+            
+        if layer_cfg._input_dims.width is not None:
+            # Target bit-width per RAM based on line length
+            target_ram_bits = 16 if (layer_cfg._input_dims.width - 1) <= 256 else 8
+            
+            # Each channel takes (KernelWidth-1)*InBits bits of width in the RAM
+            kernel_size = (layer_cfg._kernel_width - 1) * layer_cfg._in_bits
+            channels_per_ram = target_ram_bits // kernel_size
+            if channels_per_ram == 0: channels_per_ram = 1 # Safety for very large kernels/bits
+            
+            rams_per_layer = (layer_cfg._in_ch + channels_per_ram - 1) // channels_per_ram
+            return rams_per_layer
+        return 0
+
     def ram_utilization(self) -> None:
         rams = BRAM_COUNT
-        
         for layer_cfg in self.config.layers:
-            conv = layer_cfg.ConvLayer
-            if conv._kernel_width == 1:
-                continue # Skip 1x1 convolutions (classifier)
-                
-            # Access the pre-calculated width directly from config
-            if conv._input_dims.width is None:
-                raise ValueError(f"Input dimensions for layer {conv._layer_num} are not defined. Cannot calculate RAM utilization.")
-            target_ram_bits = 16 if (conv._input_dims.width - 1) <= 256 else 8
-            channels_per_ram = target_ram_bits // (conv._kernel_width - 1) * conv._in_bits
-            rams_per_layer = (conv._in_ch + channels_per_ram - 1) // channels_per_ram
-            
-            rams -= rams_per_layer
+            rams -= self.rams_per_layer_feature(layer_cfg.ConvLayer)
+            if layer_cfg.PoolLayer is not None:
+                rams -= self.rams_per_layer_feature(layer_cfg.PoolLayer)
         
         assert rams >= 0, f"Model exceeds BRAM budget! Remaining: {rams}"
-        print(f"BRAMs remaining after model layers: {rams}")
+        used = BRAM_COUNT - rams
+        utilization = (used / BRAM_COUNT) * 100
+        print(f"BRAMs: {rams} remaining / {BRAM_COUNT} total ({utilization:.1f}% utilization)")
+    
+    def dsp_utilization(self) -> None:
+        dsp = DSP_COUNT
+        for layer_cfg in self.config.layers:
+            dsp -= layer_cfg.ConvLayer._use_dsp * layer_cfg.ConvLayer._out_ch
+        
+        classifier = self.config.classifier_config
+        if classifier._use_dsp == 1:
+            dsp -= classifier._num_classes
+        elif classifier._use_dsp == 2:
+            dsp -= 1
+            
+        assert dsp >= 0, f"Model exceeds DSP budget! Remaining: {dsp}"
+        used = DSP_COUNT - dsp
+        utilization = (used / DSP_COUNT) * 100
+        print(f"DSPs: {dsp} remaining / {DSP_COUNT} total ({utilization:.1f}% utilization)")
+
+if __name__ == "__main__":
+    model = cnn_model(get_hand_gesture_cfg())
+    print("\n--- MODEL ARCHITECTURE ---")
+    print(model)
+    print("\n--- RESOURCE UTILIZATION ---")
+    model.ram_utilization()
+    model.dsp_utilization()
+    print("")
