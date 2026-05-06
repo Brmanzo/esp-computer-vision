@@ -80,24 +80,26 @@ module filter #(
   logic signed [OutBits-1:0] data_d, data_q;
   assign data_o = data_q;
 
-  always_comb begin
-    // If binary activation, encode a positive sum as 1 and a negative sum as 0
-    biased_sum_d = sum_pre_elastic_q + AccBits'($signed(Bias)); // Use parameter Bias
-    if (OutBits == 1) begin
-      data_d = (biased_sum_d > 0) ? OutBits'(1) : OutBits'(0);
-    // OutBits==2: ternary sign decision matching quantize.py convention (1 if positive, -1 if negative, 0 if zero)
-    end else if (OutBits == 2) begin
-      data_d = (biased_sum_d > 0) ? OutBits'(1) :
-               (biased_sum_d < 0) ? OutBits'(-1) :
-                                    OutBits'(0);
-    end else if (OutBits == AccBits) begin
-      data_d = OutBits'(biased_sum_d);
-    end else begin
+  assign biased_sum_d = sum_pre_elastic_q + AccBits'($signed(Bias)); // Use parameter Bias
+
+  /* ------------------------------ Output Logic ------------------------------ */
+  // Binary encoding {-1,1} -> {0,1}, 1 when positive, 0 when negative
+  generate
+    if (OutBits == 1) begin : gen_binary_out
+      assign data_d = (biased_sum_d > 0) ? OutBits'(1) : OutBits'(0);
+    // Ternary encoding {-1,0,1}, 1 when positive, -1 when negative, 0 when zero
+    end else if (OutBits == 2) begin : gen_ternary_out
+      assign data_d = ( (biased_sum_d > 0) ? OutBits'(1) :
+                        (biased_sum_d < 0) ? OutBits'(-1) :
+                                             OutBits'(0) );
+    end else if (OutBits >= AccBits) begin : gen_full_or_extended_out
+      assign data_d = OutBits'($signed(biased_sum_d));
+    end else begin : gen_truncated_out
       // Bit-slicing (Arithmetic Shift Right)
       // Take the top OutBits of the accumulator
-      data_d = biased_sum_d[AccBits-1 -: OutBits];
+      assign data_d = biased_sum_d[AccBits-1 -: OutBits];
     end
-  end
+  endgenerate
 
   elastic #(
      .InBits       (OutBits)

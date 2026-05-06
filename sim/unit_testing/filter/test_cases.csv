@@ -10,4 +10,4 @@ InBits,WeightBits,BiasBits,KernelWidth,InChannels,AccBits,OutBits
 8,2,8,3,2,AUTO,1
 8,2,8,3,16,AUTO,1
 1,2,8,3,32,AUTO,AUTO
-
+8,8,8,3,4,AUTO,8

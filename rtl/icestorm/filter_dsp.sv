@@ -106,7 +106,7 @@ module filter_dsp #(
 
     wire signed [AccBits-1:0] acc_o;
 
-    // Single DSP core for multiplying and accumulating the filter's terms.
+    // Single DSP core for multiplying and accumulating the filter's terms
     neuron_dsp #(
         .InBits    (`SB_MAC16_IN),
         .WeightBits(`SB_MAC16_IN),
@@ -124,19 +124,19 @@ module filter_dsp #(
     );
 
     /* ------------------------- Output Activation ------------------------- */
-    always_comb begin
-        if (OutBits == 1) begin
-            data_o = (acc_o > 0) ? OutBits'(1) : OutBits'(0);
-        end else if (OutBits == 2) begin
-            data_o = (acc_o > 0) ? OutBits'(1) :
-                     (acc_o < 0) ? OutBits'(-1) :
-                                   OutBits'(0);
-        end else if (OutBits == AccBits) begin
-            data_o = acc_o;
-        end else begin
+    generate
+        if (OutBits == 1) begin : gen_binary_out
+            assign data_o = (acc_o > 0) ? OutBits'(1) : OutBits'(0);
+        end else if (OutBits == 2) begin : gen_ternary_out
+            assign data_o = (acc_o > 0) ? OutBits'(1) :
+                            (acc_o < 0) ? OutBits'(-1) :
+                                          OutBits'(0);
+        end else if (OutBits >= AccBits) begin : gen_full_or_extended_out
+            assign data_o = OutBits'($signed(acc_o));
+        end else begin : gen_truncated_out
             // MSB Selection / Bit-slicing
-            data_o = acc_o[AccBits-1 -: OutBits];
+            assign data_o = acc_o[AccBits-1 -: OutBits];
         end
-    end
+    endgenerate
 
 endmodule

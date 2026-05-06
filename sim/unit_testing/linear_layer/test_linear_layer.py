@@ -45,7 +45,7 @@ gen_rules = [
 TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases_width.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("UseDSP", [0, 1])
+@pytest.mark.parametrize("UseDSP", [0, 1, 2])
 @auto_unpack(TEST_CASES)
 def test_width(test_name, simulator,
                InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases, UseDSP):
@@ -84,7 +84,7 @@ def test_width(test_name, simulator,
 TEST_CASES_CHANNELS = load_tests_from_csv(os.path.join(tbpath, "test_cases_channels.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("UseDSP", [0, 1])
+@pytest.mark.parametrize("UseDSP", [0, 1, 2])
 @auto_unpack(TEST_CASES_CHANNELS)
 def test_channels(test_name, simulator,
                   InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases, UseDSP):
@@ -113,7 +113,7 @@ def test_channels(test_name, simulator,
 @pytest.mark.parametrize("simulator", ["verilator"])
 @pytest.mark.parametrize("InBits, WeightBits, InChannels, OutBits, OutChannels, BiasBits", 
                          [(1, 2, 1, output_width(1, 2, 1), 1, 2)])
-@pytest.mark.parametrize("UseDSP", [0, 1])
+@pytest.mark.parametrize("UseDSP", [0, 1, 2])
 def test_lint(simulator, InBits, WeightBits, InChannels, OutBits, OutChannels, BiasBits, UseDSP):
     parameters = dict(locals())
     del parameters['simulator']
@@ -243,7 +243,15 @@ async def rate_tests(dut, in_rate: float, out_rate: float, N_vec: int = 200):
     slow = min(max(in_rate, 1e-3), max(out_rate, 1e-3))
     slow = max(min(slow, 1.0), 0.02)
 
-    timeout_ns = int((N_out * 50 + 500) / slow)
+    # Account for sequential latency in UseDSP=2 (IC * OC cycles) or UseDSP=1 (IC cycles)
+    cycles_per_vec = 1
+    if int(dut.UseDSP.value) == 2:
+        cycles_per_vec = IC * OC + 10
+    elif int(dut.UseDSP.value) == 1:
+        cycles_per_vec = IC + 10
+
+    # Assume 10ns clock period for timeout calculation
+    timeout_ns = int((N_out * cycles_per_vec * 10 + 1000) / slow)
 
     try:
         await om.wait(timeout_ns)

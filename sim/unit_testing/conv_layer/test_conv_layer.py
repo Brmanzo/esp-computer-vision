@@ -270,7 +270,12 @@ async def single_test(dut):
     im.start()
 
     # Wait until that single output is observed
-    tmo_ns = 4 * N_first + 50
+    # Scale timeout for sequential DSP implementation
+    cycles_per_vec = 4
+    if hasattr(dut, "UseDSP") and int(dut.UseDSP.value) == 1:
+        cycles_per_vec = IC * K * K + 10
+    
+    tmo_ns = cycles_per_vec * N_first + 500
 
     timed_out = False
     try:

@@ -125,6 +125,7 @@ class FilterModel:
         self._dut = dut
         self._InBits = int(dut.InBits.value)
         self._OutBits = int(dut.OutBits.value)
+        self._AccBits = int(dut.AccBits.value)  
         self._WeightBits = int(dut.WeightBits.value)
         self._BiasBits = int(dut.BiasBits.value)
         self._InChannels = int(dut.InChannels.value)
@@ -164,8 +165,15 @@ class FilterModel:
         # match rtl logic: (sum_d > 0) ? 1 : 0
         if self._OutBits == 1:
             exp = 1 if total > 0 else 0
-        else:
+        elif self._OutBits == 2:
+            exp = 1 if total > 0 else (-1 if total < 0 else 0)
+        elif self._OutBits >= self._AccBits:
             exp = sign_extend(total, self._OutBits)
+        else:
+            # MSB Truncation
+            shift = self._AccBits - self._OutBits
+            truncated = total >> shift
+            exp = sign_extend(truncated, self._OutBits)
         
         return [(exp, windows, weights)]
 
@@ -173,7 +181,6 @@ class FilterModel:
         assert_resolvable(self._dut.data_o)
         expected, windows, weights = expected_tuple
         raw_out = int(self._dut.data_o.value)
-  
         # Don't sign_extend if OutBits is 1. 
         # Treat it as a raw logical bit to match the RTL's (sum_d > 0) logic.
         if self._OutBits == 1:

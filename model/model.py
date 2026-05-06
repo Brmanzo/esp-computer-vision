@@ -29,7 +29,7 @@ class cnn_model(nn.Module):
                 out_channels=conv._out_ch, 
                 kernel_size=conv._kernel_width, 
                 padding=conv._padding, 
-                weight_bits=conv._weight_bits,
+                weight_bits=conv._q_schedule._q_min_bits,
                 bias_bits=conv._bias_bits,
                 bias=False
             ))
