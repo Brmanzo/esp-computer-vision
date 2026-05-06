@@ -1,9 +1,9 @@
 {
     "top": "skid_buffer",
-    "files":
-    ["rtl/blocks/skid_buffer.sv"
-    ,"rtl/lib/counter.sv"
-    ,"rtl/lib/elastic.sv"
-    ,"rtl/lib/icestorm_ram.sv"
+    "files": [
+        "rtl/blocks/skid_buffer.sv",
+        "rtl/lib/counter.sv",
+        "rtl/lib/elastic.sv",
+        "rtl/icestorm/icestorm_ram.sv"
     ]
 }

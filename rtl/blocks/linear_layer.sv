@@ -33,14 +33,13 @@ module linear_layer #(
   /* ------------------------------------ Sequential Control Logic ------------------------------------ */
   logic [0:0] valid_r;
   logic [ChannelCountBits-1:0] channel_counter;
-  wire  first_channel = (channel_counter == '0);
   wire  last_channel  = (channel_counter == ChannelCountBits'(InChannels - 1));
 
   logic [0:0] busy_q;
   logic signed [InChannels-1:0][InBits-1:0] data_q;
 
   // We are ready for a new frame if we aren't currently busy and aren't holding a valid result
-  assign ready_o = UseDSP ? (~busy_q & ~valid_r) : (~valid_r | ready_i);
+  assign ready_o = (UseDSP != 0) ? (~busy_q & ~valid_r) : (~valid_r | ready_i);
   assign valid_o = valid_r;
 
   wire  [0:0] in_fire  = valid_i && ready_o;
@@ -52,7 +51,7 @@ module linear_layer #(
       valid_r         <= 1'b0;
       busy_q          <= 1'b0;
       data_q          <= '0;
-    end else if (UseDSP) begin
+    end else if (UseDSP != 0) begin
       // 1. Capture and Start Processing
       if (in_fire) begin
         data_q          <= data_i;
@@ -85,14 +84,18 @@ module linear_layer #(
   
   generate
     for (genvar ch = 0; ch < OutChannels; ch++) begin : gen_neurons
-      if (UseDSP) begin : gen_neuron_dsp
+      if (UseDSP == 1) begin : gen_neuron_dsp
         // Multiplex the weight for the current channel
+        wire first_channel = (channel_counter == '0);
+
         wire signed [WeightBits-1:0] current_weight = Weights[(ch*WeightIndex) + (channel_counter*WeightBits) +: WeightBits];
+        wire signed [BiasBits-1:0]   current_bias   = Biases[ch*BiasBits +: BiasBits];
         
         neuron_dsp #(
-           .InBits    (InBits)
-          ,.WeightBits(WeightBits)
-          ,.AccBits   (OutBits)
+           .InBits     (InBits)
+          ,.WeightBits (WeightBits)
+          ,.OutBits    (OutBits)
+          ,.BiasBits   (BiasBits)
         ) neuron_dsp_inst (
            .clk_i      (clk_i)
           ,.rst_i      (rst_i)
@@ -100,7 +103,7 @@ module linear_layer #(
           ,.load_bias_i(first_channel)    
           ,.data_i     (in_fire ? data_i[0] : data_q[channel_counter])
           ,.weight_i   (current_weight)
-          ,.bias_i     (OutBits'($signed(Biases[(ch*BiasBits) +: BiasBits]))) 
+          ,.bias_i     (current_bias) 
           ,.acc_o      (data_o[ch])
         );
       end else begin : gen_neuron_lut

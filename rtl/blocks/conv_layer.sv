@@ -243,7 +243,7 @@ module conv_layer #(
   /* ------------------------------------ Filter Logic ------------------------------------ */
   generate
     for (genvar ch = 0; ch < OutChannels; ch++) begin : gen_row_buffer_delayed
-      if (UseDSP) begin : gen_filter_dsp
+      if (UseDSP != 0) begin : gen_filter_dsp
         filter_dsp #(
            .InBits     (InBits)
           ,.OutBits    (OutBits)

@@ -45,9 +45,10 @@ gen_rules = [
 TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases_width.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+@pytest.mark.parametrize("UseDSP", [0, 1])
 @auto_unpack(TEST_CASES)
 def test_width(test_name, simulator,
-               InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases):
+               InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases, UseDSP):
     parameters = dict(locals())
     parameters.pop("test_name", None)
     parameters.pop("simulator", None)
@@ -83,9 +84,10 @@ def test_width(test_name, simulator,
 TEST_CASES_CHANNELS = load_tests_from_csv(os.path.join(tbpath, "test_cases_channels.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+@pytest.mark.parametrize("UseDSP", [0, 1])
 @auto_unpack(TEST_CASES_CHANNELS)
 def test_channels(test_name, simulator,
-                  InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases):
+                  InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases, UseDSP):
     parameters = dict(locals())
     parameters.pop("test_name", None)
     parameters.pop("simulator", None)
@@ -111,7 +113,8 @@ def test_channels(test_name, simulator,
 @pytest.mark.parametrize("simulator", ["verilator"])
 @pytest.mark.parametrize("InBits, WeightBits, InChannels, OutBits, OutChannels, BiasBits", 
                          [(1, 2, 1, output_width(1, 2, 1), 1, 2)])
-def test_lint(simulator, InBits, WeightBits, InChannels, OutBits, OutChannels, BiasBits):
+@pytest.mark.parametrize("UseDSP", [0, 1])
+def test_lint(simulator, InBits, WeightBits, InChannels, OutBits, OutChannels, BiasBits, UseDSP):
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters)

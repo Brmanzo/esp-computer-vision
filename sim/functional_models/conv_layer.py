@@ -8,14 +8,16 @@ from util.bitwise    import sign_extend, pack_terms, unpack_terms
 from util.gen_inputs import gen_input_channels
 
 def output_width(width_in, weight_width, kernel_width, in_channels, bias_bits=8):
-    terms = int(kernel_width) * int(kernel_width) * int(in_channels)
-    max_val = (1 << (int(width_in) - 1))
-    max_weight = (1 << (int(weight_width) - 1))
+    return str(calc_acc_bits(kernel_width, width_in, weight_width, in_channels, bias_bits))
 
-    max_sum = terms * max_val * max_weight
-    # The output bits must be the larger of (ConvSum bits) or (Bias bits) + 1 for the addition
-    abs_bits = max(max_sum.bit_length(), int(bias_bits))
-    return str(abs_bits + 1)
+def calc_acc_bits(kernel_width, in_bits, weight_bits, in_channels, bias_bits):
+    terms = int(kernel_width) * int(kernel_width) * int(in_channels)
+    max_input = 1 if int(in_bits) <= 2 else (1 << (int(in_bits) - 1))
+    max_weight = 1 if int(weight_bits) <= 2 else (1 << (int(weight_bits) - 1))
+    worst_case_sum = terms * max_input * max_weight
+    wc_bits = worst_case_sum.bit_length() + 1
+    acc_bits = max(wc_bits, int(bias_bits)) + 1
+    return acc_bits
 
 class RandomDataGenerator:
     def __init__(self, dut):
@@ -70,6 +72,8 @@ class ConvLayerModel():
                 self._Padding      = int(kwargs.get("Padding", 0))
             except KeyError as e:
                 raise ValueError(f"Missing required parameter when dut is None: {e}")
+
+        self._AccBits = calc_acc_bits(self._kernel_width, self._InBits, self._weight_width, self._InChannels, self._bias_bits)
 
         if weights is None:
             raise ValueError("Weights must be provided to ConvLayerModel")
@@ -147,8 +151,18 @@ class ConvLayerModel():
                 # FIX: Use biased_acc here, not acc!
                 result[oc] = 1 if biased_acc > 0 else 0
             else:
-                raw = biased_acc & ((1 << self._OutBits) - 1)
-                result[oc] = sign_extend(raw, self._OutBits)
+                # MSB Selection / Bit-slicing matching hardware behavior
+                # 1. Hardware performs accumulation in 32 bits (SB_MAC16)
+                # 2. neuron_dsp takes the AccBits LSBs
+                # 3. filter_dsp takes the OutBits MSBs of the AccBits LSBs
+                
+                acc_mask = (1 << self._AccBits) - 1
+                usable_acc = biased_acc & acc_mask
+                
+                # Take the top OutBits of the AccBits range
+                # We need to treat usable_acc as signed within the AccBits range
+                usable_acc_signed = sign_extend(usable_acc, self._AccBits)
+                result[oc] = sign_extend((usable_acc_signed >> (self._AccBits - self._OutBits)) & ((1 << self._OutBits) - 1), self._OutBits)
 
         return result
 

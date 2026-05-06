@@ -1,15 +1,15 @@
 {
     "top": "pool_layer",
-    "files":
-    ["rtl/blocks/pool_layer.sv"
-    ,"rtl/lib/counter.sv"
-    ,"rtl/lib/counter_roll.sv"
-    ,"rtl/lib/elastic.sv"
-    ,"rtl/lib/icestorm_ram.sv"
-    ,"rtl/lib/multi_delay_buffer.sv"
-    ,"rtl/lib/multi_delay_ram.sv"
-    ,"rtl/lib/max.sv"
-    ,"rtl/lib/avg.sv"
-    ,"rtl/lib/window.sv"
+    "files": [
+        "rtl/blocks/pool_layer.sv",
+        "rtl/lib/counter.sv",
+        "rtl/lib/counter_roll.sv",
+        "rtl/lib/elastic.sv",
+        "rtl/icestorm/icestorm_ram.sv",
+        "rtl/lib/multi_delay_buffer.sv",
+        "rtl/lib/multi_delay_ram.sv",
+        "rtl/lib/max.sv",
+        "rtl/lib/avg.sv",
+        "rtl/lib/window.sv"
     ]
 }

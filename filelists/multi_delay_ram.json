@@ -1,9 +1,9 @@
 {
     "top": "multi_delay_ram",
-    "files":
-    ["rtl/lib/multi_delay_ram.sv"
-    ,"rtl/lib/multi_delay_buffer.sv"
-    ,"rtl/lib/counter_roll.sv"
-    ,"rtl/lib/icestorm_ram.sv"
+    "files": [
+        "rtl/lib/multi_delay_ram.sv",
+        "rtl/lib/multi_delay_buffer.sv",
+        "rtl/lib/counter_roll.sv",
+        "rtl/icestorm/icestorm_ram.sv"
     ]
 }

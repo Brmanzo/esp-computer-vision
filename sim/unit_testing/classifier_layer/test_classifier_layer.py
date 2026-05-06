@@ -41,8 +41,9 @@ gen_rules = [
 TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), gen_rules=gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+@pytest.mark.parametrize("UseDSP", [0, 1])
 @auto_unpack(TEST_CASES)
-def test_each(test_name, simulator,
+def test_each(test_name, simulator, UseDSP,
               TermBits, TermCount, BusBits, InChannels,
               ClassCount, WeightBits, Weights, BiasBits, Biases):
     parameters = dict(locals())
@@ -73,7 +74,8 @@ def test_each(test_name, simulator,
 @pytest.mark.parametrize("TermBits, TermCount, BusBits, InChannels, ClassCount, WeightBits, Weights, BiasBits, Biases", [
     (2, 10, 8, 2, 4, 2, gen_weights(2, 4, 2), 2, gen_biases(2, 10))
 ])
-def test_lint(simulator, TermBits, TermCount, BusBits, InChannels, ClassCount, WeightBits, Weights, BiasBits, Biases):
+@pytest.mark.parametrize("UseDSP", [0, 1])
+def test_lint(simulator, TermBits, TermCount, BusBits, InChannels, ClassCount, WeightBits, Weights, BiasBits, Biases, UseDSP):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']

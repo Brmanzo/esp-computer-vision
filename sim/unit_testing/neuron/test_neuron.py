@@ -5,25 +5,26 @@ import os
 from   pathlib import Path
 import pytest
 import queue
-import shutil
 import torch
-import torch.nn as nn
 from   typing import List
 
+from cocotb.clock import Clock
 from util.utilities import runner, lint, assert_resolvable, auto_unpack, \
-                           sim_verbose, inject_weights_and_biases, load_tests_from_csv
-from util.bitwise   import sign_extend, pack_terms, unpack_terms, unpack_weights, twos_complement
+                           sim_verbose, inject_weights_and_biases, load_tests_from_csv, \
+                           clock_start_sequence, reset_sequence
+from util.bitwise   import sign_extend, pack_terms, unpack_terms, unpack_weights
 from util.torch_ref import torch_neuron_ref
 from util.gen_inputs import gen_weights, gen_biases, gen_input_channels
 tbpath = Path(__file__).parent
 
 import cocotb
-from   cocotb.triggers import Decimal, Timer
+from   cocotb.triggers import Decimal, Timer, FallingEdge, RisingEdge
    
 import random
 random.seed(50)
 
 timescale = "1ps/1ps"
+
 
 tests = ['single_test'
         ,'full_bw_test']
@@ -52,13 +53,24 @@ TEST_CASES_WIDTH = load_tests_from_csv(os.path.join(tbpath, "test_cases_width.cs
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @auto_unpack(TEST_CASES_WIDTH)
-def test_width(test_name, simulator,
+def test_width(test_name, simulator, use_dsp,
                InBits, WeightBits, InChannels, OutBits, BiasBits, Weights, Biases):
-    parameters = dict(locals())
-    parameters.pop("test_name", None)
-    parameters.pop("simulator", None)
-    parameters.pop("Weights", None)
-    parameters.pop("Biases", None)
+    if use_dsp:
+        # neuron_dsp has a fixed 32-bit accumulator.
+        # Calculate required bits: max(OutBits, WeightBits + InBits + log2(InChannels))
+        import math
+        req_bits = max(int(OutBits), int(WeightBits) + int(InBits) + math.ceil(math.log2(int(InChannels))))
+        if req_bits > 32:
+            pytest.skip(f"neuron_dsp accumulator (32 bits) too small for required {req_bits} bits")
+
+    parameters = {
+        "InBits":     InBits,
+        "WeightBits": WeightBits,
+        "InChannels": InChannels,
+        "OutBits":    OutBits,
+        "BiasBits":   BiasBits,
+        "GEN_DSP":    1 if use_dsp else 0
+    }
 
     param_str = f"InBits_{InBits}_WeightBits_{WeightBits}_OutBits_{OutBits}_BiasBits_{BiasBits}_test_{test_name}"
     weight_bits = int(WeightBits) * int(InChannels)
@@ -70,28 +82,42 @@ def test_width(test_name, simulator,
         weight_bits=weight_bits, bias_bits=bias_bits, layer=0)
 
     wrapper_path = os.path.join(tbpath, "tb_neuron.sv")
+    # Repo root is 3 levels up from sim/unit_testing/neuron
+    repo_root = Path(__file__).parent.parent.parent.parent
+    jsonname = str(repo_root / "filelists" / ("neuron_dsp.json" if use_dsp else "neuron.json"))
+    
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters,
         testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
         toplevel_override="tb_neuron", extra_sources=[wrapper_path],
+        jsonname=jsonname, pymodule="test_neuron"
     )
 
 TEST_CASES_CHANNELS = load_tests_from_csv(os.path.join(tbpath, "test_cases_channels.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @auto_unpack(TEST_CASES_CHANNELS)
-def test_channels(test_name, simulator,
+def test_channels(test_name, simulator, use_dsp,
                   InBits, WeightBits, InChannels, OutBits, BiasBits, Weights, Biases):
     # Icarus Verilog has a known bug with signed arithmetic on packed arrays wider than
     # 128 bits. Skip Icarus for configurations that exceed this threshold.
     if simulator == "icarus" and (int(InChannels) * int(WeightBits) > 128):
         pytest.skip(f"Icarus unreliable for packed bus width {int(InChannels) * int(WeightBits)} > 128 bits")
 
-    parameters = dict(locals())
-    parameters.pop("test_name", None)
-    parameters.pop("simulator", None)
-    parameters.pop("Weights", None)
-    parameters.pop("Biases", None)
+    if use_dsp:
+        import math
+        req_bits = max(int(OutBits), int(WeightBits) + int(InBits) + math.ceil(math.log2(int(InChannels))))
+        if req_bits > 32:
+            pytest.skip(f"neuron_dsp accumulator (32 bits) too small for required {req_bits} bits")
+
+    parameters = {
+        "InBits":     InBits,
+        "WeightBits": WeightBits,
+        "InChannels": InChannels,
+        "OutBits":    OutBits,
+        "BiasBits":   BiasBits,
+        "GEN_DSP":    1 if use_dsp else 0
+    }
 
     param_str = f"InChannels_{InChannels}_test_{test_name}"
     weight_bits = int(InChannels) * int(WeightBits)
@@ -103,10 +129,15 @@ def test_channels(test_name, simulator,
         weight_bits=weight_bits, bias_bits=bias_bits, layer=0)
 
     wrapper_path = os.path.join(tbpath, "tb_neuron.sv")
+    # Repo root is 3 levels up from sim/unit_testing/neuron
+    repo_root = Path(__file__).parent.parent.parent.parent
+    jsonname = str(repo_root / "filelists" / ("neuron_dsp.json" if use_dsp else "neuron.json"))
+
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters,
         testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
         toplevel_override="tb_neuron", extra_sources=[wrapper_path],
+        jsonname=jsonname, pymodule="test_neuron"
     )
 
 @pytest.mark.parametrize("simulator", ["verilator"])
@@ -155,12 +186,10 @@ class NeuronModel():
         
         # compute expected NOW, while _buf matches this accepted input position    
         acc = self.b
-        in_bits = int(self._dut.InBits.value)
-        out_bits = int(self._dut.OutBits.value)
         
         for ic in range(self._InChannels):
-            # 1. Hardware Math Mapping
-            if in_bits == 1:
+            # 1. Encode binary activation from {0,1} to {-1,1}
+            if self._InBits == 1:
                 val = 1 if din[ic] == 1 else -1
             else:
                 val = int(din[ic])
@@ -168,21 +197,36 @@ class NeuronModel():
             # 2. Accumulate
             acc += int(self.w[ic]) * val
 
-        if out_bits == 1:
+        # 3. Activation Function
+        if self._OutBits == 1:
             acc = 1 if acc > 0 else 0
+        elif self._OutBits == 2:
+            acc = 1 if acc > 0 else -1 if acc < 0 else 0
 
         return acc
 
     def produce(self, expected, ref=None):
         assert_resolvable(self._data_o)
 
-        w   = int(self._dut.OutBits.value)
-        if w == 1:
+        # Binary activation: if positive: 1, otherwise: 0 (-1)
+        if self._OutBits == 1:
             got = int(self._data_o.value.integer)
             if ref is not None:
                 ref = 1.0 if ref > 0 else 0.0
+        elif self._OutBits == 2:
+            got = int(self._data_o.value.integer)
+            # If positive, encode output as 1
+            if ref is not None:
+                if ref > 0:
+                    ref = 1.0
+                # If negative, encode output as -1
+                elif ref < 0:
+                    ref = 3.0
+                # If zero, encode output as 0
+                else:
+                    ref = 0.0
         else:
-            got = sign_extend(int(self._data_o.value.integer), w)
+            got = sign_extend(int(self._data_o.value.integer), self._OutBits)
         exp = int(expected)
 
         assert got == exp, (
@@ -195,13 +239,53 @@ class NeuronModel():
         )
     
 async def comb_step(dut, model, din_list, ref):
-    # Drive packed input
-    w = int(dut.InBits.value)
-    dut.data_i.value = pack_terms(din_list, w)
+    # If we are using the clocked DSP implementation, we need to perform sequential accumulation
+    if hasattr(dut, "GEN_DSP") and int(dut.GEN_DSP.value) == 1:
+        IC = int(dut.InChannels.value)
+        WW = int(dut.WeightBits.value)
 
-    # Compute expected from the *driven input* (your existing consume reads dut.data_i)
-    await Timer(Decimal(1), units="step")
-    expected = model.consume()
+        # Drive en_i and load_bias_i over IC cycles
+        for ch in range(IC):
+            await FallingEdge(dut.clk_i)
+            dut.en_i.value = 1
+            dut.load_bias_i.value = 1 if ch == 0 else 0
+            
+            # tb_neuron selects data_i[0] for the DSP module
+            dut.data_i.value = int(din_list[ch])
+            
+            # Drive the specific weight for this channel
+            weight = int(model.w[ch])
+            dut.weight_i.value = weight & ((1 << WW) - 1)
+            
+            if sim_verbose():
+                print(f"DEBUG: ch={ch}, data={int(din_list[ch])}, weight={weight}, load_bias={int(dut.load_bias_i.value)}")
+            
+            await RisingEdge(dut.clk_i)
+        
+        # Disable after accumulation
+        await FallingEdge(dut.clk_i)
+        dut.en_i.value = 0
+        
+        # Calculate expected result manually from din_list using model's parameters
+        expected = model.b
+        for ic in range(IC):
+            if int(dut.InBits.value) == 1:
+                val = 1 if din_list[ic] == 1 else -1
+            else:
+                val = int(din_list[ic])
+            expected += int(model.w[ic]) * val
+        
+        # Apply activation functions for expected value
+        if int(dut.OutBits.value) == 1:
+            expected = 1 if expected > 0 else 0
+        elif int(dut.OutBits.value) == 2:
+            expected = 1 if expected > 0 else -1 if expected < 0 else 0
+    else:
+        # Combinatorial logic: just drive packed input and wait a tiny bit
+        w = int(dut.InBits.value)
+        dut.data_i.value = pack_terms(din_list, w)
+        await Timer(Decimal(1), units="step")
+        expected = model.consume()
 
     # Check output using your existing produce()
     model.produce(expected, ref)
@@ -211,6 +295,12 @@ async def single_test(dut):
     IC = int(dut.InChannels.value)
     WW = int(dut.WeightBits.value)
     in_bits = int(dut.InBits.value)
+
+    # Start clock and reset if using DSP sequential module
+    gen_dsp = hasattr(dut, "GEN_DSP") and int(dut.GEN_DSP.value) == 1
+    if gen_dsp:
+        await clock_start_sequence(dut.clk_i, period=10, unit="ns")
+        await reset_sequence(dut.clk_i, dut.rst_i, cycles=2)
 
     dut.data_i.value = 0
     await Timer(Decimal(1), units="step")
@@ -250,6 +340,12 @@ async def full_bw_test(dut):
     WW = int(dut.WeightBits.value)
     BW = int(dut.BiasBits.value)
     in_bits = int(dut.InBits.value)
+
+    # Start clock and reset if using DSP sequential module
+    gen_dsp = hasattr(dut, "GEN_DSP") and int(dut.GEN_DSP.value) == 1
+    if gen_dsp:
+        await clock_start_sequence(dut.clk_i, period=10, unit="ns")
+        await reset_sequence(dut.clk_i, dut.rst_i, cycles=2)
 
     dut.data_i.value = 0
     await Timer(Decimal(1), units="step")

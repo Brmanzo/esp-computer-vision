@@ -137,7 +137,7 @@ class QuantConv2d(nn.Conv2d):
 class QuantizeActivationSTE(torch.autograd.Function):
     '''Quantized Straight-Through Estimator for Activations.'''
     @staticmethod
-    def forward(ctx, x, bits, clip_val=None, learnable=True):
+    def forward(ctx, x, bits, clip_val=None, learnable=True, shift=0):
         '''Clipped and quantized within an integer range, then cast back to floats during forward pass.'''
         
         ctx.bits = bits
@@ -156,9 +156,9 @@ class QuantizeActivationSTE(torch.autograd.Function):
             qmax = (2 ** (bits - 1)) - 1
 
         if not learnable:
-            # Force scale to 1.0 to match hardware raw integer math
-            scale = 1.0
-            abs_clip = float(qmax)
+            # Use the provided power-of-two shift (bit-slicing)
+            scale = 2.0 ** shift
+            abs_clip = float(qmax) * scale
         else:
             if clip_val is None:
                 raise ValueError("clip_val must be provided when bits > 1 and learnable=True")
@@ -190,10 +190,10 @@ class QuantizeActivationSTE(torch.autograd.Function):
         # If binary or ternary activation, block gradients outside of [-1, 1]
         if bits == 1 or bits == 2:
             grad_x[x.abs() > 1] = 0
-            return grad_x, None, None, None
+            return grad_x, None, None, None, None
 
         if clip_val is None:
-            return grad_x, None, None, None
+            return grad_x, None, None, None, None
 
         abs_clip = clip_val.abs()
 
@@ -205,14 +205,15 @@ class QuantizeActivationSTE(torch.autograd.Function):
             grad_clip_val = torch.sum(grad_output * (x > abs_clip).float()) - \
                             torch.sum(grad_output * (x < -abs_clip).float())
 
-        return grad_x, None, grad_clip_val, None
+        return grad_x, None, grad_clip_val, None, None
 
 class QuantizeActivation(nn.Module):
     '''Quantizes activations to a specified bit-width.'''
-    def __init__(self, bits=1, learnable=True):
+    def __init__(self, bits=1, learnable=True, shift=0):
         super().__init__()
         self.bits = bits
         self.learnable = learnable
+        self.shift = shift
         self.clip_val: Optional[nn.Parameter]
         if bits > 1 and learnable:
             # Initialize the learnable clipping threshold. 
@@ -224,4 +225,4 @@ class QuantizeActivation(nn.Module):
 
     def forward(self, input):
         '''Return Quantized Straight Through Estimator output for activations.'''
-        return QuantizeActivationSTE.apply(input, self.bits, self.clip_val, self.learnable)
+        return QuantizeActivationSTE.apply(input, self.bits, self.clip_val, self.learnable, self.shift)

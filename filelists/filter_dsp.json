@@ -1,0 +1,7 @@
+{
+    "top": "filter_dsp",
+    "files": [
+        "rtl/icestorm/filter_dsp.sv",
+        "rtl/icestorm/neuron_dsp.sv"
+    ]
+}

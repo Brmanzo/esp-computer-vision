@@ -10,6 +10,11 @@ export PYTHONPATH := $(REPO_ROOT)/sim:$(PYTHONPATH)
 VERBOSE ?= 0
 export VERBOSE
 
+# DSP flag: set DSP=1 on the command line to test DSP implementations
+# e.g.  make test DSP=1
+DSP ?= 0
+INTERNAL_PYTEST_ARGS := $(if $(filter 1,$(DSP)),--dsp,)
+
 # Default tool locations (can be overridden in environment or config.mk)
 IVERILOG  ?= iverilog
 VERILATOR ?= verilator
@@ -42,7 +47,7 @@ test-list test-lists list-tests:
 	$(PYTHON3) -m pytest --collect-only -q
 
 results.json: $(FILELIST) $(SIM_SOURCES)
-	$(PYTHON3) -m pytest $(if $(filter 1,$(VERBOSE)),-rA -s,-q --tb=short) $(if $(ARGS),-k "$(ARGS)",)
+	$(PYTHON3) -m pytest $(if $(filter 1,$(VERBOSE)),-rA -s,-q --tb=short -rs) $(if $(ARGS),-k "$(ARGS)",) $(INTERNAL_PYTEST_ARGS) $(PYTEST_EXTRA_ARGS)
 
 # lint runs the Verilator linter on your code.
 lint: lint-verilator lint-verible

@@ -15,93 +15,69 @@ class InputDimensions:
             self.term_count = width * height
 
 class ConvConfig:
-    '''Parameterizes each convolution layer for pytorch training, hardware generation, and cocotb verification.'''
-    def __init__(self, in_ch: int, in_bits: int,
-                 out_bits: int, kernels: List[List[int]], stride: int, 
-                 padding: int, q_schedule: QSchedule, layer_num: int, bias_bits: int, 
-                 use_dsp: int = 0, out_ch: Optional[int] = None, 
-                 input_dims: Optional[InputDimensions] = None):
-        
-        self._input_dims = input_dims or InputDimensions(None, None)
-        self._layer_num  = layer_num
-
-        self._in_bits  = in_bits
-        self._out_bits = out_bits
-        self._bias_bits = bias_bits
-
-        # Convolution kernel is always the first element of this layer's kernel width
+    '''Parameterizes a convolutional layer for pytorch training, hardware generation, and cocotb verification.'''
+    def __init__(self, in_ch: int, in_bits: int, out_bits: int, kernels: List[List[int]], 
+                 stride: int, padding: int, q_schedule: QSchedule, 
+                 out_ch: int, layer_num: int, bias_bits: int, 
+                 input_dims: InputDimensions, use_dsp: int = 0, shift: int = 0):
+        self._shift       = shift
+        self._use_dsp     = use_dsp
+        self._in_bits     = in_bits
+        self._out_bits    = out_bits
+        self._bias_bits   = bias_bits
+        self._kernels     = kernels
+        self._stride      = stride
+        self._padding     = padding
+        self._q_schedule  = q_schedule
+        self._in_ch       = in_ch
+        self._out_ch      = out_ch
+        self._layer_num   = layer_num
+        self._input_dims  = input_dims
         self._kernel_width = kernels[layer_num][0]
-        self._q_schedule   = q_schedule
-        self._weight_bits  = q_schedule._q_min_bits
-
-        self._in_ch  = in_ch
-        self._out_ch = out_ch
-
-        self._stride  = stride
-        self._padding = padding
-        self._use_dsp = use_dsp
 
         # Input logic
-        # If first layer, always take top level inputs
         if self._layer_num == 0:
             self._valid_i = "valid_i"
             self._data_i  = "data_i"
             self._ready_o = "ready_o"
         else: 
             self._ready_o = f"conv_{self._layer_num}_ready"
-            # If the last module in the previous layer is a conv, connect to that conv
             if len(kernels[self._layer_num - 1]) == 1:
                 self._valid_i = f"conv_{self._layer_num - 1}_valid"
                 self._data_i  = f"conv_{self._layer_num - 1}_data"
-            # Otherwise, connect to the previous layer's pool
             else:
                 self._valid_i = f"pool_{self._layer_num - 1}_valid"
                 self._data_i  = f"pool_{self._layer_num - 1}_data"
 
-        # Output logic
         self._valid_o = f"conv_{self._layer_num}_valid"
         self._data_o  = f"conv_{self._layer_num}_data"
-        # If this is the last layer, connect to classifier
-        # Priority 1: If this block has a pooling layer, connect to it
         if len(kernels[self._layer_num]) > 1:
             self._ready_i = f"pool_{self._layer_num}_ready"
-        # Priority 2: If this is the last block, connect to the classifier
         elif self._layer_num == len(kernels) - 2:
             self._ready_i = f"classifier_ready"
-        # Priority 3: Connect to the next layer's conv
         else:
             self._ready_i = f"conv_{self._layer_num + 1}_ready"
 
 class PoolConfig:
     '''Parameterizes each pooling layer for pytorch training, hardware generation, and cocotb verification.'''
     def __init__(self, in_ch: int, in_bits: int, kernel: int, mode: str, layer_num: int, num_layers: int,
-                 line_width_px: Optional[int] = None, line_count_px: Optional[int] = None):
+                 line_width_px: Optional[int] = None, line_count_px: Optional[int] = None, shift: int = 0):
+        self._shift      = shift
         self._input_dims = InputDimensions(line_width_px, line_count_px)
         self._layer_num  = layer_num
-
-        self._in_bits  = in_bits
-        self._out_bits = in_bits  # Pooling doesn't change bit-width
-
+        self._in_bits    = in_bits
+        self._out_bits   = in_bits  # Pooling doesn't change bit-width
         self._kernel_width = kernel
+        self._in_ch      = in_ch
+        self._out_ch     = in_ch 
+        self._mode       = 0 if mode == "max" else 1
 
-        self._in_ch    = in_ch
-        self._out_ch   = in_ch  # Pooling doesn't change channel count
-
-        self._mode     = 0 if mode == "max" else 1
-
-        # Pool layers are always connected to the conv layer in the same block
         self._valid_i = f"conv_{self._layer_num}_valid"
         self._data_i  = f"conv_{self._layer_num}_data"
-
-        # Pool layers are always followed by the next layer's conv block, 
-        # unless it's the last feature layer which connects to the classifier.
         if self._layer_num == num_layers - 2:
             self._ready_i = f"classifier_ready"
         else:
             self._ready_i = f"conv_{self._layer_num + 1}_ready"
-
-        # Pool layers are never at the immediate head or tail, so we don't need to
-        # account for global input or output connections here.
         self._ready_o = f"pool_{self._layer_num}_ready"
         self._valid_o = f"pool_{self._layer_num}_valid"
         self._data_o  = f"pool_{self._layer_num}_data"
@@ -111,7 +87,8 @@ class ClassifierConfig:
     def __init__(self, in_ch: int, in_bits: int, out_bits: int, num_classes: int, bias_bits: int,
                  q_schedule: QSchedule, layer_num: int, kernels: List[List[int]], 
                  use_dsp: int = 0, line_width_px: Optional[int] = None, 
-                 line_count_px: Optional[int] = None):
+                 line_count_px: Optional[int] = None, shift: int = 0):
+        self._shift       = shift
         self._use_dsp     = use_dsp
         self._in_ch       = in_ch
         self._in_bits     = in_bits
@@ -120,6 +97,9 @@ class ClassifierConfig:
         self._num_classes = num_classes
         self._q_schedule  = q_schedule
         self._layer_num   = layer_num
+        self._line_width_px = line_width_px
+        self._line_count_px = line_count_px
+        self._kernels     = kernels
 
         self._term_count = InputDimensions(line_width_px, line_count_px).term_count  # Classifier doesn't have spatial dimensions
 
@@ -214,10 +194,14 @@ class ModelConfig:
 
             # 2. Check if this is the final layer (Classifier)
             if i == self.num_layers - 1:
+                acc_bits = self.full_precision_acc_bits(c_in_ch, c_kernel, c_in_bits, c_max_weight_bits)
+                c_out_bits = self._bus_width
+                c_shift = acc_bits - c_out_bits
+
                 self.classifier_config = ClassifierConfig(
                     in_ch=c_in_ch, 
                     in_bits=c_in_bits, 
-                    out_bits=self._bus_width, # Classifier output maps to the UART Bus Width
+                    out_bits=c_out_bits,
                     num_classes=num_classes, 
                     q_schedule=q_schedule[i], 
                     layer_num=i,
@@ -225,15 +209,19 @@ class ModelConfig:
                     use_dsp=self.use_dsp[i],
                     bias_bits=c_bias_bits,
                     line_width_px=current_w, 
-                    line_count_px=current_h
+                    line_count_px=current_h,
+                    shift=c_shift
                 )
                 break # Classifier always concludes the model construction
 
             # 3. Otherwise, determine Out Bits for standard Conv layer
+            acc_bits = self.full_precision_acc_bits(c_in_ch, c_kernel, c_in_bits, c_max_weight_bits)
             if i < len(in_bits) - 1 and in_bits[i+1] != -1:
                 c_out_bits = in_bits[i+1]
+                c_shift = acc_bits - c_out_bits
             else:
-                c_out_bits = self.full_precision_acc_bits(c_in_ch, c_kernel, c_in_bits, c_max_weight_bits)
+                c_out_bits = acc_bits
+                c_shift = 0
 
             # 4. Create ConvConfig
             conv_cfg = ConvConfig(
@@ -241,7 +229,8 @@ class ModelConfig:
                 kernels=kernels, stride=c_stride, padding=c_pad, bias_bits=c_bias_bits,
                 q_schedule=q_schedule[i], out_ch=c_out_ch, layer_num=i,
                 input_dims=InputDimensions(current_w, current_h),
-                use_dsp=self.use_dsp[i]
+                use_dsp=self.use_dsp[i],
+                shift=c_shift
             )
     
             # 5. Update Spatial Dimensions (Post-Conv)

@@ -17,26 +17,26 @@ module neuron#(
    input  logic signed [InChannels-1:0][InBits-1:0] data_i
   ,output logic signed [OutBits-1:0]                data_o
 );
-  // Accumulate at full product precision so the adder_tree never receives 1-bit
-  // values (which would incorrectly trigger its binary {0,1}->{-1,+1} encoding path).
-  // Final truncation to OutBits happens only at data_o.
 
+  /* ---------------------------- Multiplication Logic ---------------------------- */
   logic signed [InChannels-1:0][AccBits-1:0] addends;
 
   generate
-    if (InBits == 1) begin : gen_binary
+    // Binary Input Encoding {0,1} -> {-1,1}, no multiply, just add or subtract weight
+    if (InBits == 1) begin : gen_binary_in
       for (genvar ch = 0; ch < InChannels; ch++) begin : gen_binary_activation_multiply
         assign addends[ch] = data_i[ch][0] ?  AccBits'($signed(Weights[ch*WeightBits +: WeightBits])) : 
                                               -AccBits'($signed(Weights[ch*WeightBits +: WeightBits]));
       end
-      // Otherwise multiply normally
-    end else if (InBits == 2) begin : gen_ternary_inputs
+    // Ternary Input Encoding {-1,0,1}, same as binary, but zero input yields zero output
+    end else if (InBits == 2) begin : gen_ternary_in
       for (genvar ch = 0; ch < InChannels; ch++) begin : gen_ternary_input_multiply
         wire signed [AccBits-1:0] weight_extended = AccBits'($signed(Weights[ch*WeightBits +: WeightBits]));
         assign addends[ch] = (data_i[ch] == 2'sb01) ?   weight_extended :
                              (data_i[ch] == 2'sb11) ? -$signed(weight_extended) :
                                                        {AccBits{1'b0}};
       end
+    // Ternary Weight Encoding {-1,0,1}, same as input, but add or subtract input
     end else if (WeightBits == 2) begin : gen_ternary_weights
       for (genvar ch = 0; ch < InChannels; ch++) begin : gen_ternary_weight_multiply
         wire signed [1:0] w = Weights[ch*WeightBits +: 2];
@@ -46,6 +46,7 @@ module neuron#(
                              (w == 2'sb11) ? -$signed(data_extended) :
                                                {AccBits{1'b0}};
       end
+    // Otherwise normal multiplication
     end else begin : gen_normal
       for (genvar ch = 0; ch < InChannels; ch++) begin : gen_normal_multiply
         assign addends[ch] = AccBits'($signed(Weights[ch*WeightBits +: WeightBits]) * $signed(data_i[ch]));
@@ -53,11 +54,12 @@ module neuron#(
     end
   endgenerate
 
-  logic signed [AccBits-1:0] sum_d;
+  /* ------------------------------ Accumulation Logic ------------------------------ */
+  logic signed [AccBits-1:0] sum;
   always_comb begin 
-    sum_d = AccBits'(0);
+    sum = AccBits'(0);
     for (int i = 0; i < InChannels; i++) begin : gen_acc
-      sum_d += addends[i];
+      sum += addends[i];
     end
   end
 
@@ -71,16 +73,25 @@ module neuron#(
   //   ,.sum_o    (sum)
   // );
 
+  /* ------------------------------ Bias Logic ------------------------------ */
+  /* verilator lint_off UNUSEDSIGNAL */
   wire signed [AccBits-1:0] biased_sum;
-  assign biased_sum = $signed(sum_d) + AccBits'($signed(Bias));
+  /* verilator lint_on UNUSEDSIGNAL */
+  assign biased_sum = $signed(sum) + AccBits'($signed(Bias));
 
-  // OutBits==1: binary sign decision matching filter.sv convention (1 if positive, 0 if not)
-  // OutBits==2: ternary sign decision matching quantize.py convention (1 if positive, -1 if negative, 0 if zero)
-  // OutBits >2: standard two's complement truncation
-  assign data_o = (OutBits == 1) ? OutBits'(biased_sum > AccBits'(0))
-                : (OutBits == 2) ? ( (biased_sum > AccBits'(0)) ? 2'sb01 :
-                                     (biased_sum < AccBits'(0)) ? 2'sb11 :
-                                                                  2'sb00 )
-                                 : OutBits'(biased_sum);
+  /* ------------------------------ Output Logic ------------------------------ */
+  // Binary encoding {-1,1} -> {0,1}, 1 when positive, 0 when negative
+  generate
+    if (OutBits == 1) begin : gen_binary_out
+      assign data_o = OutBits'(biased_sum > AccBits'(0));
+    // Ternary encoding {-1,0,1}, 1 when positive, -1 when negative, 0 when zero
+    end else if (OutBits == 2) begin : gen_ternary_out
+      assign data_o = ( (biased_sum > AccBits'(0)) ? OutBits'(1) :
+                        (biased_sum < AccBits'(0)) ? OutBits'(-1) :
+                                                     OutBits'(0) );
+    end else begin : gen_truncated_out
+      assign data_o = biased_sum[(AccBits-1) -: OutBits];
+    end
+  endgenerate
 
 endmodule

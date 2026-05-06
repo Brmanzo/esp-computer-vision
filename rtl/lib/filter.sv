@@ -29,7 +29,6 @@ module filter #(
 
   /* ------------------------------------ Output Channels ------------------------------------ */
   logic signed [InChannels-1:0][AccBits-1:0] kernel_data_d;
-  logic signed [BiasBits-1:0] bias_q;
 
   generate
     for (genvar ch = 0; ch < InChannels; ch++) begin : gen_channels
@@ -88,11 +87,15 @@ module filter #(
       data_d = (biased_sum_d > 0) ? OutBits'(1) : OutBits'(0);
     // OutBits==2: ternary sign decision matching quantize.py convention (1 if positive, -1 if negative, 0 if zero)
     end else if (OutBits == 2) begin
-      data_d = (biased_sum_d > 0) ? 2'sb01 :
-               (biased_sum_d < 0) ? 2'sb11 :
-                                    2'sb00;
-    end else begin
+      data_d = (biased_sum_d > 0) ? OutBits'(1) :
+               (biased_sum_d < 0) ? OutBits'(-1) :
+                                    OutBits'(0);
+    end else if (OutBits == AccBits) begin
       data_d = OutBits'(biased_sum_d);
+    end else begin
+      // Bit-slicing (Arithmetic Shift Right)
+      // Take the top OutBits of the accumulator
+      data_d = biased_sum_d[AccBits-1 -: OutBits];
     end
   end
 

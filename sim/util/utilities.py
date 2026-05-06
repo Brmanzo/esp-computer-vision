@@ -39,7 +39,18 @@ def sim_verbose() -> bool:
     """
     return os.environ.get("VERBOSE", "0").strip() == "1"
 
-def runner(simulator, timescale, tbpath, params, defs=[], testname=None, pymodule=None, jsonpath=None, jsonname="filelist.json", root=None, work_dir=None, sim_build=None, includes=None, toplevel_override=None, extra_sources=None):
+def runner(simulator, timescale, tbpath, params, defs=[], testname=None, pymodule=None, jsonpath=None, jsonname="filelist.json", root=None, work_dir=None, sim_build=None, includes=None, toplevel_override=None, extra_sources=None, filelist=None):
+    if(root is None):
+        root = git.Repo(tbpath, search_parent_directories=True).working_tree_dir
+
+    if(jsonpath is None):
+        jsonpath = tbpath
+
+    # Handle the filelist alias if provided
+    if root and filelist:
+        full_filelist_path = os.path.join(root, filelist)
+        jsonpath = os.path.dirname(full_filelist_path)
+        jsonname = os.path.basename(full_filelist_path)
     """Run the simulator on test n, with parameters params, and defines
     defs. If n is none, it will run all tests"""
 
@@ -69,7 +80,8 @@ def runner(simulator, timescale, tbpath, params, defs=[], testname=None, pymodul
     assert root is not None, "root directory path must exist"
     assert os.path.exists(root), "root directory path must exist"
 
-    sources = get_sources(root, tbpath)
+    sources = get_sources(root, tbpath, jsonname, jsonpath=jsonpath)
+
     
     # Append any extra source files (like our wrapper)
     if extra_sources:
@@ -90,6 +102,18 @@ def runner(simulator, timescale, tbpath, params, defs=[], testname=None, pymodul
 
     if simulator.startswith("icarus"):
         build_dir = work_dir
+        # Create a dynamic dump file for Icarus to avoid module name binding errors
+        dump_file = os.path.join(build_dir, "iverilog_dump.v")
+        with open(dump_file, 'w') as f:
+            f.write("module iverilog_dump();\n")
+            f.write("initial begin\n")
+            f.write(f"    $dumpfile(\"{top}.vcd\");\n")
+            f.write(f"    $dumpvars(0, {top});\n")
+            f.write("end\n")
+            f.write("endmodule\n")
+        if extra_sources is None:
+            extra_sources = []
+        extra_sources.append(dump_file)
 
     if simulator.startswith("verilator"):
         compile_args=["-Wno-fatal", "-DVM_TRACE_FST=1", "-DVM_TRACE=1", "--timing"]
@@ -121,7 +145,15 @@ def runner(simulator, timescale, tbpath, params, defs=[], testname=None, pymodul
         testcase=testname)
 
 # Function to build (run) the lint and style checks.
-def lint(simulator, timescale, tbpath, params, defs=[], compile_args=[], pymodule=None, jsonpath=None, jsonname="filelist.json", root=None):
+def lint(simulator, timescale, tbpath, params, defs=[], compile_args=[], pymodule=None, jsonpath=None, jsonname="filelist.json", root=None, filelist=None):
+    if(root is None):
+        root = git.Repo(tbpath, search_parent_directories=True).working_tree_dir
+
+    # Handle the filelist alias if provided
+    if root and filelist:
+        full_filelist_path = os.path.join(root, filelist)
+        jsonpath = os.path.dirname(full_filelist_path)
+        jsonname = os.path.basename(full_filelist_path)
 
     # if json path is none, assume that it is the same as tbpath
     if(jsonpath is None):
@@ -136,7 +168,7 @@ def lint(simulator, timescale, tbpath, params, defs=[], compile_args=[], pymodul
         root = git.Repo(search_parent_directories=True).working_tree_dir
 
     assert root is not None and os.path.exists(root), "root directory path must exist"
-    sources = get_sources(root, tbpath)
+    sources = get_sources(root, tbpath, jsonname, jsonpath=jsonpath)
 
     # if pymodule is none, assume that the python module name is test+<name of the top module>.
     if(pymodule is None):
@@ -166,21 +198,32 @@ def lint(simulator, timescale, tbpath, params, defs=[], compile_args=[], pymodul
         compile_only=True)
 
 def _resolve_filelist_path(p, n):
-    """
-    Resolve filelist path.
+    if os.path.isabs(n):
+        return Path(n)
 
-    Priority:
-      1) Environment variable FILELIST (absolute or relative to repo root)
-      2) Legacy behavior: join(p, n)
-    """
-    env = os.environ.get("FILELIST")
-    if env:
-        path = Path(env)
-        # If someone passed a relative path, resolve relative to current working dir
-        # (Make usually passes an absolute path, so this is just extra safety)
-        return path.resolve()
-    else:
-        return Path(p) / n
+    # 1) Try local path
+    local_path = Path(p) / n
+    if local_path.exists():
+        return local_path
+
+    # 2) Try global filelists/ directory
+    # Find repo root (assuming utilities.py is in sim/util/)
+    root = Path(__file__).parent.parent.parent
+    global_dir = root / "filelists"
+    
+    # Try the provided name in global dir
+    global_path = global_dir / n
+    if global_path.exists():
+        return global_path
+    
+    # Try [parent_dir_name].json in global dir (e.g. mac.json)
+    module_name = Path(p).name
+    module_path = global_dir / f"{module_name}.json"
+    if module_path.exists():
+        return module_path
+        
+    # 3) Fallback
+    return local_path
 
 def get_files_from_filelist(p, n):
     """Get a list of files from a json filelist."""
@@ -188,14 +231,10 @@ def get_files_from_filelist(p, n):
     with open(filelist_path) as filelist:
         return json.load(filelist)["files"]
 
-def get_sources(r, p):
-    """ Get a list of source file paths from a json filelist.
-
-    Arguments:
-    r -- Absolute path to the root of the repository.
-    p -- Absolute path to the directory containing filelist.json
-    """
-    sources = get_files_from_filelist(p, "filelist.json")
+def get_sources(r, p, n="filelist.json", jsonpath=None):
+    # Priority: explicit jsonpath, then p (testbench path)
+    search_dir = jsonpath if jsonpath else p
+    sources = get_files_from_filelist(search_dir, n)
     sources = [os.path.join(r, f) for f in sources]
     return sources
 
@@ -206,7 +245,7 @@ def get_top(p, n="filelist.json"):
     p -- Absolute path to the directory containing json filelist
     n -- Name of the json filelist, defaults to filelist.json
     """
-    return get_top_from_filelist(p, "filelist.json")
+    return get_top_from_filelist(p, n)
 
 def get_top_from_filelist(p, n):
     """Get the name of the top level module from a json filelist."""
@@ -369,10 +408,9 @@ def auto_unpack(test_cases_dicts):
         # 1. Introspect the test function signature
         sig = inspect.signature(func)
         
-        # 2. Get all args EXCEPT the ones handled by other decorators/fixtures
-        # Add any other standard pytest fixtures you use to this ignore list
-        ignore_list = ["test_name", "simulator"]
-        target_args = [param for param in sig.parameters if param not in ignore_list]
+        # 2. Get all args that actually exist in the CSV columns
+        available_cols = test_cases_dicts[0].keys()
+        target_args = [param for param in sig.parameters if param in available_cols]
         
         # 3. Build the perfectly ordered tuples for Pytest
         tuples_list = []

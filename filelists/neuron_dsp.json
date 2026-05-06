@@ -1,0 +1,6 @@
+{
+    "top": "neuron_dsp",
+    "files": [
+        "rtl/icestorm/neuron_dsp.sv"
+    ]
+}

@@ -1,13 +1,13 @@
 {
     "top": "tb_double_block",
     "files": [
-        "sim/integration_testing/double_block/tb_double_block.sv", 
+        "sim/integration_testing/double_block/tb_double_block.sv",
         "rtl/blocks/conv_layer.sv",
         "rtl/blocks/pool_layer.sv",
         "rtl/lib/counter.sv",
         "rtl/lib/counter_roll.sv",
         "rtl/lib/elastic.sv",
-        "rtl/lib/icestorm_ram.sv",
+        "rtl/icestorm/icestorm_ram.sv",
         "rtl/lib/multi_delay_buffer.sv",
         "rtl/lib/multi_delay_ram.sv",
         "rtl/lib/mac.sv",

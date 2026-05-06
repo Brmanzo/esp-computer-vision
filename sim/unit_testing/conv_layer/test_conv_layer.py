@@ -45,13 +45,24 @@ gen_rules = [
 TEST_CASES_WIDTH = load_tests_from_csv(os.path.join(tbpath, "test_cases_width.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+@pytest.mark.parametrize("UseDSP", [0, 1])
 @auto_unpack(TEST_CASES_WIDTH)
 def test_width(test_name, simulator,
                InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
-               LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding):
+               LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, UseDSP):
+    if UseDSP == 1:
+        import math
+        req_bits = max(int(OutBits), int(WeightBits) + int(InBits) + math.ceil(math.log2(int(InChannels) * (int(KernelWidth)**2))))
+        if req_bits > 32:
+            pytest.skip(f"conv_layer DSP accumulator (32 bits) too small for required {req_bits} bits")
+
     parameters = dict(locals())
     parameters.pop("Weights", None)
     parameters.pop("Biases", None)
+    parameters.pop("math", None)
+    parameters.pop("req_bits", None)
+    parameters.pop("math", None)
+    parameters.pop("req_bits", None)
     param_str = f"InBits_{InBits}_WeightBits_{WeightBits}_OutBits_{OutBits}_test_{test_name}"
     
     weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
@@ -62,21 +73,32 @@ def test_width(test_name, simulator,
         tbpath=tbpath, test_class="width", Weights=Weights, Biases=Biases, 
         weight_bits=weight_bits, bias_bits=bias_bits)
 
+    filelist = "filelists/conv_layer.json"
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 
         testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
-        toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")]
+        toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")],
+        filelist=filelist
     )
 TEST_CASES_STRIDE = load_tests_from_csv(os.path.join(tbpath, "test_cases_stride.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+@pytest.mark.parametrize("UseDSP", [0, 1])
 @auto_unpack(TEST_CASES_STRIDE)
 def test_stride(test_name, simulator,
                 InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
-                LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding):
+                LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, UseDSP):
+    if UseDSP == 1:
+        import math
+        req_bits = max(int(OutBits), int(WeightBits) + int(InBits) + math.ceil(math.log2(int(InChannels) * (int(KernelWidth)**2))))
+        if req_bits > 32:
+            pytest.skip(f"conv_layer DSP accumulator (32 bits) too small for required {req_bits} bits")
+
     parameters = dict(locals())
     parameters.pop("Weights", None)
     parameters.pop("Biases", None)
+    parameters.pop("math", None)
+    parameters.pop("req_bits", None)
     param_str = f"KW_{KernelWidth}_S_{Stride}_test_{test_name}"
 
     weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
@@ -87,22 +109,33 @@ def test_stride(test_name, simulator,
         tbpath=tbpath, test_class="stride", Weights=Weights, Biases=Biases, 
         weight_bits=weight_bits, bias_bits=bias_bits)
     
+    filelist = "filelists/conv_layer.json"
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 
         testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
-        toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")]
+        toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")],
+        filelist=filelist
     )
 
 TEST_CASES_PADDING = load_tests_from_csv(os.path.join(tbpath, "test_cases_padding.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+@pytest.mark.parametrize("UseDSP", [0, 1])
 @auto_unpack(TEST_CASES_PADDING)
 def test_padding(test_name, simulator,
                 InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
-                LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding):
+                LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, UseDSP):
+    if UseDSP == 1:
+        import math
+        req_bits = max(int(OutBits), int(WeightBits) + int(InBits) + math.ceil(math.log2(int(InChannels) * (int(KernelWidth)**2))))
+        if req_bits > 32:
+            pytest.skip(f"conv_layer DSP accumulator (32 bits) too small for required {req_bits} bits")
+
     parameters = dict(locals())
     parameters.pop("Weights", None)
     parameters.pop("Biases", None)
+    parameters.pop("math", None)
+    parameters.pop("req_bits", None)
     param_str = f"KW_{KernelWidth}_P_{Padding}_test_{test_name}"
 
     weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
@@ -113,21 +146,32 @@ def test_padding(test_name, simulator,
         tbpath=tbpath, test_class="padding", Weights=Weights, Biases=Biases, 
         weight_bits=weight_bits, bias_bits=bias_bits)
     
+    filelist = "filelists/conv_layer.json"
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 
         testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
-        toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")]
+        toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")],
+        filelist=filelist
     )
 TEST_CASES_CHANNELS = load_tests_from_csv(os.path.join(tbpath, "test_cases_channels.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+@pytest.mark.parametrize("UseDSP", [0, 1])
 @auto_unpack(TEST_CASES_CHANNELS)
 def test_channels(test_name, simulator,
                 InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
-                LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding):
+                LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, UseDSP):
+    if UseDSP == 1:
+        import math
+        req_bits = max(int(OutBits), int(WeightBits) + int(InBits) + math.ceil(math.log2(int(InChannels) * (int(KernelWidth)**2))))
+        if req_bits > 32:
+            pytest.skip(f"conv_layer DSP accumulator (32 bits) too small for required {req_bits} bits")
+
     parameters = dict(locals())
     parameters.pop("Weights", None)
     parameters.pop("Biases", None)
+    parameters.pop("math", None)
+    parameters.pop("req_bits", None)
     param_str = f"IC_{InChannels}_OC_{OutChannels}_test_{test_name}"
 
     weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
@@ -138,27 +182,33 @@ def test_channels(test_name, simulator,
         tbpath=tbpath, test_class="channels", Weights=Weights, Biases=Biases, 
         weight_bits=weight_bits, bias_bits=bias_bits)
 
+    filelist = "filelists/conv_layer.json"
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 
         testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
-        toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")]
+        toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")],
+        filelist=filelist
     )
 
 @pytest.mark.parametrize("simulator", ["verilator"])
+@pytest.mark.parametrize("UseDSP", [0, 1])
 @pytest.mark.parametrize("LineWidthPx, InBits, OutBits", [("16", "1", output_width(1, 2, 3, 1))])
-def test_lint(simulator, LineWidthPx, InBits, OutBits):
+def test_lint(simulator, LineWidthPx, InBits, OutBits, UseDSP):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
-    lint(simulator, timescale, tbpath, parameters)
+    filelist = "filelists/conv_layer.json"
+    lint(simulator, timescale, tbpath, parameters, filelist=filelist)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
+@pytest.mark.parametrize("UseDSP", [0, 1])
 @pytest.mark.parametrize("LineWidthPx, InBits, OutBits", [("16", "1", output_width(1, 2, 3, 1))])
-def test_style(simulator, LineWidthPx, InBits, OutBits):
+def test_style(simulator, LineWidthPx, InBits, OutBits, UseDSP):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
-    lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"])
+    filelist = "filelists/conv_layer.json"
+    lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"], filelist=filelist)
 
 @cocotb.test
 async def reset_test(dut):
@@ -267,6 +317,14 @@ async def rate_tests(dut, in_rate, out_rate):
 
     first_out_wait_ns = int((2 * (K - 1) * W + 2 * (K - 1) + 200) / slow)
     timeout_ns        = int((H_out * N_in + 500) / slow)
+    
+    # Scale timeout for sequential DSP implementation
+    if hasattr(dut, "UseDSP") and int(dut.UseDSP.value) == 1:
+        # Each filter takes IC * K*K cycles.
+        # But conv_layer is pipelined. However, the first output takes longer.
+        # And backpressure might exist.
+        timeout_ns *= (IC * K * K)
+        first_out_wait_ns *= (IC * K * K)
 
     packed_weights = int(os.environ["INJECTED_WEIGHTS_0_INT"])
     packed_biases  = int(os.environ.get("INJECTED_BIASES_0_INT", "0"))

@@ -11,6 +11,7 @@ module tb_classifier_layer #(
   ,parameter  int unsigned ClassCount = 4
   ,parameter  int unsigned WeightBits = 2
   ,parameter  int unsigned BiasBits   = 2
+  ,parameter  int unsigned UseDSP     = 0
   ,localparam int unsigned IdBits     = (ClassCount <= 1) ? 1 : $clog2(ClassCount)
 )  (
    input  [0:0] clk_i
@@ -35,6 +36,7 @@ classifier_layer #(
     ,.BusBits     (BusBits)
     ,.InChannels  (InChannels)
     ,.ClassCount  (ClassCount)
+    ,.UseDSP      (UseDSP)
     
     ,.WeightBits  (WeightBits)
     ,.Weights     (INJECTED_WEIGHTS_0)

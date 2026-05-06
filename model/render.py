@@ -119,6 +119,7 @@ def render_pool_layer(cfg: PoolConfig):
         f"     .LineWidthPx ({cfg._input_dims.width})",
         f"    ,.LineCountPx ({cfg._input_dims.height})",
         f"    ,.InBits      ({cfg._in_bits})",
+        f"    ,.OutBits     ({cfg._out_bits})",
         f"    ,.KernelWidth ({cfg._kernel_width})",
         f"    ,.InChannels  ({cfg._in_ch})",
         f"    ,.PoolMode    ({cfg._mode})", # PoolMode is fixed to 0 (max pooling) for now since we only support max pooling

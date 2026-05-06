@@ -18,6 +18,9 @@ import random
 random.seed(50)
 
 timescale = "1ps/1ps"
+@pytest.fixture
+def use_dsp(request):
+    return request.config.getoption("--dsp")
 
 def acc_width(in_bits: int, weight_bits: int, kernel_width: int, in_channels: int, bias_bits: int) -> int:
     kernel_area = kernel_width * kernel_width
@@ -56,31 +59,66 @@ TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), auto_ru
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @auto_unpack(TEST_CASES)
 
-def test_each(test_name, simulator,
+def test_each(test_name, simulator, use_dsp,
               InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits):
+    # Skip if DSP implementation cannot handle the bit-width
+    if use_dsp:
+        # filter_dsp uses a 32-bit accumulator (SB_MAC16)
+        # Required bits: max(OutBits, WeightBits + InBits + log2(InChannels * KernelArea))
+        import math
+        req_bits = max(OutBits, WeightBits + InBits + math.ceil(math.log2(InChannels * KernelWidth * KernelWidth)))
+        if req_bits > 32:
+            pytest.skip(f"filter_dsp accumulator (32 bits) too small for required {req_bits} bits")
+
     # This line must be first
-    parameters = dict(locals())
-    test_name = parameters.pop('test_name')
-    simulator = parameters.pop('simulator')
-    runner(simulator, timescale, tbpath, parameters, testname=test_name, pymodule="test_filter")
+    parameters = {
+        "InBits": InBits,
+        "WeightBits": WeightBits,
+        "BiasBits": BiasBits,
+        "KernelWidth": KernelWidth,
+        "InChannels": InChannels,
+        "AccBits": AccBits,
+        "OutBits": OutBits
+    }
+    
+    filelist = "filelists/filter_dsp.json" if use_dsp else "filelists/filter.json"
+    
+    runner(simulator, timescale, tbpath, parameters, 
+           testname=test_name, pymodule="test_filter", filelist=filelist)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
 @pytest.mark.parametrize("InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits", 
                          [( 1, 2, 8, 3, 1, acc_width( 1, 2, 3,  1, 8), acc_width( 1, 2, 3,  1, 8))])
-def test_lint(simulator, InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits):
+def test_lint(simulator, use_dsp, InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits):
     # This line must be first
-    parameters = dict(locals())
-    del parameters['simulator']
-    lint(simulator, timescale, tbpath, parameters)
+    parameters = {
+        "InBits": InBits,
+        "WeightBits": WeightBits,
+        "BiasBits": BiasBits,
+        "KernelWidth": KernelWidth,
+        "InChannels": InChannels,
+        "AccBits": AccBits,
+        "OutBits": OutBits
+    }
+    filelist = "filelists/filter_dsp.json" if use_dsp else "filelists/filter.json"
+    lint(simulator, timescale, tbpath, parameters, filelist=filelist)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
 @pytest.mark.parametrize("InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits", 
                          [( 1, 2, 8, 3, 1, acc_width( 1, 2, 3,  1, 8), acc_width( 1, 2, 3,  1, 8))])
-def test_style(simulator, InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits):
+def test_style(simulator, use_dsp, InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits):
     # This line must be first
-    parameters = dict(locals())
-    del parameters['simulator']
-    lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"])
+    parameters = {
+        "InBits": InBits,
+        "WeightBits": WeightBits,
+        "BiasBits": BiasBits,
+        "KernelWidth": KernelWidth,
+        "InChannels": InChannels,
+        "AccBits": AccBits,
+        "OutBits": OutBits
+    }
+    filelist = "filelists/filter_dsp.json" if use_dsp else "filelists/filter.json"
+    lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"], filelist=filelist)
 
 class FilterModel:
     def __init__(self, dut):
@@ -95,7 +133,11 @@ class FilterModel:
     def consume(self):
         p_win  = int(self._dut.windows_i.value)
         p_wgt  = int(self._dut.weights_i.value)
-        p_bias = sign_extend(int(self._dut.bias_i.value), self._BiasBits)
+        if hasattr(self._dut, "bias_i"):
+            p_bias = sign_extend(int(self._dut.bias_i.value), self._BiasBits)
+        else:
+            # Fallback to parameter Bias if bias_i port doesn't exist
+            p_bias = int(self._dut.Bias.value)
 
         # Use unified unpacking (assuming utilities are in bitwise.py)
         weights = unpack_channels(p_wgt, self._WeightBits, self._InChannels, self._KernelArea)
@@ -186,7 +228,11 @@ async def rate_tests(dut, in_rate, out_rate, test_length=100):
     data_gen = RandomDataGenerator(dut)
     
     om = OutputModel(dut, RateGenerator(dut, out_rate), test_length)
-    im = InputModel(dut, data_gen, RateGenerator(dut, in_rate), test_length, data_pins=[dut.windows_i, dut.weights_i, dut.bias_i])
+    data_pins = [dut.windows_i, dut.weights_i]
+    if hasattr(dut, "bias_i"):
+        data_pins.append(dut.bias_i)
+        
+    im = InputModel(dut, data_gen, RateGenerator(dut, in_rate), test_length, data_pins=data_pins)
 
     clk_i = dut.clk_i
     rst_i = dut.rst_i
@@ -207,7 +253,10 @@ async def rate_tests(dut, in_rate, out_rate, test_length=100):
     slow = min(in_rate, out_rate)
     slow = max(slow, 0.05) 
     timeout_ns = int(((test_length + 500) / slow) * 10) # Assuming 10ns clock
-
+    
+    # Scale timeout for sequential DSP implementation
+    if hasattr(dut, "TotalTerms"):
+        timeout_ns *= int(dut.TotalTerms.value)
     # 5. Wait for the OutputModel to hit 'test_length'
     try:
         await om.wait(timeout_ns)

@@ -33,6 +33,7 @@ jobs:
           # 1) If RTL blocks changed, map block -> unit test dir
           mapfile -t RTL < <(echo "$CHANGED" | grep -E '^rtl/blocks/.*\.(sv|py)$' | grep -vE '^rtl/blocks/cnn\.sv$' || true)
           for f in "${RTL[@]}"; do
+            [[ -f "$f" ]] || continue
             base="$(basename "$f")"
             base="${base%.*}"
             dir="sim/unit_testing/${base}"
@@ -43,6 +44,7 @@ jobs:
           # 2) If unit testbenches changed, run those unit test dirs directly
           mapfile -t UTFILES < <(echo "$CHANGED" | grep -E '^sim/unit_testing/[^/]+/.*(\.py|Makefile)$' || true)
           for f in "${UTFILES[@]}"; do
+            [[ -f "$f" ]] || continue
             # f like sim/unit_testing/framer/test_framer.py
             dir="$(echo "$f" | cut -d/ -f1-3)"   # sim/unit_testing/framer
             [[ -d "$dir" ]] || { echo "Bad unit test path (dir not found): $dir"; exit 1; }
