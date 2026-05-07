@@ -197,36 +197,18 @@ class NeuronModel():
             # 2. Accumulate
             acc += int(self.w[ic]) * val
 
-        # 3. Activation Function
-        if self._OutBits == 1:
-            acc = 1 if acc > 0 else 0
-        elif self._OutBits == 2:
-            acc = 1 if acc > 0 else -1 if acc < 0 else 0
-
+        # 3. No Activation Function (Raw output)
         return acc
 
     def produce(self, expected, ref=None):
-        assert_resolvable(self._data_o)
-
-        # Binary activation: if positive: 1, otherwise: 0 (-1)
-        if self._OutBits == 1:
-            got = int(self._data_o.value.integer)
-            if ref is not None:
-                ref = 1.0 if ref > 0 else 0.0
-        elif self._OutBits == 2:
-            got = int(self._data_o.value.integer)
-            # If positive, encode output as 1
-            if ref is not None:
-                if ref > 0:
-                    ref = 1.0
-                # If negative, encode output as -1
-                elif ref < 0:
-                    ref = 3.0
-                # If zero, encode output as 0
-                else:
-                    ref = 0.0
+        # Use the top-level wide accumulator for verification
+        if hasattr(self._dut, "acc_full"):
+            sig = self._dut.acc_full
         else:
-            got = sign_extend(int(self._data_o.value.integer), self._OutBits)
+            sig = self._data_o
+
+        assert_resolvable(sig)
+        got = sign_extend(int(sig.value.integer), 32 if sig == getattr(self._dut, "acc_full", None) else self._OutBits)
         exp = int(expected)
 
         assert got == exp, (
@@ -275,11 +257,8 @@ async def comb_step(dut, model, din_list, ref):
                 val = int(din_list[ic])
             expected += int(model.w[ic]) * val
         
-        # Apply activation functions for expected value
-        if int(dut.OutBits.value) == 1:
-            expected = 1 if expected > 0 else 0
-        elif int(dut.OutBits.value) == 2:
-            expected = 1 if expected > 0 else -1 if expected < 0 else 0
+        # No activation functions for raw output
+        expected = expected
     else:
         # Combinatorial logic: just drive packed input and wait a tiny bit
         w = int(dut.InBits.value)

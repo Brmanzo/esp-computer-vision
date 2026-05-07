@@ -40,7 +40,7 @@ module filter_dsp #(
   wire [0:0] in_fire  = valid_i && ready_o;
   wire [0:0] out_fire = valid_o && ready_i;
 
-  // Capture registers for isolation
+  // Registered window and register arrays
   logic signed [InChannels-1:0][KernelArea-1:0][InBits-1:0]     windows_q;
   logic signed [InChannels-1:0][KernelArea-1:0][WeightBits-1:0] weights_q;
 
@@ -93,115 +93,72 @@ module filter_dsp #(
   always_comb begin
     busy_d  = busy_q;
     valid_d = valid_q;
-
-    if (in_fire) begin
-      // If neuron processing a single term, output is immediately valid
-      if (single_term) valid_d = 1'b1;
-      else             busy_d  = 1'b1;
-    end else if (busy_q) begin
-      // When on last term, no longer busy 
-      if (last_term) begin
+    
+    // When calculating single term, completes immediately
+    if (single_term) begin
+      if (in_fire) valid_d = 1'b1;
+    // Otherwise, busy during first terms, valid after last term
+    end else begin
+      if (in_fire) busy_d  = 1'b1;
+      else if (busy_q && last_term) begin
         valid_d = 1'b1;
         busy_d  = 1'b0;
       end
     end
-
+    // deassert valid on out_fire
     if (out_fire) begin
       valid_d = 1'b0;
     end
   end
 
-  /* ----------------------------------- DSP Mapping ----------------------------------- */
+  /* ------------------------ Data Unpacking and Sequencing ------------------------ */
   logic signed [TotalTerms-1:0][InBits-1:0]     flat_windows;
   logic signed [TotalTerms-1:0][WeightBits-1:0] flat_weights;
 
-  genvar g_ch, g_k;
   generate
-    for (g_ch = 0; g_ch < int'(InChannels); g_ch++) begin : gen_flat_ch
-      for (g_k = 0; g_k < int'(KernelArea); g_k++) begin : gen_flat_k
-        assign flat_windows[g_ch*KernelArea + g_k] = windows_q[g_ch][g_k];
-        assign flat_weights[g_ch*KernelArea + g_k] = weights_q[g_ch][g_k];
+    for (genvar ch = 0; ch < InChannels; ch++) begin : gen_flat_ch
+      for (genvar k = 0; k < KernelArea; k++) begin : gen_flat_k
+        assign flat_windows[ch*KernelArea + k] = windows_q[ch][k];
+        assign flat_weights[ch*KernelArea + k] = weights_q[ch][k];
       end
     end
   endgenerate
 
-  // mux_idx is 0 during fire cycle, then follows term_count_q during busy cycles
-  wire [TermBits-1:0] mux_idx = in_fire ? '0 : term_count_q;
+  // term_idx is 0 during fire cycle, then follows term_count_q during busy cycles
+  wire [TermBits-1:0] term_idx = in_fire ? '0 : term_count_q;
 
   // Bypass logic
   // Use raw input during fire cycle to save a cycle of latency, otherwise use captured registers
-  wire signed [InBits-1:0]     raw_data_w   = in_fire ? windows_i[0][0] : flat_windows[mux_idx];
-  wire signed [WeightBits-1:0] raw_weight_w = in_fire ? weights_i[0][0] : flat_weights[mux_idx];
- 
-  /* --------------------------------- Input Encoding --------------------------------- */
-  // Encode inputs for DSP (Bipolar for 1-bit, Ternary for 2-bit)
-  wire signed [`SB_MAC16_IN-1:0] data_w;
-  generate
-    // Binary encoding {0,1} -> {-1,1}
-    if (InBits == 1) begin : gen_binary_in
-      assign data_w = (raw_data_w[0]) ? `SB_MAC16_IN'sd1 : -`SB_MAC16_IN'sd1;
-    // Ternary encoding {-1,0,1}
-    end else if (InBits == 2) begin : gen_ternary_in
-      assign data_w = (raw_data_w == 2'sb01) ?  `SB_MAC16_IN'sd1 : 
-                      (raw_data_w == 2'sb11) ? -`SB_MAC16_IN'sd1 : 
-                                                `SB_MAC16_IN'sd0;
-    // Otherwise sign extend to 16b input
-    end else begin : gen_full_in
-      assign data_w = `SB_MAC16_IN'($signed(raw_data_w));
-    end
-  endgenerate
-
-  // Encode weights
-  wire signed [`SB_MAC16_IN-1:0] weight_w;
-  generate
-    // Binary encoding {0,1} -> {-1,1}
-    if (WeightBits == 1) begin : gen_binary_weight
-      assign weight_w = (raw_weight_w[0]) ? `SB_MAC16_IN'sd1 : -`SB_MAC16_IN'sd1;
-    // Ternary encoding {-1,0,1}
-    end else if (WeightBits == 2) begin : gen_ternary_weight
-      assign weight_w = (raw_weight_w == 2'sb01) ? `SB_MAC16_IN'sd1 : 
-                        (raw_weight_w == 2'sb11) ? -`SB_MAC16_IN'sd1 : 
-                                                   `SB_MAC16_IN'sd0;
-    end else begin : gen_full_weight
-      assign weight_w = `SB_MAC16_IN'($signed(raw_weight_w));
-    end
-  endgenerate
+  wire signed [InBits-1:0]     data_w   = in_fire ? windows_i[0][0] : flat_windows[term_idx];
+  wire signed [WeightBits-1:0] weight_w = in_fire ? weights_i[0][0] : flat_weights[term_idx];
 
   /* ------------------------------- Neuron DSP Unit ------------------------------- */
-  wire signed [AccBits-1:0] acc_o;
+  // Targetting IceStorm SB_MAC16 DSP
+  // Acts as sequencer, allows consumer DSP to handle encoding
+  wire signed [`SB_MAC16_OUT-1:0] neuron_o;
 
   neuron_dsp #(
-    .InBits    (`SB_MAC16_IN),
-    .WeightBits(`SB_MAC16_IN),
-    .BiasBits  (AccBits),
-    .OutBits   (AccBits)
+     .InBits     (InBits)
+    ,.WeightBits (WeightBits)
+    ,.BiasBits   (BiasBits)
+    ,.OutBits    (`SB_MAC16_OUT)
   ) dsp_inst (
-    .clk_i      (clk_i),
-    .rst_i      (rst_i),
-    .en_i       (in_fire | busy_q),
-    .load_bias_i(in_fire),
-    .data_i     (data_w),
-    .weight_i   (weight_w),
-    .bias_i     (bias_i),
-    .acc_o      (acc_o)
+     .clk_i       (clk_i)
+    ,.rst_i       (rst_i)
+    ,.en_i        (in_fire | busy_q)
+    ,.load_bias_i (in_fire)
+    ,.data_i      (data_w)
+    ,.weight_i    (weight_w)
+    ,.bias_i      (bias_i)
+    ,.acc_o       (neuron_o)
   );
 
   /* -------------------------------- Output Encoding -------------------------------- */
-  generate
-    // Binary Output Encoding {-1,1} -> {0,1}
-    if (OutBits == 1) begin : gen_binary_out
-      assign data_o = (acc_o > 0) ? OutBits'(1) : OutBits'(0);
-    // Ternary Output Encoding {-1,0,1}
-    end else if (OutBits == 2) begin : gen_ternary_out
-      assign data_o = (acc_o > 0) ? OutBits'(1) :
-                      (acc_o < 0) ? OutBits'(-1) :
-                                    OutBits'(0);
-    // Full or Extended Output
-    end else if (OutBits >= AccBits) begin : gen_full_out
-      assign data_o = OutBits'($signed(acc_o));
-    // Truncated MSB Output
-    end else begin : gen_truncated_out
-      assign data_o = acc_o[AccBits-1 -: OutBits];
-    end
-  endgenerate
+  output_encoder #(
+     .InBits  (AccBits)
+    ,.OutBits (OutBits)
+  ) out_enc_inst (
+     .data_i (neuron_o[AccBits-1:0])
+    ,.data_o (data_o)
+  );
 endmodule

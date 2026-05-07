@@ -1,6 +1,7 @@
 {
     "top": "neuron_dsp",
     "files": [
-        "rtl/icestorm/neuron_dsp.sv"
+        "rtl/icestorm/neuron_dsp.sv",
+        "rtl/lib/input_encoder.sv"
     ]
 }

@@ -19,26 +19,24 @@ module mac #(
   typedef logic signed [OutBits-1:0] acc_t; 
 
   generate
-    // Multiply
+    // If both are 1-bit, use XNOR for bipolar multiplication {-1, 1}
     if (InBits == 1 && WeightBits == 1) begin : gen_xnor
-      // Both input and weight are 1-bit {-1,+1} encoded: use XNOR multiplication
-      // same_bit → +1, different_bit → -1  (i.e. (-1*-1=+1, +1*+1=+1, +1*-1=-1, -1*+1=-1))
       for (genvar i = 0; i < TermCount; i++) begin : gen_xnor_multiply
         assign addends[i] = (window_i[i][0] == weights_i[i][0]) ? acc_t'(1) : acc_t'(-1);
       end
-    // If binary input but multi-bit weight, encode {0,1} input as {-1,1}; weight stays signed
-    end else if (InBits == 1) begin : gen_binary
+    // Binary Activation {-1, 1} * Multi-bit Weight
+    end else if (InBits == 1) begin : gen_binary_in
       for (genvar i = 0; i < TermCount; i++) begin : gen_binary_multiply
         assign addends[i] = window_i[i][0] ? acc_t'(weights_i[i]) : -acc_t'(weights_i[i]);
       end
-    // If ternary input, use MUX-based multiply
-    end else if (InBits == 2) begin : gen_ternary
+    // Ternary Activation {-1, 0, 1} * Multi-bit Weight (MUX-based multiply)
+    end else if (InBits == 2) begin : gen_ternary_in
       for (genvar i = 0; i < TermCount; i++) begin : gen_ternary_multiply
         assign addends[i] = (window_i[i] == 2'sb01) ?   acc_t'(weights_i[i]) :
                             (window_i[i] == 2'sb11) ? - acc_t'(weights_i[i]) :
                                                          acc_t'(0);
       end
-    // Otherwise multiply normally
+    // Otherwise normal multiplication
     end else begin : gen_normal
       for (genvar i = 0; i < TermCount; i++) begin : gen_normal_multiply
         assign addends[i] = acc_t'(weights_i[i]) * window_i[i];
@@ -53,14 +51,5 @@ module mac #(
       sum_o += addends[i];
     end
   end
-  
-  // adder_tree #(
-  //    .InBits     (OutBits) // products are sign extended to output width
-  //   ,.OutBits    (OutBits)
-  //   ,.AddendCount(TermCount)
-  // ) adder_inst (
-  //    .addends_i(addends)
-  //   ,.sum_o    (sum_o)
-  // );
 
 endmodule

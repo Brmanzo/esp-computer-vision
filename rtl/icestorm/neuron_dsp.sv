@@ -27,40 +27,29 @@ module neuron_dsp #(
 );
 
   /* ---------------------------- Input Logic ---------------------------- */
-  // Binary input encoding {0,1} -> {-1,1}
+  // Binary/Ternary input encoding
   wire signed [`SB_MAC16_IN-1:0] data_w;
-  generate
-    if (InBits == 1) begin: gen_binary_in
-      assign data_w = (data_i[0]) ? `SB_MAC16_IN'sd1 : -`SB_MAC16_IN'sd1;
-    end else begin : gen_full_in
-      assign data_w = `SB_MAC16_IN'($signed(data_i));
-    end
-  endgenerate 
+  wire signed [`SB_MAC16_IN-1:0] weight_w;
+  
+  input_encoder #(
+     .InBits(InBits)
+    ,.OutBits(`SB_MAC16_IN)
+  ) in_enc_inst (
+     .data_i(data_i)
+    ,.data_o(data_w)
+  );
 
-  wire signed [`SB_MAC16_IN-1:0] weight_w = `SB_MAC16_IN'($signed(weight_i));
+  input_encoder #(
+     .InBits(WeightBits)
+    ,.OutBits(`SB_MAC16_IN)
+  ) weight_enc_inst (
+     .data_i(weight_i)
+    ,.data_o(weight_w)
+  );
   
   // Internal 32-bit accumulator for SB_MAC16
   logic signed [`SB_MAC16_OUT-1:0] acc_r;
-
-  /* ----------------------------- Output Logic ----------------------------- */
-  generate
-    // Binary Output Encoding {-1,1} -> {0,1}
-    if (OutBits == 1) begin : gen_binary_out
-      assign acc_o = (acc_r > $signed('0)) ? 1'b1 : 1'b0;
-    // Ternary Output Encoding {-1,0,1}
-    end else if (OutBits == 2) begin : gen_ternary_out
-      assign acc_o = (acc_r > $signed('0)) ? OutBits'( 1) :
-                     (acc_r < $signed('0)) ? OutBits'(-1) :
-                                             OutBits'( 0);
-    // Linear Output
-    end else if (OutBits == `SB_MAC16_OUT) begin : gen_full_out
-      assign acc_o = acc_r;
-    // Return the LSBs to match standard neuron.sv behavior for small OutBits
-    end else begin : gen_truncated_out
-      // Output: Take MSB threshold for 1-bit, else slice LSBs
-      assign acc_o = (OutBits == 1) ? OutBits'(`SB_MAC16_OUT'($signed(acc_r)) > 0) : acc_r[OutBits-1:0];
-    end
-  endgenerate
+  assign acc_o = acc_r;
 
   /* ----------------------------- Sequential Accumulator Logic ----------------------------- */
   always_ff @(posedge clk_i) begin

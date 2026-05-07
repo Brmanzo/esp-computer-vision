@@ -2,6 +2,8 @@
     "top": "filter_dsp",
     "files": [
         "rtl/icestorm/filter_dsp.sv",
-        "rtl/icestorm/neuron_dsp.sv"
+        "rtl/icestorm/neuron_dsp.sv",
+        "rtl/lib/output_encoder.sv",
+        "rtl/lib/input_encoder.sv"
     ]
 }

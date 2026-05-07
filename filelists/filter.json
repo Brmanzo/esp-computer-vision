@@ -1,9 +1,10 @@
 {
     "top": "filter",
-    "files":
-    ["rtl/lib/filter.sv"
-    ,"rtl/lib/mac.sv"
-    ,"rtl/lib/adder_tree.sv"
-    ,"rtl/lib/elastic.sv"
+    "files": [
+        "rtl/lib/filter.sv",
+        "rtl/lib/mac.sv",
+        "rtl/lib/adder_tree.sv",
+        "rtl/lib/elastic.sv",
+        "rtl/lib/output_encoder.sv"
     ]
 }

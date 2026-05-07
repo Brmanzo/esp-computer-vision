@@ -22,10 +22,11 @@ module tb_neuron #(
   `include "injected_weights_0.vh"
   `include "injected_biases_0.vh"
 
+  wire signed [31:0] acc_full;
   if (GEN_DSP == 0) begin : gen_lut
     neuron #(
          .InBits     (InBits)
-        ,.OutBits    (OutBits)
+        ,.OutBits    (32)
         ,.WeightBits (WeightBits)
         ,.BiasBits   (BiasBits)
         ,.InChannels (InChannels)
@@ -33,7 +34,7 @@ module tb_neuron #(
         ,.Bias       (INJECTED_BIASES_0)
       ) dut (
          .data_i  (data_i)
-        ,.data_o  (data_o)
+        ,.data_o  (acc_full)
       );
   end else begin : gen_dsp
     // For sequential testing, we expect the testbench to toggle en_i and load_bias_i.
@@ -45,7 +46,7 @@ module tb_neuron #(
     // Actually, let's add a weight_i port to tb_neuron.
     neuron_dsp #(
          .InBits     (InBits)
-        ,.OutBits    (OutBits)
+        ,.OutBits    (32)
         ,.WeightBits (WeightBits)
         ,.BiasBits   (BiasBits)
       ) dut (
@@ -53,11 +54,13 @@ module tb_neuron #(
         ,.rst_i       (rst_i)
         ,.en_i        (en_i)
         ,.load_bias_i (load_bias_i)
-        ,.data_i      (data_i[0]) // Still using data_i[0] but could be indexed
+        ,.data_i      (data_i[0])
         ,.weight_i    (weight_i)
         ,.bias_i      (INJECTED_BIASES_0)
-        ,.acc_o       (data_o)
+        ,.acc_o       (acc_full)
       );
   end
+
+  assign data_o = OutBits'(acc_full);
 
 endmodule
