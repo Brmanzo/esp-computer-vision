@@ -35,6 +35,12 @@ class ConvConfig:
         self._input_dims  = input_dims
         self._kernel_width = kernels[layer_num][0]
 
+        self._cycle_count = 1
+        if use_dsp == 1:
+            self._cycle_count = self._kernel_width**2 * self._in_ch
+        elif use_dsp == 2:
+            self._cycle_count = self._kernel_width**2 * self._in_ch * self._out_ch
+
         # Input logic
         if self._layer_num == 0:
             self._valid_i = "valid_i"
@@ -72,6 +78,8 @@ class PoolConfig:
         self._out_ch     = in_ch 
         self._mode       = 0 if mode == "max" else 1
 
+        self._cycle_count = self._kernel_width**2
+
         self._valid_i = f"conv_{self._layer_num}_valid"
         self._data_i  = f"conv_{self._layer_num}_data"
         if self._layer_num == num_layers - 2:
@@ -102,6 +110,12 @@ class ClassifierConfig:
         self._kernels     = kernels
 
         self._term_count = InputDimensions(line_width_px, line_count_px).term_count  # Classifier doesn't have spatial dimensions
+        
+        self._cycle_count = 1
+        if use_dsp == 1:
+            self._cycle_count = self._in_ch
+        elif use_dsp == 2:
+            self._cycle_count = self._in_ch * self._num_classes
 
         # Classifier layers are connected to the last feature block (either conv or pool)
         if len(kernels[self._layer_num - 1]) > 1:

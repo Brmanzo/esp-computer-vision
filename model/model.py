@@ -146,6 +146,48 @@ class cnn_model(nn.Module):
         used = DSP_COUNT - dsp
         utilization = (used / DSP_COUNT) * 100
         print(f"DSPs: {dsp} remaining / {DSP_COUNT} total ({utilization:.1f}% utilization)")
+    
+    def cycle_count(self) -> None:
+        total_latency = 0
+        max_effective_cycles = 0
+        pixel_decimation = 1 # Tracks how many camera pixels = 1 current layer pixel
+        
+        print("\n--- PERFORMANCE ANALYSIS ---")
+        for i, layer_cfg in enumerate(self.config.layers):
+            # Conv Layer
+            c_cycles = layer_cfg.ConvLayer._cycle_count
+            eff_c = c_cycles / pixel_decimation
+            print(f"Layer {i} Conv: {c_cycles:>3} cycles ({eff_c:>5.1f} eff)")
+            
+            total_latency += c_cycles
+            max_effective_cycles = max(max_effective_cycles, eff_c)
+            
+            # Pool Layer
+            if layer_cfg.PoolLayer is not None:
+                p_cycles = layer_cfg.PoolLayer._cycle_count
+                eff_p = p_cycles / pixel_decimation
+                print(f"Layer {i} Pool: {p_cycles:>3} cycles ({eff_p:>5.1f} eff)")
+                
+                total_latency += p_cycles
+                pixel_decimation *= (layer_cfg.PoolLayer._kernel_width ** 2)
+                max_effective_cycles = max(max_effective_cycles, eff_p)
+        
+        # Classifier
+        cls = self.config.classifier_config
+        cls_cycles = cls._cycle_count
+        eff_cls = cls_cycles / pixel_decimation
+        print(f"Classifier  : {cls_cycles:>3} cycles ({eff_cls:>5.1f} eff)")
+        
+        total_latency += cls_cycles
+        max_effective_cycles = max(max_effective_cycles, eff_cls)
+        
+        print(f"\nTotal Pipeline Latency: {total_latency} cycles")
+        print(f"Bottleneck (Cycles/Pixel): {max_effective_cycles:.1f}")
+        
+        if self.config.in_dims.height is not None and self.config.in_dims.width is not None and  max_effective_cycles > 0:
+            input_pixels = self.config.in_dims.width * self.config.in_dims.height
+            fps = 12_000_000 / (max_effective_cycles * input_pixels)
+            print(f"Estimated Max Frame Rate: {fps:.2f} FPS")
 
 if __name__ == "__main__":
     model = cnn_model(get_hand_gesture_cfg())
@@ -154,4 +196,5 @@ if __name__ == "__main__":
     print("\n--- RESOURCE UTILIZATION ---")
     model.ram_utilization()
     model.dsp_utilization()
+    model.cycle_count()
     print("")
