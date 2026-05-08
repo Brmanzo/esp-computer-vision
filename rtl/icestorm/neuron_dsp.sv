@@ -26,30 +26,41 @@ module neuron_dsp #(
   ,output logic signed [OutBits-1:0]    acc_o
 );
 
-  /* ---------------------------- Input Logic ---------------------------- */
   // Binary/Ternary input encoding
-  wire signed [`SB_MAC16_IN-1:0] data_w;
-  wire signed [`SB_MAC16_IN-1:0] weight_w;
-  
-  input_encoder #(
-     .InBits(InBits)
-    ,.OutBits(`SB_MAC16_IN)
-  ) in_enc_inst (
-     .data_i(data_i)
-    ,.data_o(data_w)
-  );
+  logic signed [`SB_MAC16_IN-1:0] data_w;
+  logic signed [`SB_MAC16_IN-1:0] weight_w;
 
-  input_encoder #(
-     .InBits(WeightBits)
-    ,.OutBits(`SB_MAC16_IN)
-  ) weight_enc_inst (
-     .data_i(weight_i)
-    ,.data_o(weight_w)
-  );
+  /* verilator lint_off WIDTHEXPAND */
+  always_comb begin
+    if (InBits == 1) begin
+      data_w = data_i[0] ? `SB_MAC16_IN'(1) : `SB_MAC16_IN'(-1);
+    end else if (InBits == 2) begin
+      data_w = (data_i == 2'sb01) ? `SB_MAC16_IN'( 1) :
+               (data_i == 2'sb11) ? `SB_MAC16_IN'(-1) :
+                                    `SB_MAC16_IN'( 0);
+    end else begin
+      data_w = `SB_MAC16_IN'($signed(data_i));
+    end
+  end
+
+  always_comb begin
+    if (WeightBits == 1) begin
+      weight_w = weight_i[0] ? `SB_MAC16_IN'(1) : `SB_MAC16_IN'(-1);
+    end else if (WeightBits == 2) begin
+      weight_w = (weight_i == 2'sb01) ? `SB_MAC16_IN'( 1) :
+                 (weight_i == 2'sb11) ? `SB_MAC16_IN'(-1) :
+                                        `SB_MAC16_IN'( 0);
+    end else begin
+      weight_w = `SB_MAC16_IN'($signed(weight_i));
+    end
+  end
+  /* verilator lint_on WIDTHEXPAND */
   
   // Internal 32-bit accumulator for SB_MAC16
   logic signed [`SB_MAC16_OUT-1:0] acc_r;
+  /* verilator lint_off WIDTHTRUNC */
   assign acc_o = acc_r;
+  /* verilator lint_on WIDTHTRUNC */
 
   /* ----------------------------- Sequential Accumulator Logic ----------------------------- */
   always_ff @(posedge clk_i) begin
@@ -58,12 +69,21 @@ module neuron_dsp #(
     end else if (en_i) begin
       if (load_bias_i) begin
         // On the first cycle of a frame, load the bias and perform the first multiplication
-        acc_r <= `SB_MAC16_OUT'($signed(bias_i)) + `SB_MAC16_OUT'($signed(data_w * weight_w));
+        acc_r <= `SB_MAC16_OUT'($signed(bias_i)) + (`SB_MAC16_OUT'($signed(data_w)) * `SB_MAC16_OUT'($signed(weight_w)));
       end else begin
         // On subsequent cycles, accumulate the product
-        acc_r <= acc_r + `SB_MAC16_OUT'($signed(data_w * weight_w));
+        acc_r <= acc_r + (`SB_MAC16_OUT'($signed(data_w)) * `SB_MAC16_OUT'($signed(weight_w)));
       end
     end
   end
+
+  // synthesis translate_off
+  always @(posedge clk_i) begin
+    if (en_i) begin
+      $display("T=%0t [NEURON] InBits=%0d WeightBits=%0d load=%b data_enc=%0d weight_enc=%0d acc_prev=%0d", 
+               $time, InBits, WeightBits, load_bias_i, data_w, weight_w, acc_r);
+    end
+  end
+  // synthesis translate_on
 
 endmodule

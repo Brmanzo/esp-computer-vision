@@ -28,20 +28,19 @@ module global_max #(
   wire  [0:0] first_term = (counter_q == '0);
   wire  [0:0] last_term = (counter_q == (CountWidth'(TermCount) - CountWidth'(1)));
   
-  always_ff @(posedge clk_i) begin
-    if (rst_i) counter_q <= '0;
-    else       counter_q <= counter_d;
-  end
+  counter_roll #(
+     .CountBits  (CountWidth)
+    ,.ResetVal   (0)
+    ,.MaxVal     (TermCount - 1)
+    ,.EnableDown (1'b0)
+  ) term_counter_inst (
+       .clk_i    (clk_i)
+    ,.rst_i      (rst_i)
+    ,.up_i       (in_fire)
+    ,.down_i     (1'b0)
+    ,.count_o    (counter_q)
+  );
 
-  always_comb begin
-    counter_d = counter_q;
-    if (in_fire) begin
-      // Roll over if last term,
-      if (last_term) counter_d = '0;
-      // Otherwise increment
-      else counter_d = counter_q + CountWidth'(1);
-    end
-  end
 
   /* ------------------------ Max Value Logic ------------------------ */
   logic signed [InChannels-1:0][OutBits-1:0] max_q, max_d;

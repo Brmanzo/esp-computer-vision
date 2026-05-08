@@ -4,9 +4,9 @@
 /* verilator lint_off WIDTHTRUNC */
 `timescale 1ns / 1ps
 module elastic #(
-     parameter int unsigned InBits = 8
-    ,parameter logic [0:0] DatapathGate  = 1'b0
-    ,parameter logic [0:0] DatapathReset = 1'b0
+   parameter int unsigned InBits = 8
+  ,parameter logic [0:0] DatapathGate  = 1'b0
+  ,parameter logic [0:0] DatapathReset = 1'b0
 )  (
    input [0:0] clk_i
   ,input [0:0] rst_i

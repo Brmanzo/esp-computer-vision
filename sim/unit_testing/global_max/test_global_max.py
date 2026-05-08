@@ -81,7 +81,16 @@ class GlobalMaxModel():
         assert_resolvable(self._data_i)
 
         packed_in = self._data_i.value.integer
-        x = unpack_terms(packed_in, self._in_bits, self._in_channels)
+        raw_x = unpack_terms(packed_in, self._in_bits, self._in_channels)
+        
+        # Encode 1-bit inputs to bipolar if needed
+        if self._in_bits == 1:
+            x = [1 if val == 1 else -1 for val in raw_x]
+        else:
+            x = raw_x[:]
+
+        if sim_verbose():
+            print(f"MODEL CONSUME: term={self._term_counter} x={x}")
 
         if self._term_counter == 0:
             self._current_max = x[:]
@@ -108,7 +117,11 @@ class GlobalMaxModel():
         packed_out = self._data_o.value.integer
         got = unpack_terms(packed_out, self._out_bits, self._in_channels)
 
-        expected_list = list(expected)
+        # Encode 1-bit outputs to bipolar if needed
+        if self._out_bits == 1:
+            expected_list = [1 if val == 1 else 0 for val in expected]
+        else:
+            expected_list = list(expected)
 
         if sim_verbose():
             print(f"Produced output {got}, expected {expected_list} at time {get_sim_time(units='ns')}ns")
@@ -204,7 +217,7 @@ async def rate_tests(dut, in_rate, out_rate):
     try:
         await om.wait(timeout_ns)
     except SimTimeoutError:
-        assert 0, (
+        assert False, (
             f"Test timed out. Expected {l_out} outputs from {l_in} inputs "
             f"with TermCount={T}, in_rate={in_rate}, out_rate={out_rate}"
     )

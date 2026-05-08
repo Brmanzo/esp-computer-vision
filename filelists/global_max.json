@@ -1,7 +1,9 @@
 {
     "top": "global_max",
-    "files":
-    ["rtl/lib/global_max.sv"
-    ,"rtl/lib/elastic.sv"
+    "files": [
+        "rtl/lib/global_max.sv",
+        "rtl/lib/elastic.sv",
+        "rtl/lib/counter_roll.sv",
+        "rtl/lib/input_encoder.sv"
     ]
 }

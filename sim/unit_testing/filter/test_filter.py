@@ -204,6 +204,7 @@ class RandomDataGenerator:
         self._term_count  = int(dut.KernelWidth.value) * int(dut.KernelWidth.value)
 
     def generate(self):
+        from util.bitwise import pack_terms
         # 1. Create Raw Data Structure
         windows = [[gen_random_signed(self._in_bits, random) for _ in range(self._term_count)] 
                    for _ in range(self._InChannels)]
@@ -211,11 +212,15 @@ class RandomDataGenerator:
                    for _ in range(self._InChannels)]
         bias    = gen_random_signed(self._BiasBits, random)
 
-        # 2. Use unified packers
-        # Generator returns ([packed_val1, packed_val2], [raw_val1, raw_val2])
-        return [pack_channels(windows, self._in_bits), 
-                pack_channels(weights, self._weight_bits), 
-                bias], [windows, weights]
+        # 2. Use unified packers (flattened)
+        # Flatten the 2D channel/term structure into a 1D list of terms for packing
+        flat_windows_list = [val for ch in windows for val in ch]
+        flat_weights_list = [val for ch in weights for val in ch]
+        
+        packed_windows = pack_terms(flat_windows_list, self._in_bits)
+        packed_weights = pack_terms(flat_weights_list, self._weight_bits)
+
+        return [packed_windows, packed_weights, bias], [windows, weights]
 
 @cocotb.test
 async def reset_test(dut):

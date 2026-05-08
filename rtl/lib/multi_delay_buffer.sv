@@ -33,12 +33,13 @@ module multi_delay_buffer #(
   logic [AddrWidth-1:0] read_ptr_r;
 
   counter_roll #(
-     .Width(AddrWidth)
-    ,.ResetVal('0)
+     .CountBits(AddrWidth)
+    ,.ResetVal (0)
+    ,.MaxVal   (Delay-1)
+    ,.EnableDown (1'b0)
   ) read_counter_inst (
      .clk_i    (clk_i)
     ,.rst_i    (rst_i)
-    ,.max_val_i(AddrWidth'(Delay-1)) // Delay offset by single cycle sync-RAM rd-delay
     ,.up_i     (in_fire)
     ,.down_i   (1'b0)
     ,.count_o  (read_ptr_r)

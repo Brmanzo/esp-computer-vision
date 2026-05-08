@@ -9,6 +9,7 @@ module unpacker #(
   ,localparam int unsigned  CountWidth             = $clog2(PackedNum)
   ,localparam int unsigned  ElasticWidth           = UnpackedWidth + 1
   ,localparam int unsigned  OffsetWidth            = $clog2(PackedWidth)
+  ,localparam int unsigned  MaxCount               = PackedNum - 1
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -66,12 +67,12 @@ module unpacker #(
 
   // Counter to increment unpacking offset
   counter_roll #(
-     .Width   (CountWidth)
-    ,.ResetVal('0)
+     .CountBits(CountWidth)
+    ,.MaxVal   (MaxCount)
+    ,.ResetVal (0)
   ) counter_roll_inst (
      .clk_i    (clk_i)
     ,.rst_i    (rst_i)
-    ,.max_val_i(max_count)
     ,.up_i     (out_fire)
     ,.down_i   ('0)
     ,.count_o  (counter)

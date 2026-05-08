@@ -96,26 +96,15 @@ class ModelRunner:
 
     async def _run_input(self):
         while True:
-            await FallingEdge(self._clk_i)
+            await RisingEdge(self._clk_i)
             if self._rst_i.value.is_resolvable and int(self._rst_i.value) == 1:
                 continue
 
             # Evaluate Input Handshake
-            v_val = self._valid_i.value if self._valid_i is not None else 1
-            r_val = self._ready_o.value if self._ready_o is not None else 1
+            v = self._valid_i.value == 1 if self._valid_i is not None else True
+            r = self._ready_o.value == 1 if self._ready_o is not None else True
             
-            v_res = v_val.is_resolvable if hasattr(v_val, 'is_resolvable') else True
-            r_res = r_val.is_resolvable if hasattr(r_val, 'is_resolvable') else True
-
-            if v_res and r_res:
-                v = int(v_val) == 1
-                r = int(r_val) == 1
-                if v and r:
-                    self._dut._log.info(f"MODELRUNNER: Handshake detected at T={cocotb.utils.get_sim_time(units='ns')}ns")
-                
-                if not (v and r):
-                    continue
-            else:
+            if not (v and r):
                 continue
 
             expected = self._model.consume()
@@ -141,20 +130,13 @@ class ModelRunner:
                 r = self._ready_i.value == 1 if self._ready_i is not None else True
                 if not (v and r):
                     continue
-            else:
-                # Fixed-latency Mode: Wait until we actually expect something
-                if self._events.empty():
-                    continue
-
-            # 1. Resolve same-cycle Cocotb scheduling races
-            if self._events.qsize() == 0:
+            
+            # Resolve same-cycle races (e.g. combinatorial valid_o = valid_i)
+            if self._events.empty():
                 await Timer(Decimal(0), units="ns")
 
-            # 2. Ignore warmup garbage from deep pipelines
-            if self._events.qsize() > 0:
-                self._seen_expected = True
-            elif not self._seen_expected:
-                continue 
+            if self._events.empty():
+                continue
 
             assert self._events.qsize() > 0, "Error! Module produced output without expected input"
 

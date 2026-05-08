@@ -16,6 +16,7 @@ module filter_dsp #(
   ,parameter   int unsigned BiasBits    = 8
   ,parameter   int unsigned AccBits     = `SB_MAC16_OUT
   ,parameter   int unsigned InChannels  = 4
+  ,parameter   int unsigned DSPIdx      = 0
 
   ,localparam  int unsigned KernelArea  = KernelWidth * KernelWidth
   ,localparam  int unsigned TotalTerms  = InChannels * KernelArea
@@ -27,8 +28,8 @@ module filter_dsp #(
   ,input  [0:0] valid_i
   ,output [0:0] ready_o
 
-  ,input logic signed [InChannels-1:0][KernelArea-1:0][InBits-1:0]     windows_i
-  ,input logic signed [InChannels-1:0][KernelArea-1:0][WeightBits-1:0] weights_i
+  ,input logic signed [InChannels*KernelArea*InBits-1:0]     windows_i
+  ,input logic signed [InChannels*KernelArea*WeightBits-1:0] weights_i
   ,input logic signed [BiasBits-1:0]   bias_i
 
   ,output [0:0] valid_o
@@ -43,73 +44,78 @@ module filter_dsp #(
   // Registered window and register arrays
   logic signed [InChannels-1:0][KernelArea-1:0][InBits-1:0]     windows_q;
   logic signed [InChannels-1:0][KernelArea-1:0][WeightBits-1:0] weights_q;
+  logic signed [BiasBits-1:0]                                  bias_q;
 
-  /* -------------------------- Term Counter Logic -------------------------- */
-  logic [TermBits-1:0] term_count_d, term_count_q;
-
-  wire [0:0] last_term   = (term_count_q == TermBits'(TotalTerms - 1));
-  wire [0:0] single_term = (TotalTerms == 1);
-
-  always_ff @(posedge clk_i) begin
-    if (rst_i) term_count_q <= '0;
-    else       term_count_q <= term_count_d;
-  end
-
-  always_comb begin
-    term_count_d = term_count_q;
-    if (in_fire) begin
-      // If multi-term, the first term (0) is done now, so next cycle we process term 1
-      term_count_d = single_term ? TermBits'(0) : TermBits'(1);
-    end else if (busy_q) begin
-      // Roll over to zero on last term
-      if (last_term) term_count_d = '0;
-      else           term_count_d = term_count_q + TermBits'(1);
-    end
-  end
-
-  /* -------------------------- Elastic Handshake -------------------------- */
-  logic [0:0] busy_d,  busy_q;
-  logic [0:0] valid_d, valid_q;
-
-  assign ready_o = ~busy_q & ~valid_q;
+  /* -------------------------- Control Logic -------------------------- */
+  logic [TermBits-1:0] term_count_q;
+  logic [0:0]          busy_d,  busy_q;
+  logic [0:0]          valid_d, valid_q;
+  wire [0:0]           done;
+  
   assign valid_o = valid_q;
+
+
+  // Unpack flattened ports into temporary wires for clean capture
+  logic signed [InChannels-1:0][KernelArea-1:0][InBits-1:0]     windows_unpacked;
+  logic signed [InChannels-1:0][KernelArea-1:0][WeightBits-1:0] weights_unpacked;
+
+  generate
+    for (genvar ch = 0; ch < InChannels; ch++) begin : gen_unpack_ch
+      for (genvar k = 0; k < KernelArea; k++) begin : gen_unpack_k
+        assign windows_unpacked[ch][k] = windows_i[(ch*KernelArea + k)*InBits +: InBits];
+        assign weights_unpacked[ch][k] = weights_i[(ch*KernelArea + k)*WeightBits +: WeightBits];
+      end
+    end
+  endgenerate
 
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
       busy_q    <= 1'b0;
       valid_q   <= 1'b0;
-      windows_q <=   '0;
-      weights_q <=   '0;
+      windows_q <= '0;
+      weights_q <= '0;
+      bias_q    <= '0;
     end else begin
       busy_q       <= busy_d;
       valid_q      <= valid_d;
       if (in_fire) begin
-        windows_q  <= windows_i;
-        weights_q  <= weights_i;
+        windows_q <= windows_unpacked;
+        weights_q <= weights_unpacked;
+        bias_q    <= bias_i;
       end
     end
   end
 
-  always_comb begin
-    busy_d  = busy_q;
-    valid_d = valid_q;
+    wire [0:0] last_term = (term_count_q == TermBits'(TotalTerms - 1));
+    assign done      = busy_q && last_term;
     
-    // When calculating single term, completes immediately
-    if (single_term) begin
-      if (in_fire) valid_d = 1'b1;
-    // Otherwise, busy during first terms, valid after last term
-    end else begin
-      if (in_fire) busy_d  = 1'b1;
-      else if (busy_q && last_term) begin
+    // Block new input if we are busy OR if we are holding a result that hasn't been accepted
+    assign ready_o = ~busy_q && (~valid_q || ready_i);
+
+    counter_roll #(
+       .CountBits  (TermBits)
+      ,.ResetVal   (0)
+      ,.MaxVal     (TotalTerms - 1)
+      ,.EnableDown (1'b0)
+    ) term_counter_inst (
+       .clk_i      (clk_i)
+      ,.rst_i      (rst_i | in_fire)
+      ,.up_i       (busy_q)
+      ,.down_i     (1'b0)
+      ,.count_o    (term_count_q)
+    );
+
+    always_comb begin
+      busy_d  = busy_q;
+      valid_d = valid_q;
+      if (in_fire) begin
+        busy_d  = 1'b1;
+      end else if (done) begin
         valid_d = 1'b1;
         busy_d  = 1'b0;
       end
+      if (out_fire) valid_d = 1'b0;
     end
-    // deassert valid on out_fire
-    if (out_fire) begin
-      valid_d = 1'b0;
-    end
-  end
 
   /* ------------------------ Data Unpacking and Sequencing ------------------------ */
   logic signed [TotalTerms-1:0][InBits-1:0]     flat_windows;
@@ -124,13 +130,12 @@ module filter_dsp #(
     end
   endgenerate
 
-  // term_idx is 0 during fire cycle, then follows term_count_q during busy cycles
-  wire [TermBits-1:0] term_idx = in_fire ? '0 : term_count_q;
+  // term_idx follows term_count_q during busy cycles
+  wire [TermBits-1:0] term_idx = term_count_q;
 
-  // Bypass logic
-  // Use raw input during fire cycle to save a cycle of latency, otherwise use captured registers
-  wire signed [InBits-1:0]     data_w   = in_fire ? windows_i[0][0] : flat_windows[term_idx];
-  wire signed [WeightBits-1:0] weight_w = in_fire ? weights_i[0][0] : flat_weights[term_idx];
+  // Use captured registers for stability
+  wire signed [InBits-1:0]     data_w   = flat_windows[term_idx];
+  wire signed [WeightBits-1:0] weight_w = flat_weights[term_idx];
 
   /* ------------------------------- Neuron DSP Unit ------------------------------- */
   // Targetting IceStorm SB_MAC16 DSP
@@ -145,14 +150,13 @@ module filter_dsp #(
   ) dsp_inst (
      .clk_i       (clk_i)
     ,.rst_i       (rst_i)
-    ,.en_i        (in_fire | busy_q)
-    ,.load_bias_i (in_fire)
+    ,.en_i        (busy_q)
+    ,.load_bias_i (busy_q && (term_count_q == '0))
     ,.data_i      (data_w)
     ,.weight_i    (weight_w)
-    ,.bias_i      (bias_i)
+    ,.bias_i      (bias_q)
     ,.acc_o       (neuron_o)
   );
-
   /* -------------------------------- Output Encoding -------------------------------- */
   output_encoder #(
      .InBits  (AccBits)
