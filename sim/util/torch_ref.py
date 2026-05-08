@@ -31,6 +31,7 @@ def torch_conv_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1, pa
     else:
         # Default to zeros if no bias provided
         b = torch.zeros(w.shape[0], dtype=torch.float32)
+    print(f"TORCH_REF: weights_sum={w.sum().item()} bias={b[0].item()}")
 
     # 2. Input Encoding (Bipolar for 1-bit)
     if in_bits == 1:

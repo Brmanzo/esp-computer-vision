@@ -4,6 +4,12 @@
         "rtl/blocks/linear_layer.sv",
         "rtl/lib/neuron.sv",
         "rtl/lib/adder_tree.sv",
-        "rtl/icestorm/neuron_dsp.sv"
+        "rtl/icestorm/neuron_dsp.sv",
+        "rtl/lib/input_encoder.sv",
+        "rtl/lib/output_encoder.sv",
+        "rtl/lib/mac.sv",
+        "rtl/lib/neuron_seq.sv",
+        "rtl/lib/counter_roll.sv",
+        "rtl/lib/counter_sat.sv"
     ]
 }

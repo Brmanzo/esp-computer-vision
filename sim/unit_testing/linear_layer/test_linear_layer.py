@@ -45,10 +45,9 @@ gen_rules = [
 TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases_width.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("UseDSP", [0, 1, 2])
 @auto_unpack(TEST_CASES)
 def test_width(test_name, simulator,
-               InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases, UseDSP):
+               InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases, DSPCount):
     parameters = dict(locals())
     parameters.pop("test_name", None)
     parameters.pop("simulator", None)
@@ -84,10 +83,9 @@ def test_width(test_name, simulator,
 TEST_CASES_CHANNELS = load_tests_from_csv(os.path.join(tbpath, "test_cases_channels.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("UseDSP", [0, 1, 2])
 @auto_unpack(TEST_CASES_CHANNELS)
 def test_channels(test_name, simulator,
-                  InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases, UseDSP):
+                  InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases, DSPCount):
     parameters = dict(locals())
     parameters.pop("test_name", None)
     parameters.pop("simulator", None)
@@ -110,11 +108,39 @@ def test_channels(test_name, simulator,
         toplevel_override="tb_linear_layer", extra_sources=[wrapper_path],
     )
 
+
+TEST_CASES_DSPS = load_tests_from_csv(os.path.join(tbpath, "test_cases_dsps.csv"), auto_rules, gen_rules)
+@pytest.mark.parametrize("test_name", tests)
+@pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+@auto_unpack(TEST_CASES_DSPS)
+def test_dsps(test_name, simulator,
+                  InBits, WeightBits, InChannels, OutBits, OutChannels, Weights, BiasBits, Biases, DSPCount):
+    parameters = dict(locals())
+    parameters.pop("test_name", None)
+    parameters.pop("simulator", None)
+    parameters.pop("Weights", None)
+    parameters.pop("Biases", None)
+
+    param_str = f"InChannels_{InChannels}_OutChannels_{OutChannels}_dsps_{DSPCount}_test_{test_name}"
+    weight_bits = int(OutChannels) * int(InChannels) * int(WeightBits)
+    bias_bits   = int(OutChannels) * int(BiasBits)
+
+    custom_work_dir = inject_weights_and_biases(
+        simulator=simulator, parameters=parameters, param_str=param_str,
+        tbpath=tbpath, test_class="channels", Weights=Weights, Biases=Biases,
+        weight_bits=weight_bits, bias_bits=bias_bits, layer=0)
+
+    wrapper_path = os.path.join(tbpath, "tb_linear_layer.sv")
+    runner(
+        simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters,
+        testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
+        toplevel_override="tb_linear_layer", extra_sources=[wrapper_path],
+    )
+
 @pytest.mark.parametrize("simulator", ["verilator"])
 @pytest.mark.parametrize("InBits, WeightBits, InChannels, OutBits, OutChannels, BiasBits", 
                          [(1, 2, 1, output_width(1, 2, 1), 1, 2)])
-@pytest.mark.parametrize("UseDSP", [0, 1, 2])
-def test_lint(simulator, InBits, WeightBits, InChannels, OutBits, OutChannels, BiasBits, UseDSP):
+def test_lint(simulator, InBits, WeightBits, InChannels, OutBits, OutChannels, BiasBits):
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters)
@@ -243,12 +269,13 @@ async def rate_tests(dut, in_rate: float, out_rate: float, N_vec: int = 200):
     slow = min(max(in_rate, 1e-3), max(out_rate, 1e-3))
     slow = max(min(slow, 1.0), 0.02)
 
-    # Account for sequential latency in UseDSP=2 (IC * OC cycles) or UseDSP=1 (IC cycles)
+    # Account for sequential latency based on DSPCount allocation
     cycles_per_vec = 1
-    if int(dut.UseDSP.value) == 2:
-        cycles_per_vec = IC * OC + 10
-    elif int(dut.UseDSP.value) == 1:
-        cycles_per_vec = IC + 10
+    dsp_count = int(dut.DSPCount.value)
+    if dsp_count > 0:
+        effective_dsps = min(dsp_count, OC)
+        neurons_per_dsp = (OC + effective_dsps - 1) // effective_dsps
+        cycles_per_vec = IC * neurons_per_dsp + 10
 
     # Assume 10ns clock period for timeout calculation
     timeout_ns = int((N_out * cycles_per_vec * 10 + 1000) / slow)
@@ -257,7 +284,7 @@ async def rate_tests(dut, in_rate: float, out_rate: float, N_vec: int = 200):
         await om.wait(timeout_ns)
 
     except SimTimeoutError:
-        assert 0, (
+        assert False, (
             f"Timed out in LINEAR rate test. "
             f"Expected {N_out} output handshakes, got {om.nproduced()} "
             f"in {timeout_ns} ns (in_rate={in_rate}, out_rate={out_rate})."

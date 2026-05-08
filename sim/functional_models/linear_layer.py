@@ -38,6 +38,7 @@ class LinearLayerModel():
         self._OutBits = int(dut.OutBits.value)
         self._InChannels  = int(dut.InChannels.value)
         self._OutChannels = int(dut.OutChannels.value)
+        self._BiasBits    = int(dut.BiasBits.value)
 
         self.w = np.array(weights, dtype=int)
         self.b = np.array(biases, dtype=int)
@@ -61,6 +62,9 @@ class LinearLayerModel():
             acc = int(self.b[oc])
             for ic in range(self._InChannels):
                 acc += int(self.w[oc][ic]) * input_vals[ic]
+            
+            # Match hardware overflow behavior by truncating to BiasBits
+            acc = sign_extend(acc & ((1 << self._BiasBits) - 1), self._BiasBits)
             expected.append(acc)
 
         if self._OutBits == 1:

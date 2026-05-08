@@ -8,9 +8,9 @@ module tb_linear_layer #(
   ,parameter int unsigned OutBits     = 32
   ,parameter int unsigned WeightBits  = 2
   ,parameter int unsigned BiasBits    = 8
-  ,parameter int unsigned InChannels   = 1
-  ,parameter int unsigned OutChannels  = 1
-  ,parameter int unsigned UseDSP       = 0
+  ,parameter int unsigned InChannels  = 1
+  ,parameter int unsigned OutChannels = 1
+  ,parameter int unsigned DSPCount    = 0
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -35,7 +35,7 @@ linear_layer #(
     ,.BiasBits   (BiasBits)
     ,.InChannels  (InChannels)
     ,.OutChannels (OutChannels)
-    ,.UseDSP      (UseDSP)
+    ,.DSPCount    (DSPCount)
     ,.Weights     (INJECTED_WEIGHTS_0)
     ,.Biases      (INJECTED_BIASES_0)
   ) dut (
