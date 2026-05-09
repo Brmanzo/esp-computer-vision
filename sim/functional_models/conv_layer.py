@@ -146,6 +146,7 @@ class ConvLayerModel():
 
             # Calculate the sum including bias
             biased_acc = acc + self._biases[oc]
+            print(f"MODEL: oc={oc} acc={acc} bias={self._biases[oc]} biased_acc={biased_acc}")
 
             if self._OutBits == 1:
                 # FIX: Use biased_acc here, not acc!
@@ -251,11 +252,9 @@ class ConvLayerModel():
         Hardware-to-software translator. 
         """
         if self._dut is not None:
-            packed = int(self._dut.data_i.value.integer)
+            packed = int(self._dut.data_i.value)
             raw_val = unpack_terms(packed, int(self._dut.InBits.value), self._InChannels)
-
-            # Forward the unpacked Python ints to the pure math pipeline
-            # Note: step() now returns a list of tuples or None.
+            self._dut._log.info(f"MODEL CONSUME: raw_val={raw_val}")
             return self.step(raw_val, in_fire=True) 
 
     def produce(self, expected):

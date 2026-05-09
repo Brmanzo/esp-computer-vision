@@ -29,14 +29,14 @@ module linear_layer #(
   ,output logic signed [OutChannels-1:0][OutBits-1:0] data_o
 );
 
-  logic signed [OutChannels-1:0][BiasBits-1:0] data_out_q;
+  logic signed [OutChannels-1:0][OutBits-1:0] data_out_q;
 
   generate
     if (DSPCount > 0) begin : gen_seq_neurons
       neuron_seq #(
         .DSPCount    (DSPCount)
         ,.InBits      (InBits)
-        ,.OutBits     (BiasBits)
+        ,.OutBits     (OutBits)
         ,.WeightBits  (WeightBits)
         ,.BiasBits    (BiasBits)
         ,.InChannels  (InChannels)
@@ -76,12 +76,12 @@ module linear_layer #(
       for (genvar ch = 0; ch < OutChannels; ch++) begin : gen_neurons
         neuron #(
            .InBits    (InBits)
-          ,.OutBits   (BiasBits)
+          ,.OutBits   (OutBits)
           ,.WeightBits(WeightBits)
           ,.BiasBits  (BiasBits)
           ,.InChannels(InChannels)
-          ,.Weights   (Weights[ch*WeightIndex +: WeightIndex])
-          ,.Bias      (Biases[ch*BiasBits +: BiasBits])
+          ,.Weights($signed(Weights[ch*WeightIndex +: WeightIndex]))
+          ,.Bias   ($signed(Biases[ch*BiasBits +: BiasBits]))
         ) neuron_inst (
            .data_i(data_q)
           ,.data_o(data_out_q[ch])
@@ -94,7 +94,7 @@ module linear_layer #(
   generate
     for (genvar ch = 0; ch < OutChannels; ch++) begin : gen_out_enc
       output_encoder #(
-         .InBits (BiasBits)
+         .InBits (OutBits)
         ,.OutBits(OutBits)
       ) out_enc_inst (
          .data_i(data_out_q[ch])

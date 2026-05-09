@@ -39,7 +39,8 @@ def test_max(test_name, simulator,
     parameters = dict(locals())
     parameters.pop('test_name', None)
     parameters.pop('simulator', None)
-    param_str = f"InBits{InBits}_Channels{InChannels}_LineWidth{LineWidthPx}_LineCount{LineCountPx}_Kernel{KernelWidth}"
+    parameters['OutBits'] = InBits # Ensure OutBits matches InBits
+    param_str = f"InBits{InBits}_OutBits{InBits}_Channels{InChannels}_LineWidth{LineWidthPx}_LineCount{LineCountPx}_Kernel{KernelWidth}"
     custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
     runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
 
@@ -53,7 +54,8 @@ def test_avg(test_name, simulator,
     parameters = dict(locals())
     parameters.pop('test_name', None)
     parameters.pop('simulator', None)
-    param_str = f"InBits{InBits}_Channels{InChannels}_LineWidth{LineWidthPx}_LineCount{LineCountPx}_Kernel{KernelWidth}"
+    parameters['OutBits'] = InBits # Ensure OutBits matches InBits
+    param_str = f"InBits{InBits}_OutBits{InBits}_Channels{InChannels}_LineWidth{LineWidthPx}_LineCount{LineCountPx}_Kernel{KernelWidth}"
     custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
     runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
 
@@ -195,7 +197,7 @@ async def rate_tests(dut, in_rate, out_rate):
     try:
         await with_timeout(RisingEdge(dut.valid_o), first_out_wait_ns, 'ns')
     except SimTimeoutError:
-        assert 0, (
+        assert False, (
             f"Timed out waiting for valid_o high. "
             f"W={W}, K={K}, S={S}, H_out={H_out}, W_out={W_out}, N_in={N_in}, waited={first_out_wait_ns} ns."
         )
@@ -224,7 +226,7 @@ async def rate_tests(dut, in_rate, out_rate):
             assert np.allclose(output_activation, torch.floor(ref).int().numpy()), "Output activation does not match PyTorch reference"
 
     except SimTimeoutError:
-        assert 0, (
+        assert False, (
             f"Timed out. Expected {l_out} output handshakes "
             f"(W_out={W_out}, H_out={H_out}). Got {om.nproduced()} in {timeout_ns} ns. "
         )

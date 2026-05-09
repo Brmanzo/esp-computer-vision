@@ -47,7 +47,7 @@ module neuron_seq #(
 
   logic [0:0] busy;
   logic signed [InChannels-1:0][InBits-1:0]    data_q;
-  logic signed [OutChannels-1:0][BiasBits-1:0] data_out_q;
+  logic signed [OutChannels-1:0][OutBits-1:0] data_out_q;
 
   logic [0:0] done;
 
@@ -136,14 +136,14 @@ module neuron_seq #(
       wire [ClassCountBits-1:0] capture_class = ClassCountBits'(ClassCountBits'(dsp_idx * NeuronsPerDSP) + ClassCountBits'(workload_idx));
 
       wire first_channel = (channel_counter == '0);
-      wire signed [WeightBits-1:0] current_weight = Weights[(current_class*WeightIndex) + (channel_counter*WeightBits) +: WeightBits];
-      wire signed [BiasBits-1:0]   current_bias   = Biases[current_class*BiasBits +: BiasBits];
-      wire signed [BiasBits-1:0]   neuron_out;
+      wire signed [WeightBits-1:0] current_weight = $signed(Weights[(current_class*WeightIndex) + (channel_counter*WeightBits) +: WeightBits]);
+      wire signed [BiasBits-1:0]   current_bias   = $signed(Biases[current_class*BiasBits +: BiasBits]);
+      wire signed [OutBits-1:0]    neuron_out;
 
       neuron_dsp #(
          .InBits     (InBits)
         ,.WeightBits (WeightBits)
-        ,.OutBits    (BiasBits)
+        ,.OutBits    (OutBits)
         ,.BiasBits   (BiasBits)
       ) dsp_inst (
          .clk_i      (clk_i)

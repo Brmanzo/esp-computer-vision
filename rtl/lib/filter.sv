@@ -58,7 +58,7 @@ module filter #(
   logic signed [AccBits-1:0] sum_pre_elastic_q;
   wire [0:0] elastic_0_valid, elastic_1_ready;
   elastic #(
-     .InBits        (AccBits) // Narrower! Only piped sum. Bias is now a parameter.
+     .InBits       (AccBits)
     ,.DatapathGate (1)
     ,.DatapathReset(1)
   ) elastic_inst (
@@ -80,7 +80,7 @@ module filter #(
   logic signed [OutBits-1:0] data_d, data_q;
   assign data_o = data_q;
 
-  assign biased_sum_d = sum_pre_elastic_q + AccBits'($signed(Bias)); // Use parameter Bias
+  assign biased_sum_d = sum_pre_elastic_q + AccBits'($signed(Bias));
 
   output_encoder #(
      .InBits  (AccBits)
@@ -104,7 +104,7 @@ module filter #(
 
     ,.valid_o(valid_o) // Top level valid_o
     ,.ready_i(ready_i) // Top level ready_i
-    ,.data_o (data_q)  // Top level data_o (now safely registered!)
+    ,.data_o (data_q)  // Top level data_o registered
   );
 
 

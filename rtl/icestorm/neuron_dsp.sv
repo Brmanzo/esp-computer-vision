@@ -77,13 +77,4 @@ module neuron_dsp #(
     end
   end
 
-  // synthesis translate_off
-  always @(posedge clk_i) begin
-    if (en_i) begin
-      $display("T=%0t [NEURON] InBits=%0d WeightBits=%0d load=%b data_enc=%0d weight_enc=%0d acc_prev=%0d", 
-               $time, InBits, WeightBits, load_bias_i, data_w, weight_w, acc_r);
-    end
-  end
-  // synthesis translate_on
-
 endmodule

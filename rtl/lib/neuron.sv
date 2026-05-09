@@ -12,7 +12,8 @@ module neuron#(
   ,parameter logic signed [InChannels*WeightBits-1:0] Weights = '0
   ,parameter logic signed [BiasBits-1:0]              Bias    = '0
   // If requested OutBits is small, accumulate at full precision before truncating
-  ,localparam int unsigned AccBits   = (OutBits > WeightBits + InBits) ? OutBits : WeightBits + InBits
+  ,localparam int unsigned AccBits   = (OutBits > (WeightBits + InBits + $clog2(InChannels))) ? 
+                                       OutBits : (WeightBits + InBits + $clog2(InChannels))
 ) (
    input  logic signed [InChannels-1:0][InBits-1:0] data_i
   ,output logic signed [OutBits-1:0]                data_o

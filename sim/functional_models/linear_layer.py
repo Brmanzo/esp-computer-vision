@@ -63,8 +63,8 @@ class LinearLayerModel():
             for ic in range(self._InChannels):
                 acc += int(self.w[oc][ic]) * input_vals[ic]
             
-            # Match hardware overflow behavior by truncating to BiasBits
-            acc = sign_extend(acc & ((1 << self._BiasBits) - 1), self._BiasBits)
+            # Match hardware behavior by truncating to OutBits
+            acc = sign_extend(acc & ((1 << self._OutBits) - 1), self._OutBits)
             expected.append(acc)
 
         if self._OutBits == 1:

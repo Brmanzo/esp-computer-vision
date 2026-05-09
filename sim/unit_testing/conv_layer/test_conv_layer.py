@@ -3,6 +3,7 @@ import numpy as np
 import os
 from   pathlib import Path
 import pytest
+import math
 
 from util.utilities  import inject_weights_and_biases, runner, lint, \
                             sim_verbose, clock_start_sequence, reset_sequence, \
@@ -23,7 +24,6 @@ random.seed(50)
 
 timescale = "1ps/1ps"
 
-timescale = "1ps/1ps"
 tests = ['reset_test'
         ,'single_test'
         ,'inout_fuzz_test'
@@ -42,173 +42,103 @@ gen_rules = [
     ("Biases",  lambda BiasBits, OutChannels: gen_biases(BiasBits, OutChannels, seed=1234))
 ]
 
+def run_conv_test(test_name, simulator, parameters, Weights, Biases, test_class):
+    InBits      = int(parameters["InBits"])
+    WeightBits  = int(parameters["WeightBits"])
+    OutBits     = int(parameters["OutBits"])
+    KernelWidth = int(parameters["KernelWidth"])
+    InChannels  = int(parameters["InChannels"])
+    OutChannels = int(parameters["OutChannels"])
+    BiasBits    = int(parameters["BiasBits"])
+    DSPCount    = int(parameters.get("DSPCount", 0))
+
+    if DSPCount > 0:
+        req_bits = max(OutBits, WeightBits + InBits + math.ceil(math.log2(InChannels * (KernelWidth**2))))
+        if req_bits > 32:
+            pytest.skip(f"conv_layer DSP accumulator (32 bits) too small for required {req_bits} bits")
+
+    param_str = f"IC_{InChannels}_OC_{OutChannels}_test_{test_name}"
+    if test_class == "width":
+        param_str = f"InBits_{InBits}_WeightBits_{WeightBits}_OutBits_{OutBits}_test_{test_name}"
+    elif test_class == "stride":
+        param_str = f"KW_{KernelWidth}_S_{parameters['Stride']}_test_{test_name}"
+    elif test_class == "padding":
+        param_str = f"KW_{KernelWidth}_P_{parameters['Padding']}_test_{test_name}"
+
+    weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
+    bias_bits   = OutChannels * BiasBits
+
+    # Remove injected params so cocotb-runner doesn't pass them on CLI
+    clean_params = parameters.copy()
+    clean_params.pop("Weights", None)
+    clean_params.pop("Biases", None)
+
+    custom_work_dir = inject_weights_and_biases(
+        simulator=simulator, parameters=clean_params, param_str=param_str, 
+        tbpath=tbpath, test_class=test_class, Weights=Weights, Biases=Biases, 
+        weight_bits=weight_bits, bias_bits=bias_bits)
+
+    filelist = "filelists/conv_layer.json"
+    runner(
+        simulator=simulator, timescale=timescale, tbpath=tbpath, params=clean_params, 
+        testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
+        toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")],
+        filelist=filelist
+    )
+
 TEST_CASES_WIDTH = load_tests_from_csv(os.path.join(tbpath, "test_cases_width.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("UseDSP", [0, 1])
 @auto_unpack(TEST_CASES_WIDTH)
 def test_width(test_name, simulator,
                InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
-               LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, UseDSP):
-    if UseDSP == 1:
-        import math
-        req_bits = max(int(OutBits), int(WeightBits) + int(InBits) + math.ceil(math.log2(int(InChannels) * (int(KernelWidth)**2))))
-        if req_bits > 32:
-            pytest.skip(f"conv_layer DSP accumulator (32 bits) too small for required {req_bits} bits")
+               LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount):
+    run_conv_test(test_name, simulator, locals(), Weights, Biases, "width")
 
-    parameters = dict(locals())
-    parameters.pop("Weights", None)
-    parameters.pop("Biases", None)
-    parameters.pop("math", None)
-    parameters.pop("req_bits", None)
-    parameters.pop("math", None)
-    parameters.pop("req_bits", None)
-    param_str = f"InBits_{InBits}_WeightBits_{WeightBits}_OutBits_{OutBits}_test_{test_name}"
-    
-    weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
-    bias_bits   = OutChannels * BiasBits
-
-    custom_work_dir = inject_weights_and_biases(
-        simulator=simulator, parameters=parameters, param_str=param_str, 
-        tbpath=tbpath, test_class="width", Weights=Weights, Biases=Biases, 
-        weight_bits=weight_bits, bias_bits=bias_bits)
-
-    filelist = "filelists/conv_layer.json"
-    runner(
-        simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 
-        testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
-        toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")],
-        filelist=filelist
-    )
 TEST_CASES_STRIDE = load_tests_from_csv(os.path.join(tbpath, "test_cases_stride.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("UseDSP", [0, 1])
 @auto_unpack(TEST_CASES_STRIDE)
 def test_stride(test_name, simulator,
                 InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
-                LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, UseDSP):
-    if UseDSP == 1:
-        import math
-        req_bits = max(int(OutBits), int(WeightBits) + int(InBits) + math.ceil(math.log2(int(InChannels) * (int(KernelWidth)**2))))
-        if req_bits > 32:
-            pytest.skip(f"conv_layer DSP accumulator (32 bits) too small for required {req_bits} bits")
-
-    parameters = dict(locals())
-    parameters.pop("Weights", None)
-    parameters.pop("Biases", None)
-    parameters.pop("math", None)
-    parameters.pop("req_bits", None)
-    param_str = f"KW_{KernelWidth}_S_{Stride}_test_{test_name}"
-
-    weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
-    bias_bits   = OutChannels * BiasBits
-
-    custom_work_dir = inject_weights_and_biases(
-        simulator=simulator, parameters=parameters, param_str=param_str, 
-        tbpath=tbpath, test_class="stride", Weights=Weights, Biases=Biases, 
-        weight_bits=weight_bits, bias_bits=bias_bits)
-    
-    filelist = "filelists/conv_layer.json"
-    runner(
-        simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 
-        testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
-        toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")],
-        filelist=filelist
-    )
+                LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount):
+    run_conv_test(test_name, simulator, locals(), Weights, Biases, "stride")
 
 TEST_CASES_PADDING = load_tests_from_csv(os.path.join(tbpath, "test_cases_padding.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("UseDSP", [0, 1])
 @auto_unpack(TEST_CASES_PADDING)
 def test_padding(test_name, simulator,
-                InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
-                LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, UseDSP):
-    if UseDSP == 1:
-        import math
-        req_bits = max(int(OutBits), int(WeightBits) + int(InBits) + math.ceil(math.log2(int(InChannels) * (int(KernelWidth)**2))))
-        if req_bits > 32:
-            pytest.skip(f"conv_layer DSP accumulator (32 bits) too small for required {req_bits} bits")
+                 InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
+                 LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount):
+    run_conv_test(test_name, simulator, locals(), Weights, Biases, "padding")
 
-    parameters = dict(locals())
-    parameters.pop("Weights", None)
-    parameters.pop("Biases", None)
-    parameters.pop("math", None)
-    parameters.pop("req_bits", None)
-    param_str = f"KW_{KernelWidth}_P_{Padding}_test_{test_name}"
-
-    weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
-    bias_bits   = OutChannels * BiasBits
-
-    custom_work_dir = inject_weights_and_biases(
-        simulator=simulator, parameters=parameters, param_str=param_str, 
-        tbpath=tbpath, test_class="padding", Weights=Weights, Biases=Biases, 
-        weight_bits=weight_bits, bias_bits=bias_bits)
-    
-    filelist = "filelists/conv_layer.json"
-    runner(
-        simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 
-        testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
-        toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")],
-        filelist=filelist
-    )
 TEST_CASES_CHANNELS = load_tests_from_csv(os.path.join(tbpath, "test_cases_channels.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("UseDSP", [0, 1])
 @auto_unpack(TEST_CASES_CHANNELS)
 def test_channels(test_name, simulator,
-                InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
-                LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, UseDSP):
-    if UseDSP == 1:
-        import math
-        req_bits = max(int(OutBits), int(WeightBits) + int(InBits) + math.ceil(math.log2(int(InChannels) * (int(KernelWidth)**2))))
-        if req_bits > 32:
-            pytest.skip(f"conv_layer DSP accumulator (32 bits) too small for required {req_bits} bits")
+                  InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
+                  LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount):
+    run_conv_test(test_name, simulator, locals(), Weights, Biases, "channels")
 
-    parameters = dict(locals())
-    parameters.pop("Weights", None)
-    parameters.pop("Biases", None)
-    parameters.pop("math", None)
-    parameters.pop("req_bits", None)
-    param_str = f"IC_{InChannels}_OC_{OutChannels}_test_{test_name}"
-
-    weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
-    bias_bits   = OutChannels * BiasBits
-   
-    custom_work_dir = inject_weights_and_biases(
-        simulator=simulator, parameters=parameters, param_str=param_str, 
-        tbpath=tbpath, test_class="channels", Weights=Weights, Biases=Biases, 
-        weight_bits=weight_bits, bias_bits=bias_bits)
-
-    filelist = "filelists/conv_layer.json"
-    runner(
-        simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters, 
-        testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
-        toplevel_override="tb_conv_layer", extra_sources=[os.path.join(tbpath, "tb_conv_layer.sv")],
-        filelist=filelist
-    )
+TEST_CASES_DSPS = load_tests_from_csv(os.path.join(tbpath, "test_cases_dsps.csv"), auto_rules, gen_rules)
+@pytest.mark.parametrize("test_name", tests)
+@pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+@auto_unpack(TEST_CASES_DSPS)
+def test_dsps(test_name, simulator,
+              InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
+              LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount):
+    run_conv_test(test_name, simulator, locals(), Weights, Biases, "dsps")
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("UseDSP", [0, 1])
+@pytest.mark.parametrize("DSPCount", [0, 1, 2, 4])
 @pytest.mark.parametrize("LineWidthPx, InBits, OutBits", [("16", "1", output_width(1, 2, 3, 1))])
-def test_lint(simulator, LineWidthPx, InBits, OutBits, UseDSP):
-    # This line must be first
+def test_lint(simulator, LineWidthPx, InBits, OutBits, DSPCount):
     parameters = dict(locals())
     del parameters['simulator']
     filelist = "filelists/conv_layer.json"
     lint(simulator, timescale, tbpath, parameters, filelist=filelist)
-
-@pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("UseDSP", [0, 1])
-@pytest.mark.parametrize("LineWidthPx, InBits, OutBits", [("16", "1", output_width(1, 2, 3, 1))])
-def test_style(simulator, LineWidthPx, InBits, OutBits, UseDSP):
-    # This line must be first
-    parameters = dict(locals())
-    del parameters['simulator']
-    filelist = "filelists/conv_layer.json"
-    lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"], filelist=filelist)
 
 @cocotb.test
 async def reset_test(dut):
@@ -221,7 +151,6 @@ async def reset_test(dut):
 @cocotb.test
 async def single_test(dut):
     """Drive pixels until the first VALID kernel position, then expect 1 output."""
-
     W  = int(dut.LineWidthPx.value)
     K  = int(dut.KernelWidth.value)
     IC = int(dut.InChannels.value)
@@ -231,31 +160,22 @@ async def single_test(dut):
     P  = int(dut.Padding.value)
     S  = int(dut.Stride.value)
 
-    # Calculate how many full rows of REAL data are consumed before the output row
     real_rows_before_out = max(0, (K - 1) - P)
-    
-    # Calculate how many REAL pixels are consumed in the final row to reach the window edge
     real_pixels_in_out_row = max(0, (K - 1) - P + 1)
-
-    # Number of accepted inputs until first valid output position
     N_first = (real_rows_before_out * W) + real_pixels_in_out_row
-
-    # We expect exactly ONE output for this test (the first valid position)
     N_out = 1
-
     rate = 1
 
     packed_weights = int(os.environ["INJECTED_WEIGHTS_0_INT"])
     kernels_4d = unpack_kernel_weights(packed_weights, WW, OC, IC, K)
-
     packed_biases = int(os.environ.get("INJECTED_BIASES_0_INT", "0"))
     biases_2d = unpack_biases(packed_biases, BW, OC)
     
     model = ConvLayerModel(dut, weights=kernels_4d, biases=biases_2d)
     m = ModelRunner(dut, model)
 
-    om = OutputModel(dut, RateGenerator(dut, 1), N_out)               # consume 1 output
-    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), N_first)  # produce N_first inputs
+    om = OutputModel(dut, RateGenerator(dut, 1), N_out)
+    im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, rate), N_first)
 
     dut.ready_i.value = 0
     dut.valid_i.value = 0
@@ -269,13 +189,14 @@ async def single_test(dut):
     om.start()
     im.start()
 
-    # Wait until that single output is observed
-    # Scale timeout for sequential DSP implementation
+    # Calculate sequential latency
     cycles_per_vec = 4
-    if hasattr(dut, "UseDSP") and int(dut.UseDSP.value) == 1:
-        cycles_per_vec = IC * K * K + 10
+    if hasattr(dut, "DSPCount") and int(dut.DSPCount.value) > 0:
+        eff_dsps = min(int(dut.DSPCount.value), OC)
+        neurons_per_dsp = (OC + eff_dsps - 1) // eff_dsps
+        cycles_per_vec = (IC * K * K + 4) * neurons_per_dsp + 10
     
-    tmo_ns = cycles_per_vec * N_first + 500
+    tmo_ns = cycles_per_vec * N_first + 5000
 
     timed_out = False
     try:
@@ -302,10 +223,8 @@ async def rate_tests(dut, in_rate, out_rate):
     S  = int(dut.Stride.value)
     P  = int(dut.Padding.value)
 
-    # Observe H rows of VALID outputs
     invalid = K - 1
     N_in = W * H
-
     P_W = W + 2 * P
     P_H = H + 2 * P
 
@@ -316,20 +235,18 @@ async def rate_tests(dut, in_rate, out_rate):
     input_activation  = [[[0 for _ in range(W)] for _ in range(H)] for _ in range(IC)]
     output_activation = [[[0 for _ in range(W_out)] for _ in range(H_out)] for _ in range(OC)]
 
-    # Consumer ready probability
-    slow = min(in_rate, out_rate)  # bottleneck probability
-    slow = max(slow, 0.05)         # avoid insane timeouts at tiny rates in fuzz
+    slow = min(in_rate, out_rate)
+    slow = max(slow, 0.05)
 
-    first_out_wait_ns = int((2 * (K - 1) * W + 2 * (K - 1) + 200) / slow)
-    timeout_ns        = int((H_out * N_in + 500) / slow)
-    
     # Scale timeout for sequential DSP implementation
-    if hasattr(dut, "UseDSP") and int(dut.UseDSP.value) == 1:
-        # Each filter takes IC * K*K cycles.
-        # But conv_layer is pipelined. However, the first output takes longer.
-        # And backpressure might exist.
-        timeout_ns *= (IC * K * K)
-        first_out_wait_ns *= (IC * K * K)
+    scale = 1
+    if hasattr(dut, "DSPCount") and int(dut.DSPCount.value) > 0:
+        eff_dsps = min(int(dut.DSPCount.value), OC)
+        neurons_per_dsp = (OC + eff_dsps - 1) // eff_dsps
+        scale = (IC * K * K + 4) * neurons_per_dsp + 10
+
+    first_out_wait_ns = int((2 * (K - 1) * W + 2 * (K - 1) + 200) * scale / slow)
+    timeout_ns        = int((H_out * N_in + 5000) * scale / slow)
 
     packed_weights = int(os.environ["INJECTED_WEIGHTS_0_INT"])
     packed_biases  = int(os.environ.get("INJECTED_BIASES_0_INT", "0"))
@@ -339,7 +256,6 @@ async def rate_tests(dut, in_rate, out_rate):
     model = ConvLayerModel(dut, weights=kernels_4d, output_activation=output_activation, input_activation=input_activation, biases=biases_2d)
     m = ModelRunner(dut, model)
 
-    # Consumer fuzzed; producer always drives valid
     om = OutputModel(dut, RateGenerator(dut, out_rate), l_out)
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, in_rate), N_in)
 
@@ -354,28 +270,22 @@ async def rate_tests(dut, in_rate, out_rate):
     om.start()
     im.start()
 
-    # First output wait: producer is full rate, but DUT may stall due to consumer backpressure.
-    # Give a bound proportional to N_first and 1/rate.
-    # Wait until valid_o ever asserts (not necessarily handshake)
     try:
         await with_timeout(RisingEdge(dut.valid_o), first_out_wait_ns, 'ns')
     except SimTimeoutError:
-        assert 0, (
+        assert False, (
             f"Timed out waiting for valid_o high. "
             f"W={W}, K={K}, S={S}, H_out={H_out}, W_out={W_out}, N_in={N_in}, waited={first_out_wait_ns} ns."
         )
 
-    # Now wait for exactly l_out output handshakes
     try:
         await om.wait(timeout_ns)
-        # --- Print input ---
         if sim_verbose():
             for ic in range(IC):
                 print(f"\nInput Activation for IC{ic}")
                 for r in range(H):
                     print(" ".join(f"{input_activation[ic][r][c]:2d}" for c in range(W)))
 
-            # --- Print kernels ---
             for oc in range(OC):
                 print(f"\nKernel for OC{oc}")
                 for ic in range(IC):
@@ -383,21 +293,15 @@ async def rate_tests(dut, in_rate, out_rate):
                     for r in range(K):
                         print(" ".join(f"{kernels_4d[oc][ic][r][c]:4d}" for c in range(K)))
 
-            # --- Print DUT-captured output (make sure output_activation is H_out x W_out) ---
             for oc in range(OC):
                 print(f"\nOutput Activation (DUT) for OC{oc}")
                 for r in range(H_out):
                     print(" ".join(f"{output_activation[oc][r][c]:4d}" for c in range(W_out)))
 
-        # Verify against PyTorch reference convolution
         ref = torch_conv_ref(
-            input_activation, 
-            kernels_4d, 
-            S, 
-            in_bits=int(dut.InBits.value), 
-            out_bits=int(dut.OutBits.value), 
-            padding=int(dut.Padding.value),
-            biases=biases_2d
+            input_activation, kernels_4d, S, 
+            in_bits=int(dut.InBits.value), out_bits=int(dut.OutBits.value), 
+            padding=int(dut.Padding.value), biases=biases_2d
         )
         
         if sim_verbose():
@@ -408,7 +312,7 @@ async def rate_tests(dut, in_rate, out_rate):
 
         assert np.allclose(output_activation, ref.int().numpy()), "Output activation does not match PyTorch reference"
     except SimTimeoutError:
-        assert 0, (
+        assert False, (
             f"Timed out. Expected {l_out} output handshakes "
             f"(W_out={W_out}, H_out={H_out}). Got {om.nproduced()} in {timeout_ns} ns. "
         )

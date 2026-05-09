@@ -44,11 +44,12 @@ module mac #(
     end
   endgenerate
 
-  // Accumulate the products using a balanced adder tree to minimize the critical path
+  // Accumulate the products using a simulator-robust summation
+  // Explicitly signed and correctly sized initialization to avoid Icarus Verilog gotchas
   always_comb begin 
     sum_o = acc_t'(0);
-    for (int i = 0; i < TermCount; i++) begin : gen_acc
-      sum_o += addends[i];
+    for (int i = 0; i < TermCount; i++) begin
+      sum_o = sum_o + addends[i];
     end
   end
 

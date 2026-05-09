@@ -134,16 +134,12 @@ class cnn_model(nn.Module):
     def dsp_utilization(self) -> None:
         dsp = DSP_COUNT
         for layer_cfg in self.config.layers:
-            if layer_cfg.ConvLayer._use_dsp == 1:
-                dsp -= layer_cfg.ConvLayer._use_dsp * layer_cfg.ConvLayer._out_ch
-            elif layer_cfg.ConvLayer._use_dsp == 2:
-                dsp -= 1
+            if layer_cfg.ConvLayer._dsp_count > 0:
+                dsp -= min(layer_cfg.ConvLayer._dsp_count, layer_cfg.ConvLayer._out_ch)
         
         classifier = self.config.classifier_config
-        if classifier._use_dsp == 1:
-            dsp -= classifier._num_classes
-        elif classifier._use_dsp == 2:
-            dsp -= 1
+        if classifier._dsp_count > 0:
+            dsp -= min(classifier._dsp_count, classifier._num_classes)
             
         assert dsp >= 0, f"Model exceeds DSP budget! Remaining: {dsp}"
         used = DSP_COUNT - dsp
@@ -160,9 +156,10 @@ class cnn_model(nn.Module):
             # Conv Layer
             c_cycles = layer_cfg.ConvLayer._cycle_count
             eff_c = c_cycles / pixel_decimation
-            dsp = layer_cfg.ConvLayer._use_dsp
+            dsp = layer_cfg.ConvLayer._dsp_count
             out_ch = layer_cfg.ConvLayer._out_ch
-            print(f"Layer {i} Conv: {c_cycles:>3} cycles ({eff_c:>5.1f} eff) DSPs Used: {out_ch if dsp == 1 else (1 if dsp == 2 else 0)}")
+            dsps_used = min(dsp, out_ch) if dsp > 0 else 0
+            print(f"Layer {i} Conv: {c_cycles:>3} cycles ({eff_c:>5.1f} eff) DSPs Used: {dsps_used}")
             
             total_latency += c_cycles
             max_effective_cycles = max(max_effective_cycles, eff_c)
@@ -177,13 +174,13 @@ class cnn_model(nn.Module):
                 pixel_decimation *= (layer_cfg.PoolLayer._kernel_width ** 2)
                 max_effective_cycles = max(max_effective_cycles, eff_p)
         
-        # Classifier
         cls = self.config.classifier_config
         cls_cycles = cls._cycle_count
         eff_cls = cls_cycles / pixel_decimation
-        dsp = cls._use_dsp
+        dsp = cls._dsp_count
         classes = cls._num_classes
-        print(f"Classifier  : {cls_cycles:>3} cycles ({eff_cls:>5.1f} eff) DSPs Used: {classes if dsp == 1 else (1 if dsp == 2 else 0)}")
+        dsps_used = min(dsp, classes) if dsp > 0 else 0
+        print(f"Classifier  : {cls_cycles:>3} cycles ({eff_cls:>5.1f} eff) DSPs Used: {dsps_used}")
         
         total_latency += cls_cycles
         max_effective_cycles = max(max_effective_cycles, eff_cls)

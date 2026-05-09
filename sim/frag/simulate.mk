@@ -47,7 +47,7 @@ test-list test-lists list-tests:
 	$(PYTHON3) -m pytest --collect-only -q
 
 results.json: $(FILELIST) $(SIM_SOURCES)
-	$(PYTHON3) -m pytest $(if $(filter 1,$(VERBOSE)),-rA -s,-q --tb=short -rs) $(if $(ARGS),-k "$(ARGS)",) $(INTERNAL_PYTEST_ARGS) $(PYTEST_EXTRA_ARGS)
+	$(PYTHON3) -m pytest $(if $(filter 1,$(VERBOSE)),-rA -s,-q --tb=short -rfEp) $(if $(ARGS),-k "$(ARGS)",) $(INTERNAL_PYTEST_ARGS) $(PYTEST_EXTRA_ARGS)
 
 # lint runs the Verilator linter on your code.
 lint: lint-verilator lint-verible

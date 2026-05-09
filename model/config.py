@@ -19,9 +19,9 @@ class ConvConfig:
     def __init__(self, in_ch: int, in_bits: int, out_bits: int, kernels: List[List[int]], 
                  stride: int, padding: int, q_schedule: QSchedule, 
                  out_ch: int, layer_num: int, bias_bits: int, 
-                 input_dims: InputDimensions, use_dsp: int = 0, shift: int = 0):
+                 input_dims: InputDimensions, dsp_count: int = 0, shift: int = 0):
         self._shift       = shift
-        self._use_dsp     = use_dsp
+        self._dsp_count   = dsp_count
         self._in_bits     = in_bits
         self._out_bits    = out_bits
         self._bias_bits   = bias_bits
@@ -36,10 +36,12 @@ class ConvConfig:
         self._kernel_width = kernels[layer_num][0]
 
         self._cycle_count = 1
-        if use_dsp == 1:
-            self._cycle_count = self._kernel_width**2 * self._in_ch
-        elif use_dsp == 2:
-            self._cycle_count = self._kernel_width**2 * self._in_ch * self._out_ch
+        if self._dsp_count > 0:
+            assert out_ch % self._dsp_count == 0, f"Layer {layer_num}: DSPCount ({self._dsp_count}) must divide OutChannels ({out_ch}) evenly!"
+            effective_dsps = min(self._dsp_count, out_ch)
+            neurons_per_dsp = (out_ch + effective_dsps - 1) // effective_dsps
+            total_terms = self._kernel_width**2 * self._in_ch
+            self._cycle_count = neurons_per_dsp * (total_terms + 1) + 2
 
         # Input logic
         if self._layer_num == 0:
@@ -94,10 +96,10 @@ class ClassifierConfig:
     '''Parameterizes the final classifier layer for pytorch training, hardware generation, and cocotb verification.'''
     def __init__(self, in_ch: int, in_bits: int, out_bits: int, num_classes: int, bias_bits: int,
                  q_schedule: QSchedule, layer_num: int, kernels: List[List[int]], 
-                 use_dsp: int = 0, line_width_px: Optional[int] = None, 
+                 dsp_count: int = 0, line_width_px: Optional[int] = None, 
                  line_count_px: Optional[int] = None, shift: int = 0):
         self._shift       = shift
-        self._use_dsp     = use_dsp
+        self._dsp_count   = dsp_count
         self._in_ch       = in_ch
         self._in_bits     = in_bits
         self._out_bits    = out_bits
@@ -112,10 +114,11 @@ class ClassifierConfig:
         self._term_count = InputDimensions(line_width_px, line_count_px).term_count  # Classifier doesn't have spatial dimensions
         
         self._cycle_count = 1
-        if use_dsp == 1:
-            self._cycle_count = self._in_ch
-        elif use_dsp == 2:
-            self._cycle_count = self._in_ch * self._num_classes
+        if dsp_count > 0:
+            assert num_classes % dsp_count == 0, f"Classifier: DSPCount ({dsp_count}) must divide num_classes ({num_classes}) evenly!"
+            effective_dsps = min(dsp_count, num_classes)
+            neurons_per_dsp = (num_classes + effective_dsps - 1) // effective_dsps
+            self._cycle_count = neurons_per_dsp * self._in_ch + 1
 
         # Classifier layers are connected to the last feature block (either conv or pool)
         if len(kernels[self._layer_num - 1]) > 1:
@@ -172,7 +175,7 @@ class ModelConfig:
 
         # Quantization schedule for each layer, used in training, and also to determine bit-widths for weights and activations
         self.q_schedule = q_schedule
-        self.use_dsp    = use_dsp or ([0] * self.num_layers)
+        self.dsp_count  = use_dsp or ([0] * self.num_layers)
 
         # --- Running State Variables ---
         # These track the dimensions and bit-widths as data flows through the network
@@ -220,7 +223,7 @@ class ModelConfig:
                     q_schedule=q_schedule[i], 
                     layer_num=i,
                     kernels=kernels,
-                    use_dsp=self.use_dsp[i],
+                    dsp_count=self.dsp_count[i],
                     bias_bits=c_bias_bits,
                     line_width_px=current_w, 
                     line_count_px=current_h,
@@ -243,7 +246,7 @@ class ModelConfig:
                 kernels=kernels, stride=c_stride, padding=c_pad, bias_bits=c_bias_bits,
                 q_schedule=q_schedule[i], out_ch=c_out_ch, layer_num=i,
                 input_dims=InputDimensions(current_w, current_h),
-                use_dsp=self.use_dsp[i],
+                dsp_count=self.dsp_count[i],
                 shift=c_shift
             )
     

@@ -16,7 +16,7 @@ module classifier_layer #(
   ,localparam int unsigned WeightIndex = InChannels * WeightBits
   ,parameter logic signed [ClassCount*WeightIndex-1:0] Weights = '0
   ,parameter logic signed [ClassCount*BiasBits-1:0]    Biases  = '0
-  ,parameter int unsigned UseDSP  = 0
+  ,parameter int unsigned DSPCount  = 0
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -79,7 +79,7 @@ module classifier_layer #(
     ,.OutChannels (ClassCount)
     ,.Weights     (Weights)
     ,.Biases      (Biases)
-    ,.UseDSP      (UseDSP)
+    ,.DSPCount    (DSPCount)
   ) linear_layer_inst (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)

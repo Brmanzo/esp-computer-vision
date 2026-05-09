@@ -15,7 +15,7 @@ module tb_conv_layer #(
   ,parameter int unsigned OutChannels  = 1
   ,parameter int unsigned Stride       = 1
   ,parameter int unsigned Padding      = 0
-  ,parameter int unsigned UseDSP       = 0
+  ,parameter int unsigned DSPCount     = 0
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -45,7 +45,7 @@ conv_layer #(
     ,.OutChannels (OutChannels)
     ,.Stride      (Stride)
     ,.Padding     (Padding)
-    ,.UseDSP      (UseDSP)
+    ,.DSPCount    (DSPCount)
     ,.Weights     (INJECTED_WEIGHTS_0)
     ,.Biases      (INJECTED_BIASES_0)
   ) dut (
