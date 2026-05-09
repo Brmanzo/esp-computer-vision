@@ -46,12 +46,9 @@ module filter_seq #(
 
   logic [0:0] busy;
   logic signed [InChannels*KernelArea*InBits-1:0] data_q;
-  logic signed [OutChannels-1:0][OutBits-1:0] data_out_q;
-
   logic [0:0] done;
 
   assign valid_o = valid_q;
-  assign data_o  = data_out_q;
 
   wire [0:0] in_fire  = valid_i && ready_o;
   wire [0:0] out_fire = valid_o && ready_i;
@@ -92,6 +89,24 @@ module filter_seq #(
   end
 
   /* ------------------------------------ Neural Logic ------------------------------------ */
+  logic signed [OutChannels-1:0][OutBits-1:0] data_out_reg;
+  wire signed [EffectiveDSPs-1:0][OutBits-1:0] filter_results;
+
+  always_ff @(posedge clk_i) begin
+    if (busy && dsp_done[0]) begin
+      for (int i = 0; i < EffectiveDSPs; i++) begin
+        if (i * NeuronsPerDSP + int'(local_class_counter) < int'(OutChannels)) begin
+          data_out_reg[i * NeuronsPerDSP + int'(local_class_counter)] <= filter_results[i];
+        end
+      end
+    end
+  end
+
+  assign data_o = data_out_reg;
+
+  localparam int unsigned TotalTerms  = InChannels * KernelArea;
+  localparam int unsigned TermBits    = (TotalTerms > 1) ? $clog2(TotalTerms) : 1;
+
   generate
     // Capture signal for results
     wire dsp_valid_w = (busy && dsp_done[0]);
@@ -103,11 +118,10 @@ module filter_seq #(
 
     for (genvar dsp_idx = 0; dsp_idx < EffectiveDSPs; dsp_idx++) begin : gen_dsps
       wire [ClassCountBits-1:0] next_class    = ClassCountBits'(ClassCountBits'(dsp_idx * NeuronsPerDSP) + next_class_counter);
-      wire [ClassCountBits-1:0] capture_class = ClassCountBits'(ClassCountBits'(dsp_idx * NeuronsPerDSP) + local_class_counter);
 
-      wire signed [WeightIndex-1:0] current_weight = Weights[next_class*WeightIndex +: WeightIndex];
-      wire signed [BiasBits-1:0]    current_bias   = Biases[next_class*BiasBits +: BiasBits];
-      wire signed [OutBits-1:0]     filter_out;
+      wire [TermBits-1:0]          dsp_term_idx;
+      wire signed [WeightBits-1:0] dsp_weight = Weights[(next_class * WeightIndex) + (dsp_term_idx * WeightBits) +: WeightBits];
+      wire signed [BiasBits-1:0]   dsp_bias   = Biases[next_class*BiasBits +: BiasBits];
 
       // We start class 0 on in_fire, subsequent classes on dsp_done of previous class
       logic [0:0] dsp_start_pulse;
@@ -132,20 +146,13 @@ module filter_seq #(
         ,.valid_i  (in_fire | dsp_start_pulse)
         ,.ready_o  (dummy_ready_o)
         ,.windows_i(in_fire ? windows_i : data_q)
-        ,.weights_i(current_weight)
-        ,.bias_i   (current_bias)
+        ,.term_idx_o(dsp_term_idx)
+        ,.weight_i (dsp_weight)
+        ,.bias_i   (dsp_bias)
         ,.ready_i  (1'b1) // Sequential capture, always ready for result
         ,.valid_o  (dsp_done[dsp_idx])
-        ,.data_o   (filter_out)
+        ,.data_o   (filter_results[dsp_idx])
       );
-
-      always_ff @(posedge clk_i) begin
-        if (dsp_valid_w) begin
-          if (32'(capture_class) < OutChannels) begin
-            data_out_q[capture_class] <= filter_out;
-          end
-        end
-      end
     end
   endgenerate
 

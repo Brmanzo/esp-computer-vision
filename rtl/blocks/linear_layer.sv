@@ -29,6 +29,8 @@ module linear_layer #(
   ,output logic signed [OutChannels-1:0][OutBits-1:0] data_o
 );
 
+  logic signed [InChannels*InBits-1:0] data_q;
+  logic [0:0] valid_q;
   logic signed [OutChannels-1:0][OutBits-1:0] data_out_q;
 
   generate
@@ -53,26 +55,24 @@ module linear_layer #(
         ,.valid_o (valid_o)
         ,.data_o  (data_out_q)
       );
-    end else begin : gen_comb_neurons
+    end else begin : gen_parallel_neurons
       wire  [0:0] in_fire  = valid_i && ready_o;
-      logic signed [InChannels-1:0][InBits-1:0]   data_q;
-      logic [0:0] valid_q;
 
       assign valid_o = valid_q;
       assign ready_o = (~valid_q | ready_i);
 
       always_ff @(posedge clk_i) begin
         if (rst_i) begin
-          valid_q         <= 1'b0;
-          data_q          <=   '0;
+          valid_q <= 1'b0;
+          data_q  <= '0;
         end else begin
-          // LUT/Parallel Mode
           if (ready_o) begin
             valid_q <= in_fire;
             data_q  <= data_i;
           end
         end
       end
+
       for (genvar ch = 0; ch < OutChannels; ch++) begin : gen_neurons
         neuron #(
            .InBits    (InBits)

@@ -29,8 +29,9 @@ module filter_dsp #(
   ,output [0:0] ready_o
 
   ,input logic signed [InChannels*KernelArea*InBits-1:0]     windows_i
-  ,input logic signed [InChannels*KernelArea*WeightBits-1:0] weights_i
-  ,input logic signed [BiasBits-1:0]   bias_i
+  ,output [TermBits-1:0]                                    term_idx_o
+  ,input logic signed [WeightBits-1:0]                      weight_i
+  ,input logic signed [BiasBits-1:0]                        bias_i
 
   ,output [0:0] valid_o
   ,input  [0:0] ready_i
@@ -41,11 +42,6 @@ module filter_dsp #(
   wire [0:0] in_fire  = valid_i && ready_o;
   wire [0:0] out_fire = valid_o && ready_i;
 
-  // Registered window and register arrays
-  logic signed [InChannels-1:0][KernelArea-1:0][InBits-1:0]     windows_q;
-  logic signed [InChannels-1:0][KernelArea-1:0][WeightBits-1:0] weights_q;
-  logic signed [BiasBits-1:0]                                  bias_q;
-
   /* -------------------------- Control Logic -------------------------- */
   logic [TermBits-1:0] term_count_q;
   logic [0:0]          busy_d,  busy_q;
@@ -54,35 +50,13 @@ module filter_dsp #(
   
   assign valid_o = valid_q;
 
-
-  // Unpack flattened ports into temporary wires for clean capture
-  logic signed [InChannels-1:0][KernelArea-1:0][InBits-1:0]     windows_unpacked;
-  logic signed [InChannels-1:0][KernelArea-1:0][WeightBits-1:0] weights_unpacked;
-
-  generate
-    for (genvar ch = 0; ch < InChannels; ch++) begin : gen_unpack_ch
-      for (genvar k = 0; k < KernelArea; k++) begin : gen_unpack_k
-        assign windows_unpacked[ch][k] = windows_i[(ch*KernelArea + k)*InBits +: InBits];
-        assign weights_unpacked[ch][k] = weights_i[(ch*KernelArea + k)*WeightBits +: WeightBits];
-      end
-    end
-  endgenerate
-
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
       busy_q    <= 1'b0;
       valid_q   <= 1'b0;
-      windows_q <= '0;
-      weights_q <= '0;
-      bias_q    <= '0;
     end else begin
       busy_q       <= busy_d;
       valid_q      <= valid_d;
-      if (in_fire) begin
-        windows_q <= windows_unpacked;
-        weights_q <= weights_unpacked;
-        bias_q    <= bias_i;
-      end
     end
   end
 
@@ -117,25 +91,14 @@ module filter_dsp #(
       if (out_fire) valid_d = 1'b0;
     end
 
-  /* ------------------------ Data Unpacking and Sequencing ------------------------ */
-  logic signed [TotalTerms-1:0][InBits-1:0]     flat_windows;
-  logic signed [TotalTerms-1:0][WeightBits-1:0] flat_weights;
-
-  generate
-    for (genvar ch = 0; ch < InChannels; ch++) begin : gen_flat_ch
-      for (genvar k = 0; k < KernelArea; k++) begin : gen_flat_k
-        assign flat_windows[ch*KernelArea + k] = windows_q[ch][k];
-        assign flat_weights[ch*KernelArea + k] = weights_q[ch][k];
-      end
-    end
-  endgenerate
-
+  /* ------------------------ Data Sequencing ------------------------ */
   // term_idx follows term_count_q during busy cycles
   wire [TermBits-1:0] term_idx = term_count_q;
+  assign term_idx_o = term_idx;
 
-  // Use captured registers for stability
-  wire signed [InBits-1:0]     data_w   = flat_windows[term_idx];
-  wire signed [WeightBits-1:0] weight_w = flat_weights[term_idx];
+  // Access weights and windows directly without registration
+  wire signed [InBits-1:0]     data_w   = windows_i[term_idx*InBits +: InBits];
+  wire signed [WeightBits-1:0] weight_w = weight_i;
 
   /* ------------------------------- Neuron DSP Unit ------------------------------- */
   // Targetting IceStorm SB_MAC16 DSP
@@ -149,20 +112,20 @@ module filter_dsp #(
     ,.OutBits    (`SB_MAC16_OUT)
   ) dsp_inst (
      .clk_i       (clk_i)
-    ,.rst_i       (rst_i)
-    ,.en_i        (busy_q)
-    ,.load_bias_i (busy_q && (term_count_q == '0))
-    ,.data_i      (data_w)
-    ,.weight_i    (weight_w)
-    ,.bias_i      (bias_q)
-    ,.acc_o       (neuron_o)
-  );
-  /* -------------------------------- Output Encoding -------------------------------- */
-  output_encoder #(
-     .InBits  (AccBits)
-    ,.OutBits (OutBits)
-  ) out_enc_inst (
-     .data_i (neuron_o[AccBits-1:0])
-    ,.data_o (data_o)
-  );
-endmodule
+      ,.rst_i       (rst_i)
+      ,.en_i        (busy_q)
+      ,.load_bias_i (busy_q && (term_count_q == '0))
+      ,.data_i      (data_w)
+      ,.weight_i    (weight_w)
+      ,.bias_i      (bias_i)
+      ,.acc_o       (neuron_o)
+    );
+    /* -------------------------------- Output Encoding -------------------------------- */
+    output_encoder #(
+       .InBits  (AccBits)
+      ,.OutBits (OutBits)
+    ) out_enc_inst (
+       .data_i (neuron_o[AccBits-1:0])
+      ,.data_o (data_o)
+    );
+  endmodule

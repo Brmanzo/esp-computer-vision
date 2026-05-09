@@ -116,6 +116,16 @@ module neuron_seq #(
   endgenerate
 
   /* ------------------------------------ Neural Logic ------------------------------------ */
+  wire signed [EffectiveDSPs-1:0][OutBits-1:0] neuron_results;
+
+  always_ff @(posedge clk_i) begin
+    if (dsp_valid_q) begin
+      for (int i = 0; i < EffectiveDSPs; i++) begin
+        data_out_q[i * NeuronsPerDSP + int'(workload_idx)] <= neuron_results[i];
+      end
+    end
+  end
+
   generate
     // Delayed capture signals for synchronous DSP outputs
     logic dsp_valid_q;
@@ -133,7 +143,6 @@ module neuron_seq #(
 
     for (genvar dsp_idx = 0; dsp_idx < EffectiveDSPs; dsp_idx++) begin : gen_dsps
       wire [ClassCountBits-1:0] current_class = ClassCountBits'(ClassCountBits'(dsp_idx * NeuronsPerDSP) + ClassCountBits'(local_class_counter));
-      wire [ClassCountBits-1:0] capture_class = ClassCountBits'(ClassCountBits'(dsp_idx * NeuronsPerDSP) + ClassCountBits'(workload_idx));
 
       wire first_channel = (channel_counter == '0);
       wire signed [WeightBits-1:0] current_weight = $signed(Weights[(current_class*WeightIndex) + (channel_counter*WeightBits) +: WeightBits]);
@@ -156,11 +165,7 @@ module neuron_seq #(
         ,.acc_o      (neuron_out)
       );
 
-      always_ff @(posedge clk_i) begin
-        if (dsp_valid_q) begin
-          data_out_q[capture_class] <= neuron_out;
-        end
-      end
+      assign neuron_results[dsp_idx] = neuron_out;
     end
   endgenerate
 

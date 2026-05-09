@@ -34,6 +34,9 @@
         "rtl/lib/max.sv",
         "rtl/lib/avg.sv",
         "rtl/lib/neuron.sv",
-        "rtl/icestorm/neuron_dsp.sv"
+        "rtl/icestorm/neuron_dsp.sv",
+        "rtl/lib/filter_seq.sv",
+        "rtl/lib/neuron_seq.sv",
+        "rtl/lib/output_encoder.sv"
     ]
 }
