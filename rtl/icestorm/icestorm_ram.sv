@@ -2,7 +2,7 @@
 // Bradley Manzo, 2026
 
 // Targetting IceStorm's 30 4kB embedded block RAMs
-// https://www.mouser.com/datasheet/2/225/iCE40%20UltraPlus%20Family%20Data%20Sheet-1149905.pdf?srsltid=AfmBOoojsqUL7qv64GuzD_fsFp6UalE__EO5sBNN2KRE01qaez2zv7uA#page=14
+// https://www.mouser.com/datasheet/2/225/iCE40%20UltraPlus%20Family%20Data%20Sheet-1149905.pdf?srsltid=AfmBOoojsqUL7qv64GuzD_fsFp6UalE__EO5sBNN2KRE01qaez2zv7uA#page=15
 `timescale 1ns / 1ps
 module icestorm_ram #(
    parameter  int unsigned Width     = 8

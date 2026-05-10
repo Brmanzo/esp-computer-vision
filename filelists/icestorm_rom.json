@@ -1,0 +1,6 @@
+{
+    "top": "icestorm_rom",
+    "files": [
+        "rtl/icestorm/icestorm_rom.sv"
+    ]
+}

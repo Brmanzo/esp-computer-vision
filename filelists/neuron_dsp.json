@@ -2,6 +2,8 @@
     "top": "neuron_dsp",
     "files": [
         "rtl/icestorm/neuron_dsp.sv",
-        "rtl/lib/input_encoder.sv"
+        "rtl/lib/input_encoder.sv",
+        "rtl/icestorm/icestorm_rom.sv",
+        "rtl/lib/counter_roll.sv"
     ]
 }

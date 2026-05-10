@@ -15,8 +15,7 @@ module filter_seq #(
   ,parameter int unsigned AccBits     = 32
 
   ,localparam int unsigned KernelArea = KernelWidth * KernelWidth
-  ,localparam int unsigned WeightIndex = InChannels * KernelArea * WeightBits
-  ,parameter logic signed [OutChannels*WeightIndex-1:0] Weights = '0
+  ,parameter  string       FileName   = "memory_init_file.hex"
   ,parameter logic signed [OutChannels*BiasBits-1:0]    Biases  = '0
 
   ,localparam int unsigned ClassCountBits = (OutChannels > 1) ? $clog2(OutChannels) : 1
@@ -88,6 +87,29 @@ module filter_seq #(
     end
   end
 
+  /* ------------------------------------ Weight ROM ------------------------------------ */
+  localparam int unsigned ROMWidth    = WeightBits * EffectiveDSPs;
+  localparam int unsigned TotalTerms  = InChannels * KernelArea;
+  localparam int unsigned ROMDepth    = TotalTerms * NeuronsPerDSP;
+  localparam int unsigned ROMAddrBits = (ROMDepth > 1) ? $clog2(ROMDepth) : 1;
+
+  wire [ROMWidth-1:0] rom_weights;
+  wire [ROMAddrBits-1:0] rom_addr; // Driven by DSP term_idx and local_class_counter
+
+  icestorm_rom #(
+     .Width    (ROMWidth)
+    ,.Depth    (ROMDepth)
+    ,.FileName (FileName)
+  ) weight_rom_inst (
+     .clk_i      (clk_i)
+    ,.rst_i      (rst_i)
+    ,.rd_addr_i  (rom_addr)
+    ,.rd_data_o  (rom_weights)
+    ,.wr_valid_i (1'b0)
+    ,.wr_data_i  ('0)
+    ,.wr_addr_i  ('0)
+  );
+
   /* ------------------------------------ Neural Logic ------------------------------------ */
   logic signed [OutChannels-1:0][OutBits-1:0] data_out_reg;
   wire signed [EffectiveDSPs-1:0][OutBits-1:0] filter_results;
@@ -104,7 +126,6 @@ module filter_seq #(
 
   assign data_o = data_out_reg;
 
-  localparam int unsigned TotalTerms  = InChannels * KernelArea;
   localparam int unsigned TermBits    = (TotalTerms > 1) ? $clog2(TotalTerms) : 1;
 
   generate
@@ -116,13 +137,14 @@ module filter_seq #(
                                                    (busy && dsp_done[0] && !last_local_class) ? (local_class_counter + 1) : 
                                                    local_class_counter;
 
+    // All DSPs share the same term index and class counter
+    assign rom_addr = ROMAddrBits'(int'(next_class_counter) * TotalTerms + int'(gen_dsps[0].next_dsp_term_idx));
+
     for (genvar dsp_idx = 0; dsp_idx < EffectiveDSPs; dsp_idx++) begin : gen_dsps
       wire [ClassCountBits-1:0] next_class    = ClassCountBits'(ClassCountBits'(dsp_idx * NeuronsPerDSP) + next_class_counter);
 
       wire [TermBits-1:0]          dsp_term_idx;
-      wire signed [WeightBits-1:0] dsp_weight = Weights[(next_class * WeightIndex) + (dsp_term_idx * WeightBits) +: WeightBits];
-      wire signed [BiasBits-1:0]   dsp_bias   = Biases[next_class*BiasBits +: BiasBits];
-
+      
       // We start class 0 on in_fire, subsequent classes on dsp_done of previous class
       logic [0:0] dsp_start_pulse;
       logic [0:0] dummy_ready_o;
@@ -130,6 +152,11 @@ module filter_seq #(
         if (rst_i) dsp_start_pulse <= 1'b0;
         else       dsp_start_pulse <= (busy && dsp_done[dsp_idx] && !last_local_class);
       end
+
+      wire [TermBits-1:0]          next_dsp_term_idx = dsp_term_idx;
+
+      wire signed [WeightBits-1:0] dsp_weight = $signed(rom_weights[dsp_idx*WeightBits +: WeightBits]);
+      wire signed [BiasBits-1:0]   dsp_bias   = Biases[next_class*BiasBits +: BiasBits];
 
       filter_dsp #(
          .InBits      (InBits)

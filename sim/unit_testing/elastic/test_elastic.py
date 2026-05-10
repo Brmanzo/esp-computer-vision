@@ -260,7 +260,7 @@ async def single_test(dut):
     try:
         await om.wait(timeout_ns)
     except SimTimeoutError:
-        assert 0, f"Test timed out. Expected {l} outputs from {l} inputs."
+        assert False, f"Test timed out. Expected {l} outputs from {l} inputs."
 
 
 @cocotb.test
@@ -378,7 +378,7 @@ async def rate_tests(dut, in_rate, out_rate):
     try:
         await with_timeout(RisingEdge(dut.valid_o), 20, 'ns')
     except SimTimeoutError:
-        assert 0, "Test timed out waiting for valid_o to go high."
+        assert False, "Test timed out waiting for valid_o to go high."
 
     slow = min(in_rate, out_rate)
     timeout_ns = int((l_out + 500) / max(slow, 0.05))
@@ -386,7 +386,7 @@ async def rate_tests(dut, in_rate, out_rate):
     try:
         await om.wait(timeout_ns)
     except SimTimeoutError:
-        assert 0, f"Test timed out. Could not transmit {l_out} elements in {timeout_ns} ns. Transmitted: {om._nout}"
+        assert False, f"Test timed out. Could not transmit {l_out} elements in {timeout_ns} ns. Transmitted: {om._nout}"
 
 @cocotb.test
 async def out_fuzz_test(dut):

@@ -1,0 +1,6 @@
+{
+    "top": "counter_roll",
+    "files": [
+        "rtl/lib/counter_roll.sv"
+    ]
+}

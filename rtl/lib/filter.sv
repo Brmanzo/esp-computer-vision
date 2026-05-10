@@ -49,8 +49,8 @@ module filter #(
   logic signed [AccBits-1:0] sum_pre_elastic_d;
   always_comb begin
     sum_pre_elastic_d = AccBits'(0);
-    for (int i = 0; i < InChannels; i++) begin : gen_acc_pre_elastic
-      sum_pre_elastic_d += kernel_data_d[i];
+    for (int i = 0; i < InChannels; i++) begin
+      sum_pre_elastic_d = $signed(sum_pre_elastic_d) + $signed(kernel_data_d[i]);
     end
   end
 

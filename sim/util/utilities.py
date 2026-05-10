@@ -257,9 +257,11 @@ def get_param_string(parameters):
     """ Get a string of all the parameters concatenated together.
 
     Arguments:
-    parameters -- a list of key value pairs
+    parameters -- a dictionary of key value pairs
     """
-    return "_".join(("{}={}".format(*i) for i in parameters.items()))
+    # Filter out large or volatile parameters that shouldn't affect the build directory name
+    filtered = {k: v for k, v in parameters.items() if k not in ["FileName", "Biases", "Weights"]}
+    return "_".join(("{}={}".format(k, v) for k, v in filtered.items()))
 
 
 def assert_resolvable(s):
@@ -350,16 +352,65 @@ def inject_raw_param(parameters: dict, param: int, param_name: str, param_bits: 
     # 4. Pass via environment
     os.environ[env_name] = str(param)
 
-def inject_weights_and_biases(simulator: Literal['verilator', 'icarus'], parameters: dict, param_str: str, tbpath: Path, test_class: str, Weights: int, Biases: int, weight_bits: int, bias_bits: int, layer: int = 0):
-    """Helper function to inject both weights and biases using the inject_params function."""
+def inject_hex_weights(parameters: dict, weights_int: int, weight_count: int, weight_bits: int, param_name: str, work_dir: str):
+    """
+    Slices a large packed integer of weights and writes them to a hex file for $readmemh,
+    while removing the original parameter from the dictionary to avoid CLI overflow.
+    """
+    # 1. Safely remove from CLI parameters dict
+    parameters.pop(param_name, None)
+
+    # 2. Setup file path
+    filename = f"injected_{param_name.lower()}.hex"
+    hex_path = os.path.join(work_dir, filename)
+    
+    # 3. Slice and write (assuming LSB-first packing like SV logic vectors)
+    hex_width = (weight_bits + 3) // 4
+    mask = (1 << weight_bits) - 1
+    
+    with open(hex_path, "w") as f:
+        for i in range(weight_count):
+            # Extract i-th weight
+            val = (weights_int >> (i * weight_bits)) & mask
+            f.write(f"{val:0{hex_width}x}\n")
+            
+    # 4. Return the absolute path so it can be passed to the ROM's FileName parameter
+    return os.path.abspath(hex_path)
+
+def inject_weights_and_biases(
+    simulator: Literal['verilator', 'icarus'], parameters: dict, param_str: str, tbpath: Path, test_class: str, Weights: int,
+    Biases: int, weight_bits: int, bias_bits: int, weight_count: int, layer: int = 0, dsp_count: int = 0
+):
+    """
+    Helper function to inject both weights and biases.
+    - If dsp_count == 0: Injects weights as a large packed parameter in a .vh header.
+    - If dsp_count > 0: Injects weights into a .hex file for ROM initialization.
+    """
     parameters.pop('test_name', None)
     parameters.pop('simulator', None)
     
+    # Write to the run directory where cocotb-test actually executes the simulator
     custom_work_dir = os.path.join(tbpath, "run", test_class, param_str, simulator)
     os.makedirs(custom_work_dir, exist_ok=True)
-  
-    inject_params(parameters, Weights, f"weights_{layer}", weight_bits, custom_work_dir)
-    inject_params(parameters,  Biases,  f"biases_{layer}", bias_bits,   custom_work_dir)
+    
+    if dsp_count == 0:
+        # Parallel Implementation: Use header-based injection for the giant vector
+        # Total bits = weight_bits * weight_count
+        inject_params(parameters, Weights, f"weights_{layer}", weight_bits * weight_count, custom_work_dir)
+    else:
+        # Sequential ROM Implementation: Use hex-based injection
+        hex_filename = inject_hex_weights(parameters, Weights, weight_count, weight_bits, f"weights_{layer}", custom_work_dir)
+        # Update the FileName parameter so the RTL can find the hex file
+        # Wrap filename in quotes for Verilator/Icarus string parameter passing
+        parameters["FileName"] = f'"{hex_filename}"'
+        # Export to environment so the Python test can still access the raw weights for its reference model
+        os.environ[f"INJECTED_WEIGHTS_{layer}_INT"] = str(Weights)
+        
+        # Also inject as header for testbench wrapper compatibility (e.g. tb_filter.sv)
+        inject_params(parameters, Weights, f"weights_{layer}", weight_bits * weight_count, custom_work_dir)
+        
+    # Biases currently stay as header parameters
+    inject_params(parameters, Biases, f"biases_{layer}", bias_bits, custom_work_dir)
 
     return custom_work_dir
 

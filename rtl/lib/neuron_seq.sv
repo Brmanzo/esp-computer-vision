@@ -12,8 +12,7 @@ module neuron_seq #(
   ,parameter int unsigned InChannels = 1
   ,parameter int unsigned OutChannels = 1
 
-  ,localparam int unsigned WeightIndex = InChannels * WeightBits
-  ,parameter logic signed [OutChannels*WeightIndex-1:0] Weights = '0
+  ,parameter  string       FileName   = "memory_init_file.hex"
   ,parameter logic signed [OutChannels*BiasBits-1:0]    Biases  = '0
 
   ,localparam int unsigned ChannelCountBits = InChannels  > 1 ? $clog2(InChannels)  : 1
@@ -115,6 +114,28 @@ module neuron_seq #(
     end
   endgenerate
 
+  /* ------------------------------------ Weight ROM ------------------------------------ */
+  localparam int unsigned ROMWidth = WeightBits * EffectiveDSPs;
+  localparam int unsigned ROMDepth = InChannels * NeuronsPerDSP;
+  localparam int unsigned ROMAddrBits = (ROMDepth > 1) ? $clog2(ROMDepth) : 1;
+
+  wire [ROMWidth-1:0] rom_weights;
+  wire [ROMAddrBits-1:0] rom_addr = ROMAddrBits'(int'(local_class_counter) * InChannels + int'(channel_counter));
+
+  icestorm_rom #(
+     .Width    (ROMWidth)
+    ,.Depth    (ROMDepth)
+    ,.FileName (FileName)
+  ) weight_rom_inst (
+     .clk_i      (clk_i)
+    ,.rst_i      (rst_i)
+    ,.rd_addr_i  (rom_addr)
+    ,.rd_data_o  (rom_weights)
+    ,.wr_valid_i (1'b0)
+    ,.wr_data_i  ('0)
+    ,.wr_addr_i  ('0)
+  );
+
   /* ------------------------------------ Neural Logic ------------------------------------ */
   wire signed [EffectiveDSPs-1:0][OutBits-1:0] neuron_results;
 
@@ -145,7 +166,7 @@ module neuron_seq #(
       wire [ClassCountBits-1:0] current_class = ClassCountBits'(ClassCountBits'(dsp_idx * NeuronsPerDSP) + ClassCountBits'(local_class_counter));
 
       wire first_channel = (channel_counter == '0);
-      wire signed [WeightBits-1:0] current_weight = $signed(Weights[(current_class*WeightIndex) + (channel_counter*WeightBits) +: WeightBits]);
+      wire signed [WeightBits-1:0] current_weight = $signed(rom_weights[dsp_idx*WeightBits +: WeightBits]);
       wire signed [BiasBits-1:0]   current_bias   = $signed(Biases[current_class*BiasBits +: BiasBits]);
       wire signed [OutBits-1:0]    neuron_out;
 
