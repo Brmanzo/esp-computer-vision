@@ -35,6 +35,21 @@ class QSchedule:
         # If we've passed the final scheduled duration, clamp to min bits
         return self._q_min_bits
 
+    @property
+    def q_min_bits(self):
+        '''Property to access the minimum (final) bit-width of this schedule.'''
+        return self._q_min_bits
+
+def generate_random_quantized_weights(shape: tuple, bits: int) -> torch.Tensor:
+    '''Generates a random tensor of weights uniformly distributed within the specified integer bit-width range.'''
+    if bits == 2:
+        qmin, qmax = -1, 1
+    else:
+        qmin = -2**(bits-1)
+        qmax = 2**(bits-1) - 1
+        
+    return torch.randint(int(qmin), int(qmax) + 1, shape).float()
+
 class QuantizeWeight(torch.autograd.Function):
     '''Quantizes weights to a specified number of bits with symmetric quantization.'''
     @staticmethod

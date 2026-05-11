@@ -61,10 +61,15 @@ module filter_dsp #(
   end
 
     wire [0:0] last_term = (term_count_q == TermBits'(TotalTerms - 1));
-    assign done      = busy_q && last_term;
+    logic done_d1;
+    always_ff @(posedge clk_i) begin
+        if (rst_i) done_d1 <= 1'b0;
+        else done_d1 <= busy_q && last_term;
+    end
+    assign done = done_d1;
     
     // Block new input if we are busy OR if we are holding a result that hasn't been accepted
-    assign ready_o = ~busy_q && (~valid_q || ready_i);
+    assign ready_o = ~busy_q && (~valid_q || ready_i) && ~(busy_q && last_term);
 
     counter_roll #(
        .CountBits  (TermBits)
@@ -84,9 +89,10 @@ module filter_dsp #(
       valid_d = valid_q;
       if (in_fire) begin
         busy_d  = 1'b1;
+      end else if (busy_q && last_term) begin
+        busy_d  = 1'b0;
       end else if (done) begin
         valid_d = 1'b1;
-        busy_d  = 1'b0;
       end
       if (out_fire) valid_d = 1'b0;
     end
@@ -97,8 +103,16 @@ module filter_dsp #(
   assign term_idx_o = term_idx;
 
   // Access weights and windows directly without registration
-  wire signed [InBits-1:0]     data_w   = windows_i[term_idx*InBits +: InBits];
-  wire signed [WeightBits-1:0] weight_w = weight_i;
+  logic signed [InBits-1:0]     data_w_r;
+  logic en_r, load_bias_r;
+  logic signed [BiasBits-1:0] bias_r;
+  
+  always_ff @(posedge clk_i) begin
+      data_w_r <= windows_i[term_idx*InBits +: InBits];
+      en_r <= busy_q;
+      load_bias_r <= (busy_q && (term_count_q == '0));
+      bias_r <= bias_i;
+  end
 
   /* ------------------------------- Neuron DSP Unit ------------------------------- */
   // Targetting IceStorm SB_MAC16 DSP
@@ -113,11 +127,11 @@ module filter_dsp #(
   ) dsp_inst (
      .clk_i       (clk_i)
       ,.rst_i       (rst_i)
-      ,.en_i        (busy_q)
-      ,.load_bias_i (busy_q && (term_count_q == '0))
-      ,.data_i      (data_w)
-      ,.weight_i    (weight_w)
-      ,.bias_i      (bias_i)
+      ,.en_i        (en_r)
+      ,.load_bias_i (load_bias_r)
+      ,.data_i      (data_w_r)
+      ,.weight_i    (weight_i) // 1-cycle delayed from ROM
+      ,.bias_i      (bias_r)
       ,.acc_o       (neuron_o)
     );
     /* -------------------------------- Output Encoding -------------------------------- */

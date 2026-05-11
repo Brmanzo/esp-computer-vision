@@ -24,28 +24,29 @@ module icestorm_rom #(
 );
 
    logic [Width-1:0] rom [Depth-1:0];
+   logic [Width-1:0]  rd_data_r;
+   assign rd_data_o = rd_data_r;
+
    initial begin
    `ifndef SYNTHESIS
       // Display depth and width (You will need to match these in your init file)
       $display("%m: Depth is %d, Width is %d, FileName is '%s'", Depth, Width, FileName);
-      // wire [bar:0] foo [baz:0];
+   `endif
       if(Init != 0 && FileName != 0) begin // if Init is 1 and FileName provided, use readmemh.
          $readmemh(FileName, rom, 0, Depth-1);
-         $display("%m: ROM[0] = %h, ROM[1] = %h", rom[0], rom[1]);
       end
+   `ifndef SYNTHESIS
+      $display("%m: ROM[0] = %h, ROM[1] = %h", rom[0], rom[1]);
    `endif
-      // In order to get the memory contents in iverilog you need to run this for loop during initialization:
       // synopsys translate_off
       for (int i = 0; i < Depth; i++)
         $dumpvars(0, rom[i]);
       // synopsys translate_on
    end
    
-   // Asynchronous read
-   assign rd_data_o = rom[rd_addr_i];
-
-   // Synchronous write
+   // Synchronous read and write
    always_ff @(posedge clk_i) begin
+      rd_data_r <= rom[rd_addr_i];
       // Writing during reset should not affect memory contents
       if (wr_valid_i && !rst_i) begin
          rom[wr_addr_i] <= wr_data_i;

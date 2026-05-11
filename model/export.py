@@ -52,15 +52,18 @@ def get_hardware_weights(fused_layer: QuantConv2d, previous_act_scale: float = 1
 
         return q_weights, hw_bias, float(w_scale.item() if torch.is_tensor(w_scale) else w_scale)
 
-def export_model_to_csv(model_path: Path, config: ModelConfig, output_csv: Path):
+def export_model_to_csv(model_path: Path, config: ModelConfig, output_csv: Path, random_weights: bool = False):
     '''Loads the trained model, extracts the folded and quantized weights for
-    each layer, and saves them to a CSV file for hardware implementation.'''
-    from model.quantize import QuantizeActivation
+    each layer, and saves them to a CSV file for hardware implementation.
+    If random_weights is True, it instead generates random hardware weights
+    constrained by the model config's quantization schedule.'''
+    from model.quantize import QuantizeActivation, generate_random_quantized_weights
     device = "cpu"
 
     model = cnn_model(config=config).to(device)
-    state = torch.load(model_path, map_location=device, weights_only=True)
-    model.load_state_dict(state, strict=True)
+    if not random_weights:
+        state = torch.load(model_path, map_location=device, weights_only=True)
+        model.load_state_dict(state, strict=True)
     model.eval()
 
     all_hardware_data: list[dict[str, Any]] = []
@@ -74,13 +77,24 @@ def export_model_to_csv(model_path: Path, config: ModelConfig, output_csv: Path)
 
     for module in all_modules:
         if isinstance(module, QuantConv2d):
-            name = f"Layer_{len(all_hardware_data)}"
-            weight_bits = module._weight_bits
-            bias_bits   = module._bias_bits
-            print(f"  Processing {name} ({module.__class__.__name__}) with incoming scale {current_act_scale:.6f}...")
+            layer_idx = len(all_hardware_data)
+            name = f"Layer_{layer_idx}"
+            bias_bits = getattr(module, '_bias_bits', 8)
             
-            # Extract compensated weights
-            w_int_tensor, b_hw, w_scale = get_hardware_weights(module, current_act_scale)
+            if random_weights:
+                weight_bits = config.q_schedule[layer_idx].q_min_bits
+                print(f"  Generating random weights for {name} ({module.__class__.__name__}) with {weight_bits}-bit weights...")
+                
+                w_shape = module.weight.shape
+                w_int_tensor = generate_random_quantized_weights(w_shape, weight_bits)
+                b_hw = generate_random_quantized_weights((w_shape[0],), bias_bits)
+                w_scale = 1.0
+            else:
+                weight_bits = module._weight_bits
+                print(f"  Processing {name} ({module.__class__.__name__}) with incoming scale {current_act_scale:.6f}...")
+                
+                # Extract compensated weights
+                w_int_tensor, b_hw, w_scale = get_hardware_weights(module, current_act_scale)
 
             # Convert to numpy
             w_int = w_int_tensor.to(torch.int32).cpu().numpy()
@@ -225,23 +239,23 @@ def export_csv_to_hex(csv_path: Path, sv_path: Path, hex_path: Path, config: Mod
 
 if __name__ == "__main__":
     import sys
-    # Default paths matching the training pipeline
-    default_model = DATAPATH / "gesture_net_quantized.pth"
-    default_csv   = DATAPATH / "hardware_weights.csv"
-    default_sv    = DATAPATH / "hardware_weights.vh"
-    default_hex   = DATAPATH / "roms" / "hex"
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Export QAT Model to Hardware files")
+    parser.add_argument("model_in", nargs="?", default=DATAPATH / "gesture_net_quantized.pth", type=Path)
+    parser.add_argument("csv_out", nargs="?", default=DATAPATH / "hardware_weights.csv", type=Path)
+    parser.add_argument("sv_out", nargs="?", default=DATAPATH / "hardware_weights.vh", type=Path)
+    parser.add_argument("hex_out", nargs="?", default=DATAPATH / "roms" / "hex", type=Path)
+    parser.add_argument("--random", action="store_true", help="Generate random weights using q_min_bits instead of loading a model")
+    
+    args = parser.parse_args()
 
-    model_in = Path(sys.argv[1]) if len(sys.argv) > 1 else default_model
-    csv_out  = Path(sys.argv[2]) if len(sys.argv) > 2 else default_csv
-    sv_out   = Path(sys.argv[3]) if len(sys.argv) > 3 else default_sv
-    hex_out  = Path(sys.argv[4]) if len(sys.argv) > 4 else default_hex
-
-    if not model_in.exists():
-        print(f"Error: Model file not found at {model_in}")
+    if not args.random and not args.model_in.exists():
+        print(f"Error: Model file not found at {args.model_in}")
         sys.exit(1)
 
-    # 1. Refresh the CSV from the trained model
-    export_model_to_csv(model_in, config=HAND_GESTURE_CFG, output_csv=csv_out)
+    # 1. Refresh the CSV from the trained model (or generate random weights)
+    export_model_to_csv(args.model_in, config=HAND_GESTURE_CFG, output_csv=args.csv_out, random_weights=args.random)
 
     # 2. Generate the SystemVerilog header and hex files
-    export_csv_to_hex(csv_out, sv_out, hex_out, config=HAND_GESTURE_CFG)
+    export_csv_to_hex(args.csv_out, args.sv_out, args.hex_out, config=HAND_GESTURE_CFG)

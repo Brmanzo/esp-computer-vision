@@ -49,7 +49,7 @@ module neuron_seq #(
   logic signed [InChannels-1:0][InBits-1:0]    data_q;
   logic signed [OutChannels-1:0][OutBits-1:0] data_out_q;
 
-  logic [0:0] done;
+  logic [0:0] done, done_d1;
 
   assign valid_o = valid_q;
   assign data_o  = data_out_q;
@@ -59,7 +59,7 @@ module neuron_seq #(
 
   // We are ready if we aren't busy and aren't holding a result.
   // We also block during the finish transition cycle.
-  assign ready_o = ~busy & ~valid_q & ~done;
+  assign ready_o = ~busy & ~valid_q & ~done & ~done_d1;
 
   /* ------------------------------------ Control Logic ------------------------------------ */
   always_ff @(posedge clk_i) begin
@@ -68,14 +68,21 @@ module neuron_seq #(
       busy          <= 1'b0;
       data_q          <=   '0;
       done        <= 1'b0;
+      done_d1     <= 1'b0;
     end else begin
       if (in_fire) begin
         data_q          <= data_i;
         busy          <= 1'b1;
       end else if (busy && last_channel && last_local_class) begin
         busy          <= 1'b0;
+        done_d1       <= 1'b1;
+      end
+      
+      if (done_d1) begin
+        done_d1     <= 1'b0;
         done        <= 1'b1;
       end
+      
       if (done) begin
         done        <= 1'b0;
         valid_q         <= 1'b1;
@@ -150,16 +157,20 @@ module neuron_seq #(
 
   generate
     // Delayed capture signals for synchronous DSP outputs
-    logic dsp_valid_q;
-    logic [LocalClassBits-1:0] workload_idx;
+    logic dsp_valid_d1, dsp_valid_q;
+    logic [LocalClassBits-1:0] workload_idx_d1, workload_idx;
 
     always_ff @(posedge clk_i) begin
       if (rst_i) begin
+        dsp_valid_d1 <= 1'b0;
+        workload_idx_d1 <= '0;
         dsp_valid_q  <= 1'b0;
         workload_idx <= '0;
       end else begin
-        dsp_valid_q  <= (busy && last_channel);
-        workload_idx <= local_class_counter;
+        dsp_valid_d1 <= (busy && last_channel);
+        workload_idx_d1 <= local_class_counter;
+        dsp_valid_q  <= dsp_valid_d1;
+        workload_idx <= workload_idx_d1;
       end
     end
 
@@ -171,6 +182,17 @@ module neuron_seq #(
       wire signed [BiasBits-1:0]   current_bias   = $signed(Biases[current_class*BiasBits +: BiasBits]);
       wire signed [OutBits-1:0]    neuron_out;
 
+      logic en_r;
+      logic load_bias_r;
+      logic signed [InBits-1:0] data_r;
+      logic signed [BiasBits-1:0] bias_r;
+      always_ff @(posedge clk_i) begin
+        en_r <= busy;
+        load_bias_r <= first_channel;
+        data_r <= data_q[channel_counter];
+        bias_r <= current_bias;
+      end
+
       neuron_dsp #(
          .InBits     (InBits)
         ,.WeightBits (WeightBits)
@@ -179,11 +201,11 @@ module neuron_seq #(
       ) dsp_inst (
          .clk_i      (clk_i)
         ,.rst_i      (rst_i)
-        ,.en_i       (busy)
-        ,.load_bias_i(first_channel)
-        ,.data_i     (data_q[channel_counter])
-        ,.weight_i   (current_weight)
-        ,.bias_i     (current_bias)
+        ,.en_i       (en_r)
+        ,.load_bias_i(load_bias_r)
+        ,.data_i     (data_r)
+        ,.weight_i   (current_weight) // Delayed 1 cycle by icestorm_rom
+        ,.bias_i     (bias_r)
         ,.acc_o      (neuron_out)
       );
 
