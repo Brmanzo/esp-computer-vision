@@ -8,7 +8,7 @@
 module icestorm_rom #(
    parameter  int unsigned Width     = 8
   ,parameter  int unsigned Depth     = 8
-  ,localparam int unsigned DepthBits = $clog2(Depth)
+  ,localparam int unsigned DepthBits = (Depth <= 1) ? 1 : $clog2(Depth)
   ,parameter  int unsigned Init      = 1
   ,parameter string        FileName  = "memory_init_file.bin"
 )  (

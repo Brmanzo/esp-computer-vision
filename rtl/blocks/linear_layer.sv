@@ -15,6 +15,7 @@ module linear_layer #(
   ,parameter logic signed [OutChannels*WeightIndex-1:0] Weights = '0
   ,parameter logic signed [OutChannels*BiasBits-1:0]    Biases  = '0
   ,parameter int unsigned DSPCount  = 0 // 0: LUT, 1: Sequential DSP per class, 2: Fully Sequential DSP (one total)
+  ,parameter string       FileName  = "memory_init_file.hex"
 
 )  (
    input [0:0] clk_i
@@ -45,6 +46,7 @@ module linear_layer #(
         ,.OutChannels (OutChannels)
         ,.Weights     (Weights)
         ,.Biases      (Biases)
+        ,.FileName    (FileName)
       ) filter_select_inst (
         .clk_i   (clk_i)
         ,.rst_i   (rst_i)

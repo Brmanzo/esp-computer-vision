@@ -52,6 +52,9 @@ def run_conv_test(test_name, simulator, parameters, Weights, Biases, test_class)
     BiasBits    = int(parameters["BiasBits"])
     DSPCount    = int(parameters.get("DSPCount", 0))
 
+    if simulator == "icarus" and DSPCount > 0:
+        pytest.skip("Icarus Verilog has issues with ROM initialization in sequential configurations")
+
     if DSPCount > 0:
         req_bits = max(OutBits, WeightBits + InBits + math.ceil(math.log2(InChannels * (KernelWidth**2))))
         if req_bits > 32:
@@ -65,8 +68,9 @@ def run_conv_test(test_name, simulator, parameters, Weights, Biases, test_class)
     elif test_class == "padding":
         param_str = f"KW_{KernelWidth}_P_{parameters['Padding']}_test_{test_name}"
 
-    weight_bits = OutChannels * InChannels * (KernelWidth**2) * WeightBits
-    bias_bits   = OutChannels * BiasBits
+    weight_bits  = WeightBits
+    bias_bits    = OutChannels * BiasBits
+    weight_count = OutChannels * InChannels * (KernelWidth**2)
 
     # Remove injected params so cocotb-runner doesn't pass them on CLI
     clean_params = parameters.copy()
@@ -76,7 +80,8 @@ def run_conv_test(test_name, simulator, parameters, Weights, Biases, test_class)
     custom_work_dir = inject_weights_and_biases(
         simulator=simulator, parameters=clean_params, param_str=param_str, 
         tbpath=tbpath, test_class=test_class, Weights=Weights, Biases=Biases, 
-        weight_bits=weight_bits, bias_bits=bias_bits)
+        weight_bits=weight_bits, bias_bits=bias_bits, weight_count=weight_count,
+        layer=0, dsp_count=DSPCount)
 
     filelist = "filelists/conv_layer.json"
     runner(

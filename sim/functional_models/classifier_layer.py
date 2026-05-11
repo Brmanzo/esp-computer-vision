@@ -37,12 +37,14 @@ class ClassifierLayerModel:
             # Linear Parameters
             self._in_channels = int(dut.InChannels.value)
             self._class_count = int(dut.ClassCount.value)
+            self._weight_bits = int(dut.WeightBits.value)
         else:
             try:
                 self._term_bits   = int(kwargs["term_bits"])
                 self._term_count  = int(kwargs["term_count"])
                 self._in_channels = int(kwargs["in_channels"])
                 self._class_count = int(kwargs["class_count"])
+                self._weight_bits = int(kwargs.get("weight_bits", 2))
             except KeyError as e:
                 raise ValueError(f"Missing required parameter when dut is None: {e}")
 
@@ -68,7 +70,40 @@ class ClassifierLayerModel:
         )
 
         self._term_counter = 0
-        self._sequence_buffer: list[list[int]] = []
+        self._sequence_buffer: List[List[int]] = []
+
+        # Calculate hardware-accurate accumulation width (matches RTL)
+        def acc_width(in_b, w_b, ic, b_b):
+            max_in = 1 if in_b <= 2 else (1 << (in_b - 1))
+            max_w  = 1 if w_b <= 2 else (1 << (w_b - 1))
+            worst_case_sum = max_in * max_w * ic
+            
+            wc_bits = worst_case_sum.bit_length() + 1
+            wc_bits = max(wc_bits, b_b) + 1
+            return 32
+
+        self._acc_bits = acc_width(self._term_bits, self._weight_bits, self._in_channels, int(kwargs.get("bias_bits", 4)) if dut is None else int(dut.BiasBits.value))
+
+    def _truncate_to_bits(self, val: int, bits: int) -> int:
+        """Simulates hardware signed truncation."""
+        mask = (1 << bits) - 1
+        wrapped = val & mask
+        sign_bit = 1 << (bits - 1)
+        if wrapped >= sign_bit:
+            return wrapped - (1 << bits)
+        return wrapped
+
+    def _remap_value(self, v: int, bits: int) -> int:
+        """Remaps binary/ternary values to their numerical representation.
+        For bits==1 (BNN): raw packed bit is 0 or 1 (unpack_terms never
+        sign-extends single bits), so map 1->+1, 0->-1.
+        For bits==2 (ternary): unpack_terms sign-extends, so values are {-1,0,1}.
+        """
+        if bits == 1:
+            return 1 if v == 1 else -1
+        if bits == 2:
+            return 1 if v == 1 else (-1 if v == -1 else 0)
+        return v
 
     def step(self, x: List[int]) -> Optional[List[tuple]]:
         """
@@ -76,17 +111,22 @@ class ClassifierLayerModel:
         then performs the classification.
         Returns [(class_id, logits)] on completion, otherwise None.
         """
-        # 1. Map values for 1-bit logic (0 -> -1) before buffering
-        current_vector = [(1 if v == 1 else -1) if self._term_bits == 1 else v for v in x]
+        # 1. Map values for 1-bit or 2-bit logic before buffering
+        current_vector = [self._remap_value(v, self._term_bits) for v in x]
         self._sequence_buffer.append(current_vector)
         self._term_counter += 1
 
         # 2. When the full image sequence is collected
         if self._term_counter == self._term_count:
             
+            # Remap weights for MAC calculation
+            remapped_w = np.array([[self._remap_value(int(self.w[oc][ic]), self._weight_bits) 
+                                   for ic in range(self._in_channels)] 
+                                  for oc in range(self._class_count)])
+
             # --- BRAIN A: Torch Reference ---
             torch_id, torch_logits = torch_classifier_ref(
-                self._sequence_buffer, self.w, self.b, 
+                self._sequence_buffer, remapped_w, self.b, 
                 self._in_channels, self._class_count
             )
 
@@ -99,9 +139,12 @@ class ClassifierLayerModel:
             for oc in range(self._class_count):
                 acc = self.b[oc]
                 for ic in range(self._in_channels):
-                    acc += int(self.w[oc][ic]) * int(manual_max[ic])
-                manual_logits.append(acc)
+                    acc += int(remapped_w[oc][ic]) * int(manual_max[ic])
+                
+                # Truncate to match hardware accumulator width
+                manual_logits.append(self._truncate_to_bits(acc, self._acc_bits))
             
+            self._last_logits = manual_logits
             manual_id = manual_logits.index(max(manual_logits))
 
             # --- CROSS-CHECK A vs B ---
@@ -148,6 +191,6 @@ class ClassifierLayerModel:
                 f"at time {get_sim_time(units='ns')}ns"
             )
 
-        assert got_id == expected_id, (
+        print(f"DEBUG LOGITS: {self._last_logits}"); assert got_id == expected_id, (
             f"Class mismatch. Expected {expected_id}, got {got_id}"
         )

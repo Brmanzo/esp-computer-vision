@@ -9,6 +9,7 @@
         "rtl/lib/output_encoder.sv",
         "rtl/lib/mac.sv",
         "rtl/lib/neuron_seq.sv",
-        "rtl/lib/counter_roll.sv"
+        "rtl/lib/counter_roll.sv",
+        "rtl/icestorm/icestorm_rom.sv"
     ]
 }

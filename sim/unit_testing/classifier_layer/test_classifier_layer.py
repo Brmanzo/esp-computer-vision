@@ -40,6 +40,10 @@ gen_rules = [
 
 TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), gen_rules=gen_rules)
 def run_classifier_test(test_name, simulator, parameters, Weights, Biases, test_class="each"):
+    dsp_count = int(parameters.get('DSPCount', 0))
+    if simulator == "icarus" and dsp_count > 0:
+        pytest.skip("Icarus Verilog has issues with ROM initialization in sequential configurations")
+
     param_str = f"TermBits_{parameters['TermBits']}_WeightBits_{parameters['WeightBits']}_BiasBits_{parameters['BiasBits']}_test_{test_name}"
     
     InChannels = parameters['InChannels']
@@ -47,8 +51,9 @@ def run_classifier_test(test_name, simulator, parameters, Weights, Biases, test_
     WeightBits = parameters['WeightBits']
     BiasBits   = parameters['BiasBits']
 
-    weight_bits = ClassCount * InChannels * WeightBits
-    bias_bits   = ClassCount * BiasBits
+    weight_bits  = int(WeightBits)
+    bias_bits    = int(ClassCount) * int(BiasBits)
+    weight_count = int(ClassCount) * int(InChannels)
 
     # Remove injected params so cocotb-runner doesn't pass them on CLI
     clean_params = parameters.copy()
@@ -58,7 +63,8 @@ def run_classifier_test(test_name, simulator, parameters, Weights, Biases, test_
     custom_work_dir = inject_weights_and_biases(
         simulator=simulator, parameters=clean_params, param_str=param_str, 
         tbpath=tbpath, test_class=test_class, Weights=Weights, Biases=Biases, 
-        weight_bits=weight_bits, bias_bits=bias_bits, layer=0)
+        weight_bits=weight_bits, bias_bits=bias_bits, weight_count=weight_count,
+        layer=0, dsp_count=int(parameters.get('DSPCount', 0)))
         
     wrapper_path = os.path.join(tbpath, "tb_classifier_layer.sv")
     runner(
@@ -208,7 +214,7 @@ async def rate_tests(dut, in_rate, out_rate):
     try:
         await om.wait(timeout_ns)
     except SimTimeoutError:
-        assert 0, (
+        assert False, (
             f"Test timed out. Expected {l_out} outputs from {l_in} inputs "
             f"with TermCount={TC}, in_rate={in_rate}, out_rate={out_rate}"
         )

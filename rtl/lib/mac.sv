@@ -27,19 +27,21 @@ module mac #(
     // Binary Activation {-1, 1} * Multi-bit Weight
     end else if (InBits == 1) begin : gen_binary_in
       for (genvar i = 0; i < TermCount; i++) begin : gen_binary_multiply
-        assign addends[i] = window_i[i][0] ? acc_t'(weights_i[i]) : -acc_t'(weights_i[i]);
+        // Explicitly signed cast to help Icarus Verilog and other simulators
+        wire signed [WeightBits-1:0] w_val = $signed(weights_i[i]);
+        assign addends[i] = window_i[i][0] ? acc_t'(w_val) : -acc_t'(w_val);
       end
-    // Ternary Activation {-1, 0, 1} * Multi-bit Weight (MUX-based multiply)
     end else if (InBits == 2) begin : gen_ternary_in
       for (genvar i = 0; i < TermCount; i++) begin : gen_ternary_multiply
-        assign addends[i] = (window_i[i] == 2'sb01) ?   acc_t'(weights_i[i]) :
-                            (window_i[i] == 2'sb11) ? - acc_t'(weights_i[i]) :
-                                                         acc_t'(0);
+        wire signed [WeightBits-1:0] w_val = $signed(weights_i[i]);
+        assign addends[i] = (window_i[i] == 2'sb01) ?   acc_t'(w_val) :
+                            (window_i[i] == 2'sb11) ? - acc_t'(w_val) :
+                                                          acc_t'(0);
       end
     // Otherwise normal multiplication
     end else begin : gen_normal
       for (genvar i = 0; i < TermCount; i++) begin : gen_normal_multiply
-        assign addends[i] = acc_t'(weights_i[i]) * window_i[i];
+        assign addends[i] = acc_t'($signed(weights_i[i])) * $signed(window_i[i]);
       end
     end
   endgenerate
@@ -48,8 +50,8 @@ module mac #(
   // Explicitly signed and correctly sized initialization to avoid Icarus Verilog gotchas
   always_comb begin 
     sum_o = acc_t'(0);
-    for (int i = 0; i < TermCount; i++) begin
-      sum_o = sum_o + addends[i];
+    for (integer i = 0; i < TermCount; i++) begin
+      sum_o = $signed(sum_o) + $signed(addends[i]);
     end
   end
 

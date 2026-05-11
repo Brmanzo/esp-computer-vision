@@ -17,6 +17,7 @@ module classifier_layer #(
   ,parameter logic signed [ClassCount*WeightIndex-1:0] Weights = '0
   ,parameter logic signed [ClassCount*BiasBits-1:0]    Biases  = '0
   ,parameter int unsigned DSPCount  = 0
+  ,parameter string       FileName  = "memory_init_file.hex"
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -32,18 +33,21 @@ module classifier_layer #(
 );
 
   function automatic int unsigned acc_width;
-    input int unsigned input_width, weight_width, in_channels;
+    input int unsigned input_width, weight_width, in_channels, bias_width;
     longint unsigned max_input, max_weight, worst_case_sum;
+    int unsigned wc_bits;
     begin
       max_input      = (input_width <= 2) ? 64'd1 : (64'd1 << (input_width - 1));
       max_weight     = (weight_width <= 2) ? 64'd1 : (64'd1 << (weight_width - 1));
       worst_case_sum = max_input * max_weight * longint'(in_channels);
 
-      acc_width = $clog2(worst_case_sum + 1) + 1; // assign to function name
+      wc_bits = $clog2(worst_case_sum + 1) + 1;
+      wc_bits = ((wc_bits > bias_width) ? wc_bits : bias_width) + 1;
+      acc_width = (wc_bits > 32) ? 32 : wc_bits;
     end
   endfunction
 
-  localparam int unsigned LinearBits = acc_width(TermBits, WeightBits, InChannels);
+  localparam int unsigned LinearBits = 32;
 
   wire [0:0] global_max_valid;
   wire signed [InChannels-1:0][TermBits-1:0] global_max_data;
@@ -80,6 +84,7 @@ module classifier_layer #(
     ,.Weights     (Weights)
     ,.Biases      (Biases)
     ,.DSPCount    (DSPCount)
+    ,.FileName    (FileName)
   ) linear_layer_inst (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)

@@ -12,6 +12,8 @@ module tb_classifier_layer #(
   ,parameter  int unsigned WeightBits = 2
   ,parameter  int unsigned BiasBits   = 2
   ,parameter  int unsigned DSPCount   = 0
+  ,parameter  string       FileName   = "memory_init_file.hex"
+
   ,localparam int unsigned IdBits     = (ClassCount <= 1) ? 1 : $clog2(ClassCount)
 )  (
    input  [0:0] clk_i
@@ -42,6 +44,7 @@ classifier_layer #(
     ,.Weights     (INJECTED_WEIGHTS_0)
     ,.BiasBits    (BiasBits)
     ,.Biases      (INJECTED_BIASES_0)
+    ,.FileName    (FileName)
   ) dut (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)

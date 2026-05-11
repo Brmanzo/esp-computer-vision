@@ -54,6 +54,7 @@ module conv_layer #(
    ,localparam int unsigned WeightIndex = InChannels * KernelArea * WeightBits
    ,parameter logic signed [OutChannels*WeightIndex-1:0] Weights = '0
    ,parameter logic signed [OutChannels*BiasBits-1:0] Biases = '0
+   ,parameter string       FileName = "memory_init_file.hex"
 ) (
     input [0:0] clk_i
    ,input [0:0] rst_i
@@ -211,6 +212,7 @@ module conv_layer #(
         ,.OutChannels (OutChannels)
         ,.Weights     (Weights)
         ,.Biases      (Biases)
+        ,.FileName    (FileName)
       ) filter_seq_inst (
          .clk_i    (clk_i)
         ,.rst_i    (rst_i)

@@ -13,6 +13,7 @@ module neuron_seq #(
   ,parameter int unsigned OutChannels = 1
 
   ,parameter  string       FileName   = "memory_init_file.hex"
+  ,parameter logic signed [OutChannels*InChannels*WeightBits-1:0] Weights = '0
   ,parameter logic signed [OutChannels*BiasBits-1:0]    Biases  = '0
 
   ,localparam int unsigned ChannelCountBits = InChannels  > 1 ? $clog2(InChannels)  : 1

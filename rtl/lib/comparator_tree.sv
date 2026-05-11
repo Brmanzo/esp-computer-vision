@@ -10,11 +10,11 @@ module comparator_tree #(
    input  logic signed [ClassCount-1:0][InBits-1:0] classes_i,
 
    output logic signed [OutBits-1:0] max_o,
-   output logic signed [IdBits-1:0]  id_o
+   output logic        [IdBits-1:0]  id_o
 );
 
   typedef logic signed [OutBits-1:0] comp_t;
-  typedef logic signed [IdBits-1:0]  id_t;
+  typedef logic        [IdBits-1:0]  id_t;
 
   // Unpacked array of packed elements
   comp_t tree [TreeLevels:0][TreeWidth-1:0];
