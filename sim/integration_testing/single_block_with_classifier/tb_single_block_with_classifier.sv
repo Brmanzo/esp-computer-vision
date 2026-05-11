@@ -37,6 +37,10 @@ module tb_single_block_with_classifier #(
   ,parameter int unsigned BusBits        = 8
   ,parameter int unsigned ClassWeightBits = 2
   ,parameter int unsigned ClassBiasBits   = 8
+  ,parameter int unsigned DSPCount        = 0
+  ,parameter string       FileName_0     = "memory_init_file.hex"
+  ,parameter string       FileName_1     = "memory_init_file.hex"
+  ,parameter string       FileName_2     = "memory_init_file.hex"
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -105,8 +109,10 @@ module tb_single_block_with_classifier #(
     ,.OutChannels (C0_OutChannels)
     ,.Stride      (C0_Stride)
     ,.Padding     (C0_Padding)
+    ,.DSPCount    (DSPCount)
     ,.Weights     (INJECTED_WEIGHTS_0)
     ,.Biases      (INJECTED_BIASES_0)
+    ,.FileName    (FileName_0)
   ) conv_layer_inst_0 (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)
@@ -152,8 +158,10 @@ module tb_single_block_with_classifier #(
     ,.OutChannels (C1_OutChannels)
     ,.Stride      (C1_Stride)
     ,.Padding     (C1_Padding)
+    ,.DSPCount    (DSPCount)
     ,.Weights     (INJECTED_WEIGHTS_1)
     ,.Biases      (INJECTED_BIASES_1)
+    ,.FileName    (FileName_1)
   ) conv_layer_inst_1 (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)
@@ -175,8 +183,10 @@ module tb_single_block_with_classifier #(
     ,.ClassCount (ClassCount)
     ,.WeightBits (ClassWeightBits)
     ,.BiasBits   (ClassBiasBits)
+    ,.DSPCount   (DSPCount)
     ,.Weights    (INJECTED_WEIGHTS_2)
     ,.Biases     (INJECTED_BIASES_2)
+    ,.FileName   (FileName_2)
   ) classifier_layer_inst (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)

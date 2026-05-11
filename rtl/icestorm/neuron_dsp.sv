@@ -62,7 +62,6 @@ module neuron_dsp #(
   assign acc_o = acc_r;
   /* verilator lint_on WIDTHTRUNC */
 
-  /* ----------------------------- Sequential Accumulator Logic ----------------------------- */
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
       acc_r <= '0;

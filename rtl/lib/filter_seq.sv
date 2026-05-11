@@ -15,7 +15,7 @@ module filter_seq #(
   ,parameter int unsigned AccBits     = 32
 
   ,localparam int unsigned KernelArea = KernelWidth * KernelWidth
-  ,parameter  string       FileName   = "memory_init_file.hex"
+  ,parameter [8*256-1:0]   FileName   = ""
   ,parameter logic signed [OutChannels*InChannels*KernelArea*WeightBits-1:0] Weights = '0
   ,parameter logic signed [OutChannels*BiasBits-1:0]    Biases  = '0
 

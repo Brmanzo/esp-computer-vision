@@ -7,7 +7,7 @@ import sys
 from model.config  import ModelConfig, ConvConfig, PoolConfig, ClassifierConfig
 from model.globals import HAND_GESTURE_CFG
 
-def render_header(BusBits):
+def render_header(BusBits, num_layers=1):
     '''Renders the header of the CNN SystemVerilog file.'''
     # Timestamp the file for traceability
     date = datetime.now().strftime("%B %d, %Y %I:%M %p")
@@ -18,6 +18,13 @@ def render_header(BusBits):
         "`timescale 1ns / 1ps",
         "module cnn #(",
         f"  parameter int unsigned BusBits = {BusBits}",
+    ]
+    
+    # Add FileName parameters for each layer to support ROM injection
+    for i in range(num_layers):
+        lines.append(f"  ,parameter FileName_{i} = \"model/data/roms/hex/layer_{i}_weights.hex\"")
+    
+    lines.extend([
         ")  (",
         "   input  [0:0] clk_i",
         "  ,input  [0:0] rst_i",
@@ -39,7 +46,7 @@ def render_header(BusBits):
         "    `error \"Please define SYNTHESIS or COCOTB_SIM\"",
         "  `endif",
         "",
-    ]
+    ])
 
     return "\n".join(lines)
 
@@ -97,6 +104,7 @@ def render_conv_layer(cfg: ConvConfig):
         f"    ,.Biases      (LAYER_{cfg._layer_num}_BIASES)",
         f"    ,.Padding     ({cfg._padding})",
         f"    ,.DSPCount    ({cfg._dsp_count})",
+        f"    ,.FileName    (FileName_{cfg._layer_num})",
         f"  ) conv_layer_inst_{cfg._layer_num} (",
         "     .clk_i     (clk_i)",
         "    ,.rst_i     (rst_i)",
@@ -152,6 +160,7 @@ def render_classifier_layer(cfg: ClassifierConfig):
         f"    ,.Weights    (LAYER_{cfg._layer_num}_WEIGHTS)",
         f"    ,.Biases     (LAYER_{cfg._layer_num}_BIASES)",
         f"    ,.DSPCount   ({cfg._dsp_count})",
+        f"    ,.FileName   (FileName_{cfg._layer_num})",
         f"  ) classifier_layer_inst_{cfg._layer_num} (",
         "     .clk_i   (clk_i)",
         "    ,.rst_i   (rst_i)",
@@ -180,7 +189,7 @@ def render_verilog(cfg: ModelConfig) -> None:
     out_file = repo_root / "rtl" / "blocks" / "cnn.sv"
 
     with open(out_file, "w", encoding="utf-8") as f:
-        print(render_header(cfg._bus_width), file=f)
+        print(render_header(cfg._bus_width, num_layers=len(cfg.layers) + 1), file=f)
         # You might need to adjust render_wires to accept self.config.layers
         print(render_wires(cfg), file=f) 
         print("", file=f)

@@ -15,6 +15,8 @@ module tb_single_block #(
   ,parameter int unsigned C_Stride      = 1
   ,parameter int unsigned C_Padding     = 1
   ,parameter int unsigned P_Mode        = 0 // 0 for max pooling, 1 for average pooling
+  ,parameter int unsigned DSPCount      = 0
+  ,parameter [8*256-1:0]  FileName      = ""
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -33,7 +35,7 @@ module tb_single_block #(
   function automatic int unsigned p_in_dim;
     input int unsigned c_dim, c_kernel, c_stride, c_Padding;
     begin
-      p_in_dim = ((c_dim - c_kernel) / c_stride) + 1 + 2 * c_Padding; // Account for convolutional layer padding
+      p_in_dim = ((c_dim + 2 * c_Padding - c_kernel) / c_stride) + 1; 
     end
   endfunction
 
@@ -59,8 +61,10 @@ module tb_single_block #(
     ,.OutChannels (C_OutChannels)
     ,.Stride      (C_Stride)
     ,.Padding     (C_Padding)
+    ,.DSPCount    (DSPCount)
     ,.Weights     (INJECTED_WEIGHTS_0)
     ,.Biases      (INJECTED_BIASES_0)
+    ,.FileName    (FileName)
   ) conv_layer_inst_0 (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)
@@ -75,11 +79,12 @@ module tb_single_block #(
   );
 
   pool_layer #(
-     .LineWidthPx (P_LineWidthPx) // Reduction in size due to
-    ,.LineCountPx (P_LineCountPx) // conv_layer kernel width and stride.
-    ,.InBits      (C_OutBits)     // Same bitwidth as conv_layer output.
-    ,.KernelWidth (P_KernelWidth) // Power of 2 for proper average pooling.
-    ,.InChannels  (C_OutChannels)  // Same as conv_layer out channels.
+     .LineWidthPx (P_LineWidthPx) 
+    ,.LineCountPx (P_LineCountPx) 
+    ,.InBits      (C_OutBits)     
+    ,.OutBits     (C_OutBits)
+    ,.KernelWidth (P_KernelWidth) 
+    ,.InChannels  (C_OutChannels)  
     ,.PoolMode    (P_Mode)              // Max pooling
   ) pool_layer_inst_0 (
      .clk_i    (clk_i)

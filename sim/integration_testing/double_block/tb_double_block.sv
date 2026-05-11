@@ -33,6 +33,9 @@ module tb_double_block #(
   
   ,parameter int unsigned P1_KernelWidth = 2
   ,parameter int unsigned P1_Mode        = 0
+  ,parameter int unsigned DSPCount      = 0
+  ,parameter [8*256-1:0]  FileName_0    = ""
+  ,parameter [8*256-1:0]  FileName_1    = ""
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -102,8 +105,10 @@ module tb_double_block #(
     ,.OutChannels (C0_OutChannels)
     ,.Stride      (C0_Stride)
     ,.Padding     (C0_Padding)
+    ,.DSPCount    (DSPCount)
     ,.Weights     (INJECTED_WEIGHTS_0)
     ,.Biases      (INJECTED_BIASES_0)
+    ,.FileName    (FileName_0)
   ) conv_layer_inst_0 (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)
@@ -121,6 +126,7 @@ module tb_double_block #(
      .LineWidthPx (P0_LineWidthPx) 
     ,.LineCountPx (P0_LineCountPx) 
     ,.InBits      (C0_OutBits)     
+    ,.OutBits     (C0_OutBits)
     ,.KernelWidth (P0_KernelWidth) 
     ,.InChannels  (C0_OutChannels)  
     ,.PoolMode    (P0_Mode)              
@@ -149,8 +155,10 @@ module tb_double_block #(
     ,.OutChannels (C1_OutChannels)
     ,.Stride      (C1_Stride)
     ,.Padding     (C1_Padding)
+    ,.DSPCount    (DSPCount)
     ,.Weights     (INJECTED_WEIGHTS_1)
     ,.Biases      (INJECTED_BIASES_1)
+    ,.FileName    (FileName_1)
   ) conv_layer_inst_1 (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)
@@ -168,6 +176,7 @@ module tb_double_block #(
      .LineWidthPx (P1_LineWidthPx) 
     ,.LineCountPx (P1_LineCountPx) 
     ,.InBits      (C1_OutBits)     
+    ,.OutBits     (C1_OutBits)
     ,.KernelWidth (P1_KernelWidth) 
     ,.InChannels  (C1_OutChannels)  
     ,.PoolMode    (P1_Mode)              

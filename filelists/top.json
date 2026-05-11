@@ -37,6 +37,7 @@
         "rtl/icestorm/neuron_dsp.sv",
         "rtl/lib/filter_seq.sv",
         "rtl/lib/neuron_seq.sv",
-        "rtl/lib/output_encoder.sv"
+        "rtl/lib/output_encoder.sv",
+        "rtl/icestorm/icestorm_rom.sv"
     ]
 }

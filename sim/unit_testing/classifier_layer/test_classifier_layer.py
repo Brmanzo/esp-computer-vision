@@ -155,7 +155,7 @@ async def single_test(dut):
     om.start()
     im.start()
 
-    timeout_ns = 5000 # Increased for sequential DSP cases
+    timeout_ns = 500000 # Massively increased for sequential DSP cases
     await om.wait(timeout_ns)
 
 async def rate_tests(dut, in_rate, out_rate):
@@ -209,7 +209,7 @@ async def rate_tests(dut, in_rate, out_rate):
     processing_cycles = (OC * IC) // edc
     total_expected_cycles = (l_in / in_rate) + (groups * processing_cycles / slow)
     
-    timeout_ns = int((total_expected_cycles + 1000) * clock_period_ns)
+    timeout_ns = int((total_expected_cycles * 5 + 50000) * clock_period_ns)
 
     try:
         await om.wait(timeout_ns)

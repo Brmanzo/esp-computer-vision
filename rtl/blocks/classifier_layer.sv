@@ -17,7 +17,7 @@ module classifier_layer #(
   ,parameter logic signed [ClassCount*WeightIndex-1:0] Weights = '0
   ,parameter logic signed [ClassCount*BiasBits-1:0]    Biases  = '0
   ,parameter int unsigned DSPCount  = 0
-  ,parameter string       FileName  = "memory_init_file.hex"
+  ,parameter [8*256-1:0]  FileName = ""
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i

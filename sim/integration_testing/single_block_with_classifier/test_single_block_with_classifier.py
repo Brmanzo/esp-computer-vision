@@ -128,13 +128,14 @@ TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), auto_ru
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @auto_unpack(TEST_CASES)
+@pytest.mark.parametrize("DSPCount", [0, 1])
 def test_each(test_name, simulator, 
               C0_LineWidthPx, C0_LineCountPx, C0_InBits, C0_OutBits,
               C0_KernelWidth, C0_WeightBits, C0_BiasBits, C0_InChannels, C0_OutChannels,
               C0_Stride, C0_Padding, C0_Weights, C0_Biases,  P0_KernelWidth, P0_Mode, 
               C1_OutBits, C1_KernelWidth, C1_WeightBits, C1_BiasBits, C1_OutChannels, 
               C1_Stride, C1_Padding, C1_Weights, C1_Biases,
-              ClassCount, BusBits, ClassWeightBits, ClassBiasBits, C2_Weights, C2_Biases):
+              ClassCount, BusBits, ClassWeightBits, ClassBiasBits, C2_Weights, C2_Biases, DSPCount):
     parameters = dict(locals())
     parameters.pop('C0_Weights', None)
     parameters.pop('C0_Biases', None)
@@ -152,21 +153,31 @@ def test_each(test_name, simulator,
     bias_bits_1 = C1_OutChannels * C1_BiasBits
     bias_bits_2 = ClassCount * ClassBiasBits
     
+    if simulator == "icarus" and int(DSPCount) > 0:
+        pytest.skip("Icarus Verilog has issues with ROM initialization in sequential configurations")
+
     custom_work_dir = inject_weights_and_biases(
         simulator=simulator, parameters=parameters, param_str=param_str, 
         tbpath=tbpath, test_class="each", Weights=C0_Weights, Biases=C0_Biases, 
-        weight_bits=weight_bits_0, bias_bits=bias_bits_0, layer=0)
+        weight_bits=C0_WeightBits, bias_bits=bias_bits_0,
+        weight_count=C0_OutChannels * C0_InChannels * (C0_KernelWidth**2),
+        layer=0, dsp_count=int(DSPCount))
     
     inject_weights_and_biases(
         simulator=simulator, parameters=parameters, param_str=param_str, 
         tbpath=tbpath, test_class="each", Weights=C1_Weights, Biases=C1_Biases, 
-        weight_bits=weight_bits_1, bias_bits=bias_bits_1, layer=1)
+        weight_bits=C1_WeightBits, bias_bits=bias_bits_1,
+        weight_count=C1_OutChannels * C0_OutChannels * (C1_KernelWidth**2),
+        layer=1, dsp_count=int(DSPCount))
 
     inject_weights_and_biases(
         simulator=simulator, parameters=parameters, param_str=param_str, 
         tbpath=tbpath, test_class="each", Weights=C2_Weights, Biases=C2_Biases, 
-        weight_bits=weight_bits_2, bias_bits=bias_bits_2, layer=2)
+        weight_bits=ClassWeightBits, bias_bits=bias_bits_2,
+        weight_count=ClassCount * C1_OutChannels,
+        layer=2, dsp_count=int(DSPCount))
 
+    parameters.pop('FileName', None)
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters,
         pymodule="test_single_block_with_classifier", testname=test_name, work_dir=custom_work_dir,
@@ -276,7 +287,7 @@ async def single_test(dut):
     om = OutputModel(dut, RateGenerator(dut, 1), 1)                       
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, 1), N_in)
 
-    timeout_ns = N_in * 2000
+    timeout_ns = N_in * 500000
 
     await clock_start_sequence(dut.clk_i)
     await reset_sequence(dut.clk_i, dut.rst_i, 10)
@@ -288,7 +299,7 @@ async def single_test(dut):
         await om.wait(timeout_ns)
         print("Success: Final Classification output produced!")
     except SimTimeoutError:
-        assert 0, f"Timed out. Expected 1 handshake. Got {om.nproduced()}"
+        assert False, f"Timed out. Expected 1 handshake. Got {om.nproduced()}"
 
 async def rate_tests(dut, in_rate, out_rate):
     # 1. Read DUT parameters
@@ -369,8 +380,8 @@ async def rate_tests(dut, in_rate, out_rate):
     model = SingleBlockWithClassifierModel(dut, conv_0_params, pool_0_params, conv_1_params, classifier_params)
     m = ModelRunner(dut, model)
 
-    slow = min(in_rate, out_rate)
-    timeout_ns = int(N_in * 2000 / slow)
+    slow = max(min(in_rate, out_rate), 0.05)
+    timeout_ns = int(N_in * 500000 / slow)
 
     om = OutputModel(dut, RateGenerator(dut, out_rate), 1)
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, in_rate), N_in)
@@ -385,7 +396,7 @@ async def rate_tests(dut, in_rate, out_rate):
         await om.wait(timeout_ns)
         print("Success: Final Classification output produced!")
     except SimTimeoutError:
-        assert 0, f"Timed out. Expected 1 handshake. Got {om.nproduced()}"
+        assert False, f"Timed out. Expected 1 handshake. Got {om.nproduced()}"
 
 @cocotb.test
 async def inout_fuzz_test(dut):

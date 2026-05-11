@@ -10,7 +10,7 @@ module icestorm_rom #(
   ,parameter  int unsigned Depth     = 8
   ,localparam int unsigned DepthBits = (Depth <= 1) ? 1 : $clog2(Depth)
   ,parameter  int unsigned Init      = 1
-  ,parameter string        FileName  = "memory_init_file.bin"
+  ,parameter  [8*256-1:0]  FileName  = ""
 )  (
    input [0:0] clk_i
   ,input [0:0] rst_i
@@ -25,12 +25,15 @@ module icestorm_rom #(
 
    logic [Width-1:0] rom [Depth-1:0];
    initial begin
+   `ifndef SYNTHESIS
       // Display depth and width (You will need to match these in your init file)
-      $display("%m: Depth is %d, Width is %d", Depth, Width);
+      $display("%m: Depth is %d, Width is %d, FileName is '%s'", Depth, Width, FileName);
       // wire [bar:0] foo [baz:0];
-      if(Init != 0) begin // if Init is 1, use readmemh.
+      if(Init != 0 && FileName != 0) begin // if Init is 1 and FileName provided, use readmemh.
          $readmemh(FileName, rom, 0, Depth-1);
+         $display("%m: ROM[0] = %h, ROM[1] = %h", rom[0], rom[1]);
       end
+   `endif
       // In order to get the memory contents in iverilog you need to run this for loop during initialization:
       // synopsys translate_off
       for (int i = 0; i < Depth; i++)

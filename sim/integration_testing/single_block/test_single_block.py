@@ -42,10 +42,11 @@ TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), auto_ru
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @auto_unpack(TEST_CASES)
+@pytest.mark.parametrize("DSPCount", [0, 1])
 def test_each(test_name, simulator, 
               C_LineWidthPx, C_LineCountPx, C_InBits, C_OutBits, C_KernelWidth,
               P_KernelWidth, C_WeightBits, C_BiasBits, C_InChannels,
-              C_Weights, C_Biases, C_OutChannels, C_Padding, P_Mode):
+              C_Weights, C_Biases, C_OutChannels, C_Padding, P_Mode, DSPCount):
     parameters = dict(locals())
     parameters.pop('C_Biases', None)
     parameters.pop('C_Weights', None)
@@ -54,15 +55,21 @@ def test_each(test_name, simulator,
     total_weight_bits = C_OutChannels * C_InChannels * (C_KernelWidth**2) * C_WeightBits
     total_bias_bits   = C_OutChannels * C_BiasBits
 
+    if simulator == "icarus" and int(DSPCount) > 0:
+        pytest.skip("Icarus Verilog has issues with ROM initialization in sequential configurations")
+
     custom_work_dir = inject_weights_and_biases(
         simulator=simulator, parameters=parameters, param_str=param_str, 
         tbpath=tbpath, test_class="each", Weights=C_Weights, Biases=C_Biases, 
-        weight_bits=total_weight_bits, bias_bits=total_bias_bits)
+        weight_bits=C_WeightBits, bias_bits=total_bias_bits,
+        weight_count=C_OutChannels * C_InChannels * (C_KernelWidth**2),
+        layer=0, dsp_count=int(DSPCount))
 
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters,
         pymodule="test_single_block", testname=test_name, work_dir=custom_work_dir,
-        sim_build=custom_work_dir, includes=[custom_work_dir], toplevel_override="tb_single_block"
+        sim_build=custom_work_dir, includes=[custom_work_dir], toplevel_override="tb_single_block",
+        jsonname=str(tbpath / "single_block.json")
     )
 
 class RandomDataGenerator:
@@ -131,8 +138,8 @@ async def single_test(dut):
     }
 
     # Calculate the intermediate dimension (Output of Conv -> Input of Pool)
-    P_W = ((C_W - C_K) // C_S) + 1 + 2 * C_P
-    P_H = ((C_H - C_K) // C_S) + 1 + 2 * C_P
+    P_W = ((C_W + 2 * C_P - C_K) // C_S) + 1
+    P_H = ((C_H + 2 * C_P - C_K) // C_S) + 1
 
     pool_params = {
         "KernelWidth": P_K,
@@ -256,7 +263,7 @@ async def rate_tests(dut, in_rate, out_rate):
     try:
         await with_timeout(RisingEdge(dut.valid_o), first_out_wait_ns, 'ns')
     except SimTimeoutError:
-        assert 0, "Timed out waiting for valid_o high."
+        assert False, "Timed out waiting for valid_o high."
 
     try:
         await om.wait(timeout_ns)
@@ -268,7 +275,7 @@ async def rate_tests(dut, in_rate, out_rate):
         print("Test passed! PyTorch matches integrated model.")
 
     except SimTimeoutError:
-        assert 0, f"Timed out. Expected {l_out} handshakes. Got {om.nproduced()}"
+        assert False, f"Timed out. Expected {l_out} handshakes. Got {om.nproduced()}"
 
 @cocotb.test
 async def out_fuzz_test(dut):

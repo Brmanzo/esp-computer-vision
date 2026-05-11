@@ -138,19 +138,37 @@ class ConvLayerModel():
             acc = 0
             for ic in range(self._InChannels):
                 win = windows[ic]
+                # Input Encoding: matching hardware logic for 1-bit BNN and 2-bit Ternary
                 if self._InBits == 1:
                     win_enc = np.where(win == 1, 1, -1)
+                elif self._InBits == 2:
+                    # Ternary mapping: 1 -> 1, 3 (-1) -> -1, else -> 0
+                    win_enc = np.where(win == 1, 1, np.where((win == 3) | (win == -1), -1, 0))
                 else:
                     win_enc = np.vectorize(sign_extend)(win, self._InBits)
-                acc += int((self.k[oc, ic] * win_enc).sum())
+                
+                # Weight Encoding: matching hardware logic for 1-bit BNN and 2-bit Ternary
+                kernel = self.k[oc, ic]
+                if self._weight_width == 1:
+                    k_enc = np.where(kernel == 1, 1, -1)
+                elif self._weight_width == 2:
+                    # Ternary mapping: 1 -> 1, 3 (-1) or -1 -> -1, else -> 0
+                    k_enc = np.where(kernel == 1, 1, np.where((kernel == 3) | (kernel == -1), -1, 0))
+                else:
+                    k_enc = np.vectorize(sign_extend)(kernel, self._weight_width)
+                
+                acc += int((k_enc * win_enc).sum())
 
             # Calculate the sum including bias
             biased_acc = acc + self._biases[oc]
             print(f"MODEL: oc={oc} acc={acc} bias={self._biases[oc]} biased_acc={biased_acc}")
 
             if self._OutBits == 1:
-                # FIX: Use biased_acc here, not acc!
+                # Binary Output Encoding {-1,1} -> {0,1}
                 result[oc] = 1 if biased_acc > 0 else 0
+            elif self._OutBits == 2:
+                # Ternary Output Encoding {-1,0,1} matching hardware output_encoder
+                result[oc] = 1 if biased_acc > 0 else (-1 if biased_acc < 0 else 0)
             else:
                 # MSB Selection / Bit-slicing matching hardware behavior
                 # 1. Hardware performs accumulation in 32 bits (SB_MAC16)

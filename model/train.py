@@ -9,11 +9,12 @@ from pathlib import Path
 from typing import List, Tuple, Callable
 
 from model.config     import ModelConfig
-from model.export     import export_model_to_csv, export_csv_to_sv
+from model.export     import export_model_to_csv
 from model.model      import cnn_model, QuantConv2d
 from model.plot       import plot_training
 from model.preprocess import prepare_data, get_transforms
 from model.globals    import get_hand_gesture_cfg
+from model.export     import export_csv_to_hex
 
 
 def train_model(model: nn.Module, train_loader: DataLoader, test_loader: DataLoader, train_aug: Callable, cfg: ModelConfig, device: str, global_max:float,
@@ -226,7 +227,7 @@ def main():
     # 5. Export Hardware Parameters
     print("\n--- EXPORTING HARDWARE WEIGHTS ---")
     export_model_to_csv(model_path, config=cfg, output_csv=csv_path)
-    export_csv_to_sv(csv_path, sv_path)
+    export_csv_to_hex(csv_path, sv_path, datapath / "roms" / "hex", config=cfg)
 
 if __name__ == "__main__":
     main()

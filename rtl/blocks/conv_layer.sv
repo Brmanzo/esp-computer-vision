@@ -54,7 +54,7 @@ module conv_layer #(
    ,localparam int unsigned WeightIndex = InChannels * KernelArea * WeightBits
    ,parameter logic signed [OutChannels*WeightIndex-1:0] Weights = '0
    ,parameter logic signed [OutChannels*BiasBits-1:0] Biases = '0
-   ,parameter string       FileName = "memory_init_file.hex"
+   ,parameter [8*256-1:0] FileName = ""
 ) (
     input [0:0] clk_i
    ,input [0:0] rst_i

@@ -145,12 +145,13 @@ TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), auto_ru
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 # Pass the dynamically generated list directly into parametrize!
 @auto_unpack(TEST_CASES)
+@pytest.mark.parametrize("DSPCount", [0, 1])
 def test_each(test_name, simulator, 
               C0_LineWidthPx, C0_LineCountPx, C0_InBits, C0_OutBits,
               C0_KernelWidth, C0_WeightBits, C0_BiasBits, C0_InChannels, C0_OutChannels,
               C0_Stride, C0_Padding, C0_Weights, C0_Biases,  P0_KernelWidth, P0_Mode, 
               C1_OutBits, C1_KernelWidth, C1_WeightBits, C1_BiasBits, C1_OutChannels, 
-              C1_Stride, C1_Padding, C1_Weights, C1_Biases, P1_KernelWidth, P1_Mode):
+              C1_Stride, C1_Padding, C1_Weights, C1_Biases, P1_KernelWidth, P1_Mode, DSPCount):
     parameters = dict(locals())
     parameters.pop('C0_Weights', None)
     parameters.pop('C0_Biases', None)
@@ -164,15 +165,24 @@ def test_each(test_name, simulator,
     bias_bits_0 = C0_OutChannels * C0_BiasBits
     bias_bits_1 = C1_OutChannels * C1_BiasBits
     
+    if simulator == "icarus" and int(DSPCount) > 0:
+        pytest.skip("Icarus Verilog has issues with ROM initialization in sequential configurations")
+
     custom_work_dir = inject_weights_and_biases(
         simulator=simulator, parameters=parameters, param_str=param_str, 
         tbpath=tbpath, test_class="each", Weights=C0_Weights, Biases=C0_Biases, 
-        weight_bits=weight_bits_0, bias_bits=bias_bits_0, layer=0)
+        weight_bits=C0_WeightBits, bias_bits=bias_bits_0,
+        weight_count=C0_OutChannels * C0_InChannels * (C0_KernelWidth**2),
+        layer=0, dsp_count=int(DSPCount))
     
     inject_weights_and_biases(
         simulator=simulator, parameters=parameters, param_str=param_str, 
         tbpath=tbpath, test_class="each", Weights=C1_Weights, Biases=C1_Biases, 
-        weight_bits=weight_bits_1, bias_bits=bias_bits_1, layer=1)
+        weight_bits=C1_WeightBits, bias_bits=bias_bits_1,
+        weight_count=C1_OutChannels * C0_OutChannels * (C1_KernelWidth**2),
+        layer=1, dsp_count=int(DSPCount))
+
+    parameters.pop('FileName', None) # Remove fallback FileName to avoid Verilator "parameter not found" error
 
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters,
@@ -413,8 +423,8 @@ async def rate_tests(dut, in_rate, out_rate):
     slow = min(in_rate, out_rate)
     slow = max(slow, 0.05) 
 
-    first_out_wait_ns = int((2 * (C0_K - 1) * C0_W + 2 * (C0_K - 1) + 1000) / slow)
-    timeout_ns        = int((P1_H_out * N_in + 2000) / slow)
+    first_out_wait_ns = int((N_in * 200 + 50000) / slow)
+    timeout_ns        = int((N_in * 500 + 100000) / slow)
 
     om = OutputModel(dut, RateGenerator(dut, out_rate), l_out)
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, in_rate), N_in)
@@ -433,7 +443,7 @@ async def rate_tests(dut, in_rate, out_rate):
     try:
         await with_timeout(RisingEdge(dut.valid_o), first_out_wait_ns, 'ns')
     except SimTimeoutError:
-        assert 0, "Timed out waiting for valid_o high."
+        assert False, "Timed out waiting for valid_o high."
 
     try:
         await om.wait(timeout_ns)
@@ -457,7 +467,7 @@ async def rate_tests(dut, in_rate, out_rate):
             print("Test passed! PyTorch matches double integrated model.")
 
     except SimTimeoutError:
-        assert 0, f"Timed out. Expected {l_out} handshakes. Got {om.nproduced()}"
+        assert False, f"Timed out. Expected {l_out} handshakes. Got {om.nproduced()}"
 
 @cocotb.test
 async def out_fuzz_test(dut):

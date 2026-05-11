@@ -17,7 +17,7 @@ import json
 import os
 from   pathlib import Path
 import pytest
-from   typing import Literal
+from   typing import Literal, Optional
 
 
 import cocotb
@@ -40,6 +40,8 @@ def sim_verbose() -> bool:
     return os.environ.get("VERBOSE", "0").strip() == "1"
 
 def runner(simulator, timescale, tbpath, params, defs=[], testname=None, pymodule=None, jsonpath=None, jsonname="filelist.json", root=None, work_dir=None, sim_build=None, includes=None, toplevel_override=None, extra_sources=None, filelist=None):
+    if jsonname == "filelist.json" and "FILELIST" in os.environ:
+        jsonname = os.path.basename(os.environ["FILELIST"])
     if(root is None):
         root = git.Repo(tbpath, search_parent_directories=True).working_tree_dir
 
@@ -146,6 +148,8 @@ def runner(simulator, timescale, tbpath, params, defs=[], testname=None, pymodul
 
 # Function to build (run) the lint and style checks.
 def lint(simulator, timescale, tbpath, params, defs=[], compile_args=[], pymodule=None, jsonpath=None, jsonname="filelist.json", root=None, filelist=None):
+    if jsonname == "filelist.json" and "FILELIST" in os.environ:
+        jsonname = os.path.basename(os.environ["FILELIST"])
     if(root is None):
         root = git.Repo(tbpath, search_parent_directories=True).working_tree_dir
 
@@ -232,6 +236,8 @@ def get_files_from_filelist(p, n):
         return json.load(filelist)["files"]
 
 def get_sources(r, p, n="filelist.json", jsonpath=None):
+    if n == "filelist.json" and "FILELIST" in os.environ:
+        n = os.path.basename(os.environ["FILELIST"])
     # Priority: explicit jsonpath, then p (testbench path)
     search_dir = jsonpath if jsonpath else p
     sources = get_files_from_filelist(search_dir, n)
@@ -245,6 +251,8 @@ def get_top(p, n="filelist.json"):
     p -- Absolute path to the directory containing json filelist
     n -- Name of the json filelist, defaults to filelist.json
     """
+    if n == "filelist.json" and "FILELIST" in os.environ:
+        n = os.path.basename(os.environ["FILELIST"])
     return get_top_from_filelist(p, n)
 
 def get_top_from_filelist(p, n):
@@ -352,34 +360,50 @@ def inject_raw_param(parameters: dict, param: int, param_name: str, param_bits: 
     # 4. Pass via environment
     os.environ[env_name] = str(param)
 
-def inject_hex_weights(parameters: dict, weights_int: int, weight_count: int, weight_bits: int, param_name: str, work_dir: str):
+def inject_hex_weights(parameters: dict, weights_int: int, oc: int, ic: int, kw: int, weight_bits: int, param_name: str, work_dir: str, dsp_count: int):
     """
-    Slices a large packed integer of weights and writes them to a hex file for $readmemh,
-    while removing the original parameter from the dictionary to avoid CLI overflow.
+    Slices a large packed integer of weights and writes them to hex file for $readmemh,
+    packing multiple weights per line if multiple DSPs are used in parallel.
     """
     # 1. Safely remove from CLI parameters dict
     parameters.pop(param_name, None)
 
-    # 2. Setup file path
+    # 2. Extract dimensions
+    ka = kw**2
+    
+    # 3. Calculate hardware-accurate partitioning (matches RTL localparams)
+    effective_dsps  = min(dsp_count, oc)
+    neurons_per_dsp = (oc // effective_dsps) if effective_dsps > 0 else 0
+    total_terms     = ic * ka
+    
+    rom_depth = total_terms * neurons_per_dsp
+    rom_width_bits = weight_bits * effective_dsps
+    
+    # 4. Setup file path and formatting
     filename = f"injected_{param_name.lower()}.hex"
     hex_path = os.path.join(work_dir, filename)
-    
-    # 3. Slice and write (assuming LSB-first packing like SV logic vectors)
-    hex_width = (weight_bits + 3) // 4
+    hex_width = (rom_width_bits + 3) // 4
     mask = (1 << weight_bits) - 1
     
+    # 5. Pack and write: for each local neuron in workload, for each term, pack all DSPs
     with open(hex_path, "w") as f:
-        for i in range(weight_count):
-            # Extract i-th weight
-            val = (weights_int >> (i * weight_bits)) & mask
-            f.write(f"{val:0{hex_width}x}\n")
+        for local_neuron in range(neurons_per_dsp):
+            for term in range(total_terms):
+                packed_line = 0
+                for dsp_idx in range(effective_dsps):
+                    global_oc = dsp_idx * neurons_per_dsp + local_neuron
+                    if global_oc < oc:
+                        idx = global_oc * total_terms + term
+                        weight = (weights_int >> (idx * weight_bits)) & mask
+                        packed_line |= (weight << (dsp_idx * weight_bits))
+                f.write(f"{packed_line:0{hex_width}x}\n")
             
-    # 4. Return the absolute path so it can be passed to the ROM's FileName parameter
     return os.path.abspath(hex_path)
 
 def inject_weights_and_biases(
     simulator: Literal['verilator', 'icarus'], parameters: dict, param_str: str, tbpath: Path, test_class: str, Weights: int,
-    Biases: int, weight_bits: int, bias_bits: int, weight_count: int, layer: int = 0, dsp_count: int = 0
+    Biases: int, weight_bits: int, bias_bits: int, weight_count: int, layer: int = 0, dsp_count: int = 0,
+    custom_work_dir: Optional[str] = None
 ):
     """
     Helper function to inject both weights and biases.
@@ -390,7 +414,9 @@ def inject_weights_and_biases(
     parameters.pop('simulator', None)
     
     # Write to the run directory where cocotb-test actually executes the simulator
-    custom_work_dir = os.path.join(tbpath, "run", test_class, param_str, simulator)
+    if custom_work_dir is None:
+        custom_work_dir = os.path.join(tbpath, "run", test_class, param_str, simulator)
+    
     os.makedirs(custom_work_dir, exist_ok=True)
     
     if dsp_count == 0:
@@ -399,10 +425,21 @@ def inject_weights_and_biases(
         inject_params(parameters, Weights, f"weights_{layer}", weight_bits * weight_count, custom_work_dir)
     else:
         # Sequential ROM Implementation: Use hex-based injection
-        hex_filename = inject_hex_weights(parameters, Weights, weight_count, weight_bits, f"weights_{layer}", custom_work_dir)
+        # We need individual dimensions for correct DSP-aware packing
+        # Try to find dimensions with layer prefix (e.g. C0_OutChannels) or fallback
+        oc = parameters.get(f"C{layer}_OutChannels", parameters.get("OutChannels", 1))
+        # In double blocks, Layer 1's input channels are Layer 0's output channels
+        ic_key = f"C{layer}_InChannels"
+        prev_oc_key = f"C{layer-1}_OutChannels"
+        ic = parameters.get(ic_key, parameters.get(prev_oc_key, parameters.get("InChannels", 1)))
+        kw = parameters.get(f"C{layer}_KernelWidth", parameters.get("KernelWidth", 1))
+        
+        hex_filename = inject_hex_weights(parameters, Weights, int(oc), int(ic), int(kw), weight_bits, f"weights_{layer}", custom_work_dir, dsp_count)
         # Update the FileName parameter so the RTL can find the hex file
         # Wrap filename in quotes for Verilator/Icarus string parameter passing
-        parameters["FileName"] = f'"{hex_filename}"'
+        parameters[f"FileName_{layer}"] = f'"{hex_filename}"'
+        if layer == 0:
+            parameters["FileName"] = f'"{hex_filename}"' # Fallback for single-layer testbenches
         # Export to environment so the Python test can still access the raw weights for its reference model
         os.environ[f"INJECTED_WEIGHTS_{layer}_INT"] = str(Weights)
         

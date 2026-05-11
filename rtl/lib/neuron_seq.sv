@@ -12,7 +12,7 @@ module neuron_seq #(
   ,parameter int unsigned InChannels = 1
   ,parameter int unsigned OutChannels = 1
 
-  ,parameter  string       FileName   = "memory_init_file.hex"
+  ,parameter              FileName   = ""
   ,parameter logic signed [OutChannels*InChannels*WeightBits-1:0] Weights = '0
   ,parameter logic signed [OutChannels*BiasBits-1:0]    Biases  = '0
 
