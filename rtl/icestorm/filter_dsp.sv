@@ -28,10 +28,10 @@ module filter_dsp #(
   ,input  [0:0] valid_i
   ,output [0:0] ready_o
 
-  ,input logic signed [InChannels*KernelArea*InBits-1:0]     windows_i
-  ,output [TermBits-1:0]                                    term_idx_o
-  ,input logic signed [WeightBits-1:0]                      weight_i
-  ,input logic signed [BiasBits-1:0]                        bias_i
+  ,input logic signed [InChannels*KernelArea*InBits-1:0] windows_i
+  ,output [TermBits-1:0]                                 term_idx_o
+  ,input logic signed [WeightBits-1:0]                   weight_i
+  ,input logic signed [BiasBits-1:0]                     bias_i
 
   ,output [0:0] valid_o
   ,input  [0:0] ready_i
@@ -41,61 +41,54 @@ module filter_dsp #(
   /* ------------------------ Internal Signals ------------------------ */
   wire [0:0] in_fire  = valid_i && ready_o;
   wire [0:0] out_fire = valid_o && ready_i;
-
-  /* -------------------------- Control Logic -------------------------- */
+    /* ---------------------------- Counter Logic ---------------------------- */
   logic [TermBits-1:0] term_count_q;
-  logic [0:0]          busy_d,  busy_q;
-  logic [0:0]          valid_d, valid_q;
-  wire [0:0]           done;
-  
-  assign valid_o = valid_q;
 
+  wire  [0:0] new_term = (term_count_q == '0);
+  wire  [0:0] last_term;
+  logic [0:0] busy;
+
+  /* verilator lint_off PINCONNECTEMPTY */
+  counter_roll #(
+      .CountBits  (TermBits)
+    ,.ResetVal   (0)
+    ,.MaxVal     (TotalTerms - 1)
+    ,.EnableDown (1'b0)
+  ) term_counter_inst (
+      .clk_i      (clk_i)
+    ,.rst_i      (rst_i | in_fire)
+    ,.up_i       (busy)
+    ,.down_i     (1'b0)
+    ,.count_o    (term_count_q)
+    ,.next_o     ()
+    ,.max_o      (last_term)
+  );
+  /* verilator lint_on PINCONNECTEMPTY */
+
+  /* ----------------------------- FSM Logic ----------------------------- */
+  typedef enum logic [1:0] {Idle, Busy, Flush, Done} fsm_e;
+  fsm_e state_q, state_d;
+  assign valid_o = (state_q == Done);
+  assign ready_o = (state_q == Idle);
+
+  // Current State Logic
   always_ff @(posedge clk_i) begin
-    if (rst_i) begin
-      busy_q    <= 1'b0;
-      valid_q   <= 1'b0;
-    end else begin
-      busy_q       <= busy_d;
-      valid_q      <= valid_d;
-    end
+    if(rst_i) state_q <= Idle;
+    else      state_q <= state_d;
   end
 
-    wire [0:0] last_term = (term_count_q == TermBits'(TotalTerms - 1));
-    logic done_d1;
-    always_ff @(posedge clk_i) begin
-        if (rst_i) done_d1 <= 1'b0;
-        else done_d1 <= busy_q && last_term;
-    end
-    assign done = done_d1;
-    
-    // Block new input if we are busy OR if we are holding a result that hasn't been accepted
-    assign ready_o = ~busy_q && (~valid_q || ready_i) && ~(busy_q && last_term);
-
-    counter_roll #(
-       .CountBits  (TermBits)
-      ,.ResetVal   (0)
-      ,.MaxVal     (TotalTerms - 1)
-      ,.EnableDown (1'b0)
-    ) term_counter_inst (
-       .clk_i      (clk_i)
-      ,.rst_i      (rst_i | in_fire)
-      ,.up_i       (busy_q)
-      ,.down_i     (1'b0)
-      ,.count_o    (term_count_q)
-    );
-
-    always_comb begin
-      busy_d  = busy_q;
-      valid_d = valid_q;
-      if (in_fire) begin
-        busy_d  = 1'b1;
-      end else if (busy_q && last_term) begin
-        busy_d  = 1'b0;
-      end else if (done) begin
-        valid_d = 1'b1;
-      end
-      if (out_fire) valid_d = 1'b0;
-    end
+  // Next State Logic
+  always_comb begin
+    state_d = state_q;
+    busy    = (state_q == Busy);
+    case (state_q)
+      Idle:  if (in_fire)   state_d = Busy;
+      Busy:  if (last_term) state_d = Flush;
+      Flush:                state_d = Done; // Wait 1 cycle for pipeline
+      Done:  if (out_fire)  state_d = Idle;
+      default:              state_d = Idle;
+    endcase
+  end
 
   /* ------------------------ Data Sequencing ------------------------ */
   // term_idx follows term_count_q during busy cycles
@@ -103,15 +96,19 @@ module filter_dsp #(
   assign term_idx_o = term_idx;
 
   // Access weights and windows directly without registration
-  logic signed [InBits-1:0]     data_w_r;
-  logic en_r, load_bias_r;
-  logic signed [BiasBits-1:0] bias_r;
-  
+  logic [0:0] en_q;
+  logic [0:0] load_bias_r;
+  logic signed [InBits-1:0]   data_q;
+  logic signed [BiasBits-1:0] bias_q;
+
   always_ff @(posedge clk_i) begin
-      data_w_r <= windows_i[term_idx*InBits +: InBits];
-      en_r <= busy_q;
-      load_bias_r <= (busy_q && (term_count_q == '0));
-      bias_r <= bias_i;
+    // Enable SB_MAC16 when busy, 1 cycle delay to align with ROM
+    en_q   <= busy;
+    // Capture current input off of window
+    data_q <= windows_i[term_idx*InBits +: InBits];
+    // Capture bias and load on first term
+    bias_q      <= bias_i;
+    load_bias_r <= (busy && new_term);
   end
 
   /* ------------------------------- Neuron DSP Unit ------------------------------- */
@@ -126,13 +123,13 @@ module filter_dsp #(
     ,.OutBits    (`SB_MAC16_OUT)
   ) dsp_inst (
      .clk_i       (clk_i)
-      ,.rst_i       (rst_i)
-      ,.en_i        (en_r)
-      ,.load_bias_i (load_bias_r)
-      ,.data_i      (data_w_r)
-      ,.weight_i    (weight_i) // 1-cycle delayed from ROM
-      ,.bias_i      (bias_r)
-      ,.acc_o       (neuron_o)
+    ,.rst_i       (rst_i)
+    ,.en_i        (en_q)
+    ,.load_bias_i (load_bias_r) // Load Bias only on first cycle
+    ,.data_i      (data_q)
+    ,.weight_i    (weight_i) // 1-cycle delayed from ROM
+    ,.bias_i      (bias_q)
+    ,.acc_o       (neuron_o)
     );
     /* -------------------------------- Output Encoding -------------------------------- */
     output_encoder #(

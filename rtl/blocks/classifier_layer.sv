@@ -17,7 +17,11 @@ module classifier_layer #(
   ,parameter logic signed [ClassCount*WeightIndex-1:0] Weights = '0
   ,parameter logic signed [ClassCount*BiasBits-1:0]    Biases  = '0
   ,parameter int unsigned DSPCount  = 0
+`ifdef VERILATOR
+  ,parameter string       FileName = ""
+`else
   ,parameter [8*256-1:0]  FileName = ""
+`endif
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i

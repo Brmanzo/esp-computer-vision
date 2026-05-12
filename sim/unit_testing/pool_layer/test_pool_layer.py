@@ -101,7 +101,6 @@ async def single_test(dut):
     K  = int(dut.KernelWidth.value)
     KA = K * K
     IC = int(dut.InChannels.value)
-    OC = int(dut.OutChannels.value)
     S  = int(dut.Stride.value)
 
     # Number of accepted inputs until first valid output position (x=K-1, y=K-1)
@@ -152,7 +151,7 @@ async def rate_tests(dut, in_rate, out_rate):
     K  = int(dut.KernelWidth.value)
     KA = K * K
     IC = int(dut.InChannels.value)
-    OC = int(dut.OutChannels.value)
+    OC = IC
     S  = int(dut.Stride.value)
     w = int(dut.InBits.value)
     mode = int(dut.PoolMode.value)

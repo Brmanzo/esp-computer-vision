@@ -11,13 +11,26 @@ module neuron_seq #(
   ,parameter int unsigned BiasBits   = 8
   ,parameter int unsigned InChannels = 1
   ,parameter int unsigned OutChannels = 1
-
-  ,parameter              FileName   = ""
+  `ifdef VERILATOR
+    ,parameter string      FileName   = ""
+    ,parameter string      FileName_0 = ""
+  `else
+    ,parameter [8*256-1:0] FileName   = ""
+    ,parameter [8*256-1:0] FileName_0 = ""
+  `endif
   ,parameter logic signed [OutChannels*InChannels*WeightBits-1:0] Weights = '0
-  ,parameter logic signed [OutChannels*BiasBits-1:0]    Biases  = '0
+  ,parameter logic signed [OutChannels*BiasBits-1:0]              Biases  = '0
 
-  ,localparam int unsigned ChannelCountBits = InChannels  > 1 ? $clog2(InChannels)  : 1
-  ,localparam int unsigned ClassCountBits   = OutChannels > 1 ? $clog2(OutChannels) : 1
+  ,localparam int unsigned InChannelCountBits = InChannels  > 1 ? $clog2(InChannels)  : 1
+  ,localparam int unsigned OutChannelCountBits   = OutChannels > 1 ? $clog2(OutChannels) : 1
+    // If DSPCount > OutChannels, we just use OutChannels DSPs.
+  ,localparam int unsigned EffectiveDSPs     = (DSPCount > OutChannels) ? OutChannels : DSPCount
+  ,localparam int unsigned OutChannelsPerDSP = (EffectiveDSPs == 0) ? 0 : ((OutChannels + EffectiveDSPs - 1) / EffectiveDSPs)
+  ,localparam int unsigned DSPBits           = (OutChannelsPerDSP <= 1) ? 1 : $clog2(OutChannelsPerDSP)
+
+  ,localparam int unsigned ROMWidth    = WeightBits * EffectiveDSPs
+  ,localparam int unsigned ROMDepth    = InChannels * OutChannelsPerDSP
+  ,localparam int unsigned ROMAddrBits = (ROMDepth > 1) ? $clog2(ROMDepth) : 1
 )  (
    input [0:0] clk_i
   ,input [0:0] rst_i
@@ -31,104 +44,94 @@ module neuron_seq #(
   ,output logic signed [OutChannels-1:0][OutBits-1:0] data_o
 );
 
-  /* ------------------------------------ Parameters & Constants ------------------------------------ */
-  // If DSPCount > OutChannels, we just use OutChannels DSPs.
-  localparam int unsigned EffectiveDSPs  = (DSPCount > OutChannels) ? OutChannels : DSPCount;
-  localparam int unsigned NeuronsPerDSP  = (EffectiveDSPs == 0) ? 0 : (OutChannels / EffectiveDSPs);
-  localparam int unsigned LocalClassBits = (NeuronsPerDSP <= 1) ? 1 : $clog2(NeuronsPerDSP);
+  /* -------------------------------------- Counter Logic -------------------------------------- */
+  logic [InChannelCountBits-1:0]  in_ch_counter;
+  logic [OutChannelCountBits-1:0] out_ch_counter;
 
-  /* ------------------------------------ Internal Signals ------------------------------------ */
-  logic [0:0] valid_q;
-  logic [ChannelCountBits-1:0] channel_counter;
-  logic [LocalClassBits-1:0]   local_class_counter;
-  
-  wire  [0:0] last_channel      = (channel_counter == ChannelCountBits'(InChannels - 1));
-  wire  [0:0] last_local_class  = (local_class_counter == LocalClassBits'(NeuronsPerDSP - 1));
+  wire  [0:0] last_in_ch;
+  wire  [0:0] last_out_ch;
 
-  logic [0:0] busy;
-  logic signed [InChannels-1:0][InBits-1:0]    data_q;
-  logic signed [OutChannels-1:0][OutBits-1:0] data_out_q;
-
-  logic [0:0] done, done_d1;
-
-  assign valid_o = valid_q;
-  assign data_o  = data_out_q;
-
-  wire  [0:0] in_fire  = valid_i && ready_o;
-  wire  [0:0] out_fire = valid_o && ready_i;
-
-  // We are ready if we aren't busy and aren't holding a result.
-  // We also block during the finish transition cycle.
-  assign ready_o = ~busy & ~valid_q & ~done & ~done_d1;
-
-  /* ------------------------------------ Control Logic ------------------------------------ */
-  always_ff @(posedge clk_i) begin
-    if (rst_i) begin
-      valid_q         <= 1'b0;
-      busy          <= 1'b0;
-      data_q          <=   '0;
-      done        <= 1'b0;
-      done_d1     <= 1'b0;
-    end else begin
-      if (in_fire) begin
-        data_q          <= data_i;
-        busy          <= 1'b1;
-      end else if (busy && last_channel && last_local_class) begin
-        busy          <= 1'b0;
-        done_d1       <= 1'b1;
-      end
-      
-      if (done_d1) begin
-        done_d1     <= 1'b0;
-        done        <= 1'b1;
-      end
-      
-      if (done) begin
-        done        <= 1'b0;
-        valid_q         <= 1'b1;
-      end
-      if (out_fire) valid_q <= 1'b0;
-    end
-  end
-
-  /* ------------------------------------ Counters ------------------------------------ */
   generate
     if (EffectiveDSPs > 0) begin : gen_dsp_counters
+      /* verilator lint_off PINCONNECTEMPTY */
       counter_roll #(
-         .CountBits (ChannelCountBits)
+         .CountBits  (InChannelCountBits)
         ,.ResetVal   (0)
         ,.MaxVal     (InChannels - 1)
         ,.EnableDown (1'b0)
-      ) channel_counter_inst (
+      ) in_ch_counter_inst (
          .clk_i      (clk_i)
         ,.rst_i      (rst_i | in_fire)
         ,.up_i       (busy)
         ,.down_i     (1'b0)
-        ,.count_o    (channel_counter)
+        ,.count_o    (in_ch_counter)
+        ,.next_o     ()
+        ,.max_o      (last_in_ch)
       );
 
       counter_roll #(
-         .CountBits (LocalClassBits)
+         .CountBits  (OutChannelCountBits)
         ,.ResetVal   (0)
-        ,.MaxVal     (NeuronsPerDSP - 1)
+        ,.MaxVal     (OutChannelsPerDSP - 1)
         ,.EnableDown (1'b0)
-      ) class_counter_inst (
+      ) out_ch_counter_inst (
          .clk_i      (clk_i)
         ,.rst_i      (rst_i | in_fire)
-        ,.up_i       (busy && last_channel)
+        ,.up_i       (busy && last_in_ch)
         ,.down_i     (1'b0)
-        ,.count_o    (local_class_counter)
+        ,.count_o    (out_ch_counter)
+        ,.next_o     ()
+        ,.max_o      (last_out_ch)
       );
+      /* verilator lint_on PINCONNECTEMPTY */
     end
   endgenerate
+  /* ------------------------------------ Internal Signals ------------------------------------ */
+  wire [0:0] in_fire  = valid_i && ready_o;
+  wire [0:0] out_fire = valid_o && ready_i;
+
+  logic [0:0] busy;
+
+  logic signed [InChannels-1:0][InBits-1:0]   data_q;
+  logic signed [OutChannels-1:0][OutBits-1:0] neuron_q;
+  assign data_o = neuron_q;
+
+  /* ------------------------------------ Control FSM ------------------------------------ */
+  typedef enum logic [2:0] {Idle, Busy, Flush1, Flush2, Done} fsm_e;
+  fsm_e state_q, state_d;
+
+  assign valid_o = (state_q == Done);
+  assign ready_o = (state_q == Idle);
+
+  // Current state logic
+  always_ff @(posedge clk_i) begin
+    if (rst_i) begin
+      state_q <= Idle;
+      data_q  <= '0;
+    end else begin
+      state_q <= state_d;
+      if (in_fire) data_q <= data_i;
+    end
+  end
+
+  // Next state logic
+  always_comb begin
+    state_d = state_q;
+    busy    = (state_q == Busy);
+    case (state_q)
+      Idle:   if (in_fire) state_d = Busy;
+      Busy:   if (last_in_ch && last_out_ch) state_d = Flush1;
+      Flush1: state_d = Flush2; // Wait for MAC pipeline
+      Flush2: state_d = Done;   // Wait for neuron_q capture
+      Done:   if (out_fire) state_d = Idle;
+      default: state_d = Idle;
+    endcase
+  end
 
   /* ------------------------------------ Weight ROM ------------------------------------ */
-  localparam int unsigned ROMWidth = WeightBits * EffectiveDSPs;
-  localparam int unsigned ROMDepth = InChannels * NeuronsPerDSP;
-  localparam int unsigned ROMAddrBits = (ROMDepth > 1) ? $clog2(ROMDepth) : 1;
 
-  wire [ROMWidth-1:0] rom_weights;
-  wire [ROMAddrBits-1:0] rom_addr = ROMAddrBits'(int'(local_class_counter) * InChannels + int'(channel_counter));
+  wire [ROMWidth-1:0]    rom_weights;
+  wire [ROMAddrBits-1:0] rom_addr = ROMAddrBits'(int'(out_ch_counter) * InChannels + int'(in_ch_counter));
 
   icestorm_rom #(
      .Width    (ROMWidth)
@@ -144,53 +147,61 @@ module neuron_seq #(
     ,.wr_addr_i  ('0)
   );
 
-  /* ------------------------------------ Neural Logic ------------------------------------ */
+  /* ------------------------------------ DSP Capture Logic ------------------------------------ */
   wire signed [EffectiveDSPs-1:0][OutBits-1:0] neuron_results;
 
   always_ff @(posedge clk_i) begin
     if (dsp_valid_q) begin
       for (int i = 0; i < EffectiveDSPs; i++) begin
-        data_out_q[i * NeuronsPerDSP + int'(workload_idx)] <= neuron_results[i];
+        neuron_q[i * OutChannelsPerDSP + int'(workload_idx)] <= neuron_results[i];
       end
     end
   end
 
+  /* --------------------------------- DSP Instantiation --------------------------------- */
   generate
     // Delayed capture signals for synchronous DSP outputs
     logic dsp_valid_d1, dsp_valid_q;
-    logic [LocalClassBits-1:0] workload_idx_d1, workload_idx;
+    logic [OutChannelCountBits-1:0] workload_idx_d1, workload_idx;
 
     always_ff @(posedge clk_i) begin
       if (rst_i) begin
-        dsp_valid_d1 <= 1'b0;
+        dsp_valid_d1    <= 1'b0;
         workload_idx_d1 <= '0;
+
         dsp_valid_q  <= 1'b0;
         workload_idx <= '0;
       end else begin
-        dsp_valid_d1 <= (busy && last_channel);
-        workload_idx_d1 <= local_class_counter;
+        dsp_valid_d1    <= (busy && last_in_ch);
+        workload_idx_d1 <= out_ch_counter;
+
         dsp_valid_q  <= dsp_valid_d1;
         workload_idx <= workload_idx_d1;
       end
     end
 
     for (genvar dsp_idx = 0; dsp_idx < EffectiveDSPs; dsp_idx++) begin : gen_dsps
-      wire [ClassCountBits-1:0] current_class = ClassCountBits'(ClassCountBits'(dsp_idx * NeuronsPerDSP) + ClassCountBits'(local_class_counter));
+      wire [OutChannelCountBits-1:0] current_class = OutChannelCountBits'(OutChannelCountBits'(dsp_idx * OutChannelsPerDSP) + OutChannelCountBits'(out_ch_counter));
 
-      wire first_channel = (channel_counter == '0);
       wire signed [WeightBits-1:0] current_weight = $signed(rom_weights[dsp_idx*WeightBits +: WeightBits]);
       wire signed [BiasBits-1:0]   current_bias   = $signed(Biases[current_class*BiasBits +: BiasBits]);
-      wire signed [OutBits-1:0]    neuron_out;
+      
+      wire signed [OutBits-1:0]        neuron_out;
+      assign neuron_results[dsp_idx] = neuron_out;
 
-      logic en_r;
-      logic load_bias_r;
+      logic [0:0] en_r;
+      logic [0:0] load_bias_r;
+
       logic signed [InBits-1:0] data_r;
       logic signed [BiasBits-1:0] bias_r;
       always_ff @(posedge clk_i) begin
+        // Enable SB_MAC16 when busy, 1 cycle delay to align with ROM
         en_r <= busy;
+        // Capture current input off of input
+        data_r <= data_q[in_ch_counter];
+        // Capture bias and load on first term
         load_bias_r <= first_channel;
-        data_r <= data_q[channel_counter];
-        bias_r <= current_bias;
+        bias_r      <= current_bias;
       end
 
       neuron_dsp #(
@@ -209,7 +220,6 @@ module neuron_seq #(
         ,.acc_o      (neuron_out)
       );
 
-      assign neuron_results[dsp_idx] = neuron_out;
     end
   endgenerate
 

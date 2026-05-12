@@ -13,8 +13,8 @@ def get_hand_gesture_cfg(num_classes: int = 8, img_h: int = 240, img_w: int = 32
     '''Returns the standard hardware-aware ModelConfig for the hand-gesture recognition task.'''
     return ModelConfig(
         input_dimensions = InputDimensions(img_w, img_h),
-        in_channels      = [1, 4, 8, 8], # Input Channels per layer
-        in_bits          = [1, 2, 2, 2], # Input Bits per layer
+        in_channels      = [1, 4, 8, 12], # Input Channels per layer
+        in_bits          = [1, 2, 2, 4], # Input Bits per layer
         kernels          = [[3,2], [3,2], [3,2], [1]], # [conv_kernel, pool_kernel]
         padding          = 1, # int or list
         stride           = 1, # int or list

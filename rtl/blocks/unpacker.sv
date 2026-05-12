@@ -37,10 +37,10 @@ module unpacker #(
   logic [OffsetWidth-1:0] offset;
   
   /* -------------------------- Handshaking Logic -------------------------- */
+  wire  [0:0] last;
   wire  [0:0] elastic_ready;
   wire  [0:0] in_fire  = valid_i && ready_o;
   wire  [0:0] out_fire = unpacking && elastic_ready;
-  wire  [0:0] last     = (counter == max_count);
   wire  [0:0] done     = last && out_fire;
   assign ready_o       = (~unpacking) || done;
 
@@ -66,17 +66,22 @@ module unpacker #(
   end
 
   // Counter to increment unpacking offset
+  /* verilator lint_off PINCONNECTEMPTY */
   counter_roll #(
      .CountBits(CountWidth)
     ,.MaxVal   (MaxCount)
     ,.ResetVal (0)
+    ,.EnableDown (1'b0)
   ) counter_roll_inst (
      .clk_i    (clk_i)
     ,.rst_i    (rst_i)
     ,.up_i     (out_fire)
     ,.down_i   ('0)
     ,.count_o  (counter)
+    ,.next_o   ()
+    ,.max_o    (last)
   );
+  /* verilator lint_on PINCONNECTEMPTY */
   /* verilator lint_off UNUSEDSIGNAL */
   wire [ElasticWidth-1:0] elastic_out;
   assign unpacked_o = elastic_out[UnpackedWidth-1:0];

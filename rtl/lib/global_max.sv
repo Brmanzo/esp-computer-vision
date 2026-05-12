@@ -26,22 +26,24 @@ module global_max #(
   logic [CountWidth-1:0] counter_d, counter_q;
 
   wire  [0:0] first_term = (counter_q == '0);
-  wire  [0:0] last_term = (counter_q == (CountWidth'(TermCount) - CountWidth'(1)));
+  wire  [0:0] last_term;
   
+  /* verilator lint_off PINCONNECTEMPTY */
   counter_roll #(
      .CountBits  (CountWidth)
     ,.ResetVal   (0)
     ,.MaxVal     (TermCount - 1)
     ,.EnableDown (1'b0)
   ) term_counter_inst (
-       .clk_i    (clk_i)
+     .clk_i    (clk_i)
     ,.rst_i      (rst_i)
     ,.up_i       (in_fire)
     ,.down_i     (1'b0)
     ,.count_o    (counter_q)
+    ,.next_o     ()
+    ,.max_o      (last_term)
   );
-
-
+  /* verilator lint_on PINCONNECTEMPTY */
   /* ------------------------ Max Value Logic ------------------------ */
   logic signed [InChannels-1:0][OutBits-1:0] max_q, max_d;
 
@@ -78,26 +80,19 @@ module global_max #(
     end
   endgenerate
 
-  /* ------------------ Elastic Handshaking Logic ------------------ */
+  /* ------------------ Handshaking & Output Logic ------------------ */
   wire  [0:0] in_fire   = valid_i && ready_o;
   wire  [0:0] out_fire  = in_fire && last_term;
 
-  elastic #(
-     .InBits        (InChannels*OutBits)
-    ,.DatapathGate (1)
-    ,.DatapathReset(1)
-  ) elastic_inst (
-     .clk_i  (clk_i)
-    ,.rst_i  (rst_i)
+  logic [0:0] valid_r;
+  always_ff @(posedge clk_i) begin
+     if (rst_i)        valid_r <= 1'b0;
+     else if (ready_o) valid_r <= out_fire;
+  end
 
-    ,.data_i (max_d)
-    ,.valid_i(out_fire)
-    ,.ready_o(ready_o)
-
-    ,.valid_o(valid_o)
-    ,.data_o (data_o)
-    ,.ready_i(ready_i)
-  );
+  assign valid_o = valid_r;
+  assign ready_o = ~valid_r | ready_i;
+  assign data_o  = max_q;
 
 
 endmodule

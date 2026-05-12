@@ -21,8 +21,13 @@ def render_header(BusBits, num_layers=1):
     ]
     
     # Add FileName parameters for each layer to support ROM injection
+    lines.append("`ifdef VERILATOR")
     for i in range(num_layers):
-        lines.append(f"  ,parameter FileName_{i} = \"model/data/roms/hex/layer_{i}_weights.hex\"")
+        lines.append(f"  ,parameter string FileName_{i} = \"model/data/roms/hex/layer_{i}_weights.hex\"")
+    lines.append("`else")
+    for i in range(num_layers):
+        lines.append(f"  ,parameter [8*256-1:0] FileName_{i} = \"model/data/roms/hex/layer_{i}_weights.hex\"")
+    lines.append("`endif")
     
     lines.extend([
         ")  (",

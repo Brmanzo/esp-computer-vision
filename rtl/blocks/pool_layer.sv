@@ -24,13 +24,7 @@ module pool_layer #(
   ,output logic signed [InChannels-1:0][OutBits-1:0] data_o
 );
 
-  localparam int unsigned OutChannels = InChannels;
   localparam int unsigned KernelArea  = KernelWidth * KernelWidth;
-
-  localparam int unsigned TargetRamBits  = (LineWidthPx <= 255) ? 16 : 8;
-  localparam int unsigned KernelSize     = (((KernelWidth - 1) * InBits) > 0) ? ((KernelWidth - 1) * InBits) : 1;
-  localparam int unsigned ChannelsPerRam = ((TargetRamBits / KernelSize) > 0) ? (TargetRamBits / KernelSize) : 1;
-  localparam int unsigned BufferCount    = (InChannels + ChannelsPerRam - 1) / ChannelsPerRam;
 
   localparam int unsigned Stride     = KernelWidth;
   localparam int unsigned StrideBits = (Stride <= 1) ? 1 : $clog2(Stride);
@@ -55,6 +49,7 @@ module pool_layer #(
 
   wire [0:0] valid_x_pos = (x_pos >= (XBits'(KernelWidth - 1)));
   wire [0:0] valid_y_pos = (y_pos >= (YBits'(KernelWidth - 1)));
+  wire [0:0] valid_kernel_pos = valid_x_pos && valid_y_pos;
 
   wire [0:0] last_col = (x_pos == XBits'(LineWidthPx - 1));
   wire [0:0] last_row = (y_pos == YBits'(LineCountPx - 1));
@@ -64,6 +59,7 @@ module pool_layer #(
 
   wire [0:0] valid_x_stride = (Stride <= 1) ? 1'b1 : (x_phase == '0);
   wire [0:0] valid_y_stride = (Stride <= 1) ? 1'b1 : (y_phase == '0);
+  wire [0:0] valid_stride   = valid_x_stride && valid_y_stride;
 
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
@@ -87,8 +83,7 @@ module pool_layer #(
     end
   end
 
-  wire [0:0] valid_kernel_pos = valid_x_pos && valid_y_pos;
-  wire [0:0] produce = valid_kernel_pos & in_fire && valid_x_stride && valid_y_stride;
+  wire [0:0] produce = valid_kernel_pos & in_fire && valid_stride;
 
   /* ------------------------------------ Elastic Handshaking Logic ------------------------------------ */
   logic [0:0] valid_r;
@@ -102,28 +97,46 @@ module pool_layer #(
 
   /* --------------------------------------- Input Channel Logic --------------------------------------- */
   logic signed [InChannels-1:0][KernelWidth-1:0][InBits-1:0] row_buffers;
-  logic signed [InChannels-1:0][KernelWidth-1:1][InBits-1:0] row_buffer_taps;
+
   generate
+    // Duplicate onto head of row buffers
     for (genvar ch = 0; ch < InChannels; ch++) begin : gen_data_input
       assign row_buffers[ch][0] = data_i[ch];
-      assign row_buffers[ch][KernelWidth-1:1] = row_buffer_taps[ch];
+    end
+
+    // If kernel is greater than 1x1, then we buffer the previous rows
+    // For every Input Channel, for every row buffer, vertically partitioned
+    // In a RAM entry. Yosys maps cleanly to Icestorm's 4KB BRAM.
+    if (KernelWidth > 1) begin : gen_delay_ram
+      localparam int unsigned ChannelDelayBits = (KernelWidth - 1) * InBits;
+      logic [InChannels * ChannelDelayBits - 1 : 0] row_buffer_taps;
+      
+      for (genvar ch = 0; ch < InChannels; ch++) begin : gen_data_input_taps
+        for (genvar k = 1; k < KernelWidth; k++) begin : gen_row_taps
+          assign row_buffers[ch][k] = row_buffer_taps[(ch*ChannelDelayBits + (k-1)*InBits) +: InBits];
+        end
+      end
+      
+      /* verilator lint_off PINCONNECTEMPTY */
+      multi_delay_buffer #(
+         .BufferWidth  (InBits)
+        ,.Delay        (LineWidthPx - 1)
+        ,.BufferRows   (KernelWidth - 1)
+        ,.InputChannels(InChannels)
+      ) multi_delay_buffer_inst (
+         .clk_i   (clk_i)
+        ,.rst_i   (rst_i)
+
+        ,.data_i  (data_i)
+        ,.valid_i (in_fire)
+        ,.ready_o ()
+
+        ,.data_o  (row_buffer_taps)
+        ,.valid_o ()
+        ,.ready_i (1'b1)
+      );
     end
   endgenerate
-
-  multi_delay_ram #(
-     .BufferCount    (BufferCount)
-    ,.ChannelsPerRam (ChannelsPerRam)
-    ,.InBits         (InBits)
-    ,.InChannels     (InChannels)
-    ,.KernelWidth    (KernelWidth)
-    ,.LineWidthPx    (LineWidthPx)
-  ) multi_delay_ram_inst (
-     .clk_i   (clk_i)
-    ,.rst_i   (rst_i)
-    ,.in_fire (in_fire)
-    ,.data_i  (data_i)
-    ,.data_o  (row_buffer_taps)
-  );
 
   /* ------------------------------------ Window Generation Logic ------------------------------------ */
   logic signed [InChannels-1:0][KernelArea-1:0][InBits-1:0] windows;
@@ -131,7 +144,7 @@ module pool_layer #(
     for (genvar ch = 0; ch < InChannels; ch++) begin : gen_windows
       window #(
          .KernelWidth(KernelWidth)
-        ,.InBits    (InBits)
+        ,.InBits     (InBits)
       ) win_i (
          .clk_i   (clk_i)
         ,.rst_i   (rst_i)
@@ -142,7 +155,7 @@ module pool_layer #(
       if (PoolMode == 0) begin : gen_max_pool
         max #(
            .KernelWidth(KernelWidth)
-          ,.InBits   (InBits)
+          ,.InBits     (InBits)
         ) max_i (
            .window(windows[ch])
           ,.data_o(data_o[ch])
@@ -150,7 +163,7 @@ module pool_layer #(
       end else begin : gen_avg_pool
         avg #(
            .KernelWidth(KernelWidth)
-          ,.InBits    (InBits)
+          ,.InBits     (InBits)
         ) avg_i (
            .window(windows[ch])
           ,.data_o(data_o[ch])

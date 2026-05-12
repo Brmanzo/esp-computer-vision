@@ -11,7 +11,8 @@ module tb_linear_layer #(
   ,parameter int unsigned InChannels  = 1
   ,parameter int unsigned OutChannels = 1
   ,parameter int unsigned DSPCount    = 0
-  ,parameter string       FileName    = "memory_init_file.hex"
+  ,parameter string       FileName     = "memory_init_file.hex"
+  ,parameter string       FileName_0   = ""
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -39,7 +40,7 @@ linear_layer #(
     ,.DSPCount    (DSPCount)
     ,.Weights     (INJECTED_WEIGHTS_0)
     ,.Biases      (INJECTED_BIASES_0)
-    ,.FileName    (FileName)
+    ,.FileName    ((FileName_0 != "") ? FileName_0 : FileName)
   ) dut (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)

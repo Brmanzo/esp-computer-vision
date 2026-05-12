@@ -32,18 +32,24 @@ module multi_delay_buffer #(
   // Counter rolls through RAM implementing a circular bufer
   logic [AddrWidth-1:0] read_ptr_r;
 
+  /* verilator lint_off PINCONNECTEMPTY */
   counter_roll #(
-     .CountBits(AddrWidth)
-    ,.ResetVal (0)
-    ,.MaxVal   (Delay-1)
+     .CountBits  (AddrWidth)
+    ,.ResetVal   (0)
+    ,.MaxVal     (Delay-1)
     ,.EnableDown (1'b0)
   ) read_counter_inst (
-     .clk_i    (clk_i)
-    ,.rst_i    (rst_i)
-    ,.up_i     (in_fire)
-    ,.down_i   (1'b0)
-    ,.count_o  (read_ptr_r)
+     .clk_i (clk_i)
+    ,.rst_i (rst_i)
+
+    ,.up_i   (in_fire)
+    ,.down_i (1'b0)
+
+    ,.count_o    (read_ptr_r)
+    ,.next_o     ()
+    ,.max_o      ()
   );
+  /* verilator lint_on PINCONNECTEMPTY */
 
   /* ------------------------------------- Shift Register Logic ------------------------------------- */
   // Unpacked arrays representing the current and next states of each channel's shift register

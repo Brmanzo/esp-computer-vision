@@ -54,25 +54,7 @@ module filter #(
     end
   end
 
-  /* -------------------------------- Elastic Pipeline Stage -------------------------------- */
-  logic signed [AccBits-1:0] sum_pre_elastic_q;
-  wire [0:0] elastic_0_valid, elastic_1_ready;
-  elastic #(
-     .InBits       (AccBits)
-    ,.DatapathGate (1)
-    ,.DatapathReset(1)
-  ) elastic_inst (
-     .clk_i  (clk_i)
-    ,.rst_i  (rst_i)
 
-    ,.valid_i(valid_i)
-    ,.ready_o(ready_o)
-    ,.data_i (sum_pre_elastic_d)
-
-    ,.valid_o(elastic_0_valid)
-    ,.ready_i(elastic_1_ready)
-    ,.data_o (sum_pre_elastic_q)
-  );
 
   /* ----------------------------- Filter Output Summation Logic ----------------------------- */
   logic signed [AccBits-1:0] biased_sum_d;
@@ -80,7 +62,7 @@ module filter #(
   logic signed [OutBits-1:0] data_d, data_q;
   assign data_o = data_q;
 
-  assign biased_sum_d = sum_pre_elastic_q + AccBits'($signed(Bias));
+  assign biased_sum_d = sum_pre_elastic_d + AccBits'($signed(Bias));
 
   output_encoder #(
      .InBits  (AccBits)
@@ -98,8 +80,8 @@ module filter #(
      .clk_i  (clk_i)
     ,.rst_i  (rst_i)
 
-    ,.valid_i(elastic_0_valid) // Comes from the first elastic stage
-    ,.ready_o(elastic_1_ready) // Backpressures the first elastic stage
+    ,.valid_i(valid_i) 
+    ,.ready_o(ready_o) 
     ,.data_i (data_d)
 
     ,.valid_o(valid_o) // Top level valid_o

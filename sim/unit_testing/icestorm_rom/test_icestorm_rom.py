@@ -109,8 +109,10 @@ async def read_all_test(dut):
     # Verify All
     for addr in range(depth):
         rd_addr_i.value = addr
-        await Timer(Decimal(1), units='ps') # ROM is async read
+        await RisingEdge(clk_i)
+        await Timer(Decimal(1), units='ps') # wait for Q to settle
         assert rd_data_o.value == mem_model[addr], f"Mismatch at addr {addr}: expected {mem_model[addr]}, got {rd_data_o.value}"
+        await FallingEdge(clk_i)
 
 @cocotb.test
 async def single_test(dut):
@@ -130,6 +132,7 @@ async def single_test(dut):
     dut.wr_valid_i.value = 0
 
     dut.rd_addr_i.value = addr
+    await RisingEdge(dut.clk_i)
     await Timer(Decimal(1), units='ps')
     assert dut.rd_data_o.value == val
 
@@ -151,6 +154,7 @@ async def write_limit_test(dut):
         await FallingEdge(dut.clk_i)
         dut.wr_valid_i.value = 0
         dut.rd_addr_i.value = addr
+        await RisingEdge(dut.clk_i)
         await Timer(Decimal(1), units='ps')
         assert dut.rd_data_o.value == val
 
@@ -174,6 +178,7 @@ async def write_and_reset(dut):
     
     # Read and check
     dut.rd_addr_i.value = addr
+    await RisingEdge(dut.clk_i)
     await Timer(Decimal(1), units='ps')
     assert dut.rd_data_o.value == val
 
@@ -181,6 +186,8 @@ async def write_and_reset(dut):
     await reset_sequence(dut.clk_i, dut.rst_i, 5)
     
     # Read again - memory should be preserved!
+    await FallingEdge(dut.clk_i)
     dut.rd_addr_i.value = addr
+    await RisingEdge(dut.clk_i)
     await Timer(Decimal(1), units='ps')
     assert dut.rd_data_o.value == val

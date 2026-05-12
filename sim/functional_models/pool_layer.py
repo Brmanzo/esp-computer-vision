@@ -37,7 +37,7 @@ class PoolLayerModel():
             self._InBits       = int(dut.InBits.value)
             self._OutBits      = int(dut.OutBits.value)
             self._InChannels   = int(dut.InChannels.value)
-            self._OutChannels  = int(dut.OutChannels.value)
+            self._OutChannels  = int(dut.InChannels.value)
             self._Stride       = int(dut.Stride.value)
             self._PoolMode     = int(dut.PoolMode.value)
         else:

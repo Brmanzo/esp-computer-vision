@@ -16,7 +16,8 @@ module tb_single_block #(
   ,parameter int unsigned C_Padding     = 1
   ,parameter int unsigned P_Mode        = 0 // 0 for max pooling, 1 for average pooling
   ,parameter int unsigned DSPCount      = 0
-  ,parameter [8*256-1:0]  FileName      = ""
+  ,parameter string       FileName      = ""
+  ,parameter string       FileName_0    = ""
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -64,7 +65,7 @@ module tb_single_block #(
     ,.DSPCount    (DSPCount)
     ,.Weights     (INJECTED_WEIGHTS_0)
     ,.Biases      (INJECTED_BIASES_0)
-    ,.FileName    (FileName)
+    ,.FileName    ((FileName_0 != "") ? FileName_0 : FileName)
   ) conv_layer_inst_0 (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)

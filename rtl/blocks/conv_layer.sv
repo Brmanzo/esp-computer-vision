@@ -35,11 +35,6 @@ module conv_layer #(
    ,parameter  int unsigned OutChannels = 1
    ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
 
-   ,localparam int unsigned TargetRamBits = ((LineWidthPx - 1) <= 256) ? 16 : 8
-   ,localparam int unsigned KernelSize     = (((KernelWidth - 1) * InBits) > 0) ? ((KernelWidth - 1) * InBits) : 1
-   ,localparam int unsigned ChannelsPerRam = ((TargetRamBits / KernelSize) > 0) ? (TargetRamBits / KernelSize) : 1
-   ,localparam int unsigned BufferCount = (InChannels + ChannelsPerRam - 1) / ChannelsPerRam
-
    ,parameter  int unsigned Stride     = 1
    ,localparam int unsigned StrideBits = (Stride <= 1) ? 1 : $clog2(Stride)
 
@@ -54,18 +49,23 @@ module conv_layer #(
    ,localparam int unsigned WeightIndex = InChannels * KernelArea * WeightBits
    ,parameter logic signed [OutChannels*WeightIndex-1:0] Weights = '0
    ,parameter logic signed [OutChannels*BiasBits-1:0] Biases = '0
+`ifdef VERILATOR
+   ,parameter string FileName = ""
+   ,parameter string FileName_0 = ""
+`else
    ,parameter [8*256-1:0] FileName = ""
+   ,parameter [8*256-1:0] FileName_0 = ""
+`endif
 ) (
-    input [0:0] clk_i
-   ,input [0:0] rst_i
+    input  [0:0] clk_i
+   ,input  [0:0] rst_i
 
-   ,input [0:0] valid_i
+   ,input  [0:0] valid_i
    ,output [0:0] ready_o
-   ,input logic signed [InChannels-1:0][InBits-1:0] data_i
+   ,input  logic signed [InChannels-1:0][InBits-1:0] data_i
 
    ,output [0:0] valid_o
    ,input  [0:0] ready_i
-
    ,output logic signed [OutChannels-1:0][OutBits-1:0] data_o
 );
 
@@ -74,16 +74,18 @@ module conv_layer #(
   /* ---------------------------------------- Kernel Validation ---------------------------------------- */
   logic [XBits-1:0] x_pos;
   logic [YBits-1:0] y_pos;
-  wire [0:0] valid_x_pos = (x_pos >= (XBits'(KernelWidth - 1)));
-  wire [0:0] valid_y_pos = (y_pos >= (YBits'(KernelWidth - 1)));
-  wire [0:0] valid_kernel_pos = valid_x_pos && valid_y_pos;
-  wire [0:0] last_col = (x_pos == XBits'((LineWidthPx - 1) + 2 * Padding));
-  wire [0:0] last_row = (y_pos == YBits'((LineCountPx - 1) + 2 * Padding));
+
+  wire  [0:0] valid_x_pos = (x_pos >= (XBits'(KernelWidth - 1)));
+  wire  [0:0] valid_y_pos = (y_pos >= (YBits'(KernelWidth - 1)));
+  wire  [0:0] valid_kernel_pos = valid_x_pos && valid_y_pos;
+
+  wire  [0:0] last_col    = (x_pos == XBits'((LineWidthPx - 1) + 2 * Padding));
+  wire  [0:0] last_row    = (y_pos == YBits'((LineCountPx - 1) + 2 * Padding));
 
   /* ------------------------------------------ Stride Logic ------------------------------------------ */
   logic [StrideBits-1:0] x_phase;
   logic [StrideBits-1:0] y_phase;
-  wire [0:0] valid_stride = ((Stride <= 1) ? 1'b1 : (x_phase == '0)) && ((Stride <= 1) ? 1'b1 : (y_phase == '0));
+  wire  [0:0] valid_stride = ((Stride <= 1) ? 1'b1 : (x_phase == '0)) && ((Stride <= 1) ? 1'b1 : (y_phase == '0));
 
   /* ----------------------------------------- Padding Logic ----------------------------------------- */
   /* verilator lint_off UNSIGNED */
@@ -100,17 +102,22 @@ module conv_layer #(
     if (rst_i) begin
       x_pos <= '0; y_pos <= '0; x_phase <= '0; y_phase <= '0;
     end else if (in_fire) begin
+      // If last column, reset to next row of first column
       if (last_col) begin
         x_pos <= '0;
         y_pos <= (last_row) ? '0 : (y_pos + 1);
         x_phase <= '0;
+        // If we're striding this row, emit a zero
         if (valid_y_pos) begin
            if (Stride > 1 && y_phase == StrideBits'(Stride - 1)) y_phase <= '0;
            else if (Stride > 1) y_phase <= y_phase + StrideBits'(1);
         end
+        // If last pixel, also reset to first row
         if (last_row) y_phase <= '0;
+      // Otherwise, increment column by 1
       end else begin
         x_pos <= x_pos + 1;
+        // If we're striding, emit a zero
         if (valid_x_pos) begin
            if (Stride > 1 && x_phase == StrideBits'(Stride - 1)) x_phase <= '0;
            else if (Stride > 1) x_phase <= x_phase + StrideBits'(1);
@@ -120,12 +127,12 @@ module conv_layer #(
   end
 
   /* ------------------------------------ Elastic Handshaking Logic ------------------------------------ */
-  logic [0:0] input_valid_r;
+  logic [0:0] valid_q;
   wire  [0:0] produce = in_fire && valid_kernel_pos && valid_stride;
-
+  
   always_ff @(posedge clk_i) begin
-    if (rst_i) input_valid_r <= 1'b0;
-    else if (elastic_ready) input_valid_r <= produce;
+    if (rst_i) valid_q <= 1'b0;
+    else if (elastic_ready) valid_q <= produce;
   end
 
   logic [InChannels-1:0][KernelWidth-1:0][InBits-1:0] row_buffers;
@@ -133,10 +140,15 @@ module conv_layer #(
 
   generate
     for (genvar ch = 0; ch < InChannels; ch++) begin : gen_data_input
+      // If padding this current cycle, insert a zero to buffer, otherwise connect to data_i
       assign padded_data_i[ch] = pad_cycle ? '0 : $signed(data_i[ch]);
+      // Duplicate onto head of row buffers
       assign row_buffers[ch][0] = padded_data_i[ch];
     end
 
+    // If kernel is greater than 1x1, then we buffer the previous rows
+    // For every Input Channel, for every row buffer, vertically partitioned
+    // In a RAM entry. Yosys maps cleanly to Icestorm's 4KB BRAM.
     if (KernelWidth > 1) begin : gen_delay_ram
       localparam int unsigned ChannelDelayBits = (KernelWidth - 1) * InBits;
       logic [InChannels * ChannelDelayBits - 1 : 0] row_buffer_taps;
@@ -145,19 +157,23 @@ module conv_layer #(
           assign row_buffers[ch][k] = row_buffer_taps[(ch*ChannelDelayBits + (k-1)*InBits) +: InBits];
         end
       end
-      multi_delay_ram #(
-           .BufferCount   (BufferCount)
-          ,.ChannelsPerRam(ChannelsPerRam)
-          ,.InBits        (InBits)
-          ,.InChannels    (InChannels)
-          ,.KernelWidth   (KernelWidth)
-          ,.LineWidthPx   (PaddedWidth)
-      ) multi_delay_ram_inst (
-           .clk_i  (clk_i)
-          ,.rst_i  (rst_i)
-          ,.in_fire(in_fire)
-          ,.data_i (padded_data_i)
-          ,.data_o (row_buffer_taps)
+      /* verilator lint_off PINCONNECTEMPTY */
+      multi_delay_buffer #(
+         .BufferWidth  (InBits)
+        ,.Delay        (PaddedWidth - 1)
+        ,.BufferRows   (KernelWidth - 1)
+        ,.InputChannels(InChannels)
+      ) multi_delay_buffer_inst (
+         .clk_i   (clk_i)
+        ,.rst_i   (rst_i)
+
+        ,.data_i  (padded_data_i)
+        ,.valid_i (in_fire)
+        ,.ready_o ()
+
+        ,.data_o  (row_buffer_taps)
+        ,.valid_o ()
+        ,.ready_i (1'b1)
       );
     end
   endgenerate
@@ -170,32 +186,21 @@ module conv_layer #(
   generate
     for (genvar ch = 0; ch < InChannels; ch++) begin : gen_windows
       window #(
-           .KernelWidth(KernelWidth)
-          ,.InBits     (InBits)
+         .KernelWidth(KernelWidth)
+        ,.InBits     (InBits)
       ) window_inst (
-           .clk_i         (clk_i)
-          ,.rst_i         (rst_i)
-          ,.in_fire_i     (in_fire)
-          ,.row_buffers_i (row_buffers[ch])
-          ,.window_o      (windows_d[ch*KernelArea*InBits +: KernelArea*InBits])
+         .clk_i         (clk_i)
+        ,.rst_i         (rst_i)
+        ,.in_fire_i     (in_fire)
+        ,.row_buffers_i (row_buffers[ch])
+        ,.window_o      (windows_d[ch*KernelArea*InBits +: KernelArea*InBits])
       );
     end
   endgenerate
 
-  elastic #(
-       .InBits       (InChannels * KernelArea * InBits)
-      ,.DatapathGate (1)
-      ,.DatapathReset(1)
-  ) elastic_inst (
-       .clk_i  (clk_i)
-      ,.rst_i  (rst_i)
-      ,.valid_i(input_valid_r)
-      ,.ready_o(elastic_ready)
-      ,.data_i (windows_d)
-      ,.valid_o(window_valid)
-      ,.ready_i(filter_ready_combined)
-      ,.data_o (windows_q)
-  );
+  assign window_valid = valid_q;
+  assign elastic_ready = filter_ready_combined;
+  assign windows_q = windows_d;
 
   /* ------------------------------------ Filter Logic ------------------------------------ */
   generate
@@ -210,7 +215,6 @@ module conv_layer #(
         ,.AccBits     (AccBits)
         ,.InChannels  (InChannels)
         ,.OutChannels (OutChannels)
-        ,.Weights     (Weights)
         ,.Biases      (Biases)
         ,.FileName    (FileName)
       ) filter_seq_inst (

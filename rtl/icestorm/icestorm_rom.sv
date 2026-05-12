@@ -10,7 +10,7 @@ module icestorm_rom #(
   ,parameter  int unsigned Depth     = 8
   ,localparam int unsigned DepthBits = (Depth <= 1) ? 1 : $clog2(Depth)
   ,parameter  int unsigned Init      = 1
-  ,parameter  [8*256-1:0]  FileName  = ""
+  ,parameter  string       FileName  = ""
 )  (
    input [0:0] clk_i
   ,input [0:0] rst_i
@@ -32,7 +32,7 @@ module icestorm_rom #(
       // Display depth and width (You will need to match these in your init file)
       $display("%m: Depth is %d, Width is %d, FileName is '%s'", Depth, Width, FileName);
    `endif
-      if(Init != 0 && FileName != 0) begin // if Init is 1 and FileName provided, use readmemh.
+      if(Init != 0 && FileName != "") begin // if Init is 1 and FileName provided, use readmemh.
          $readmemh(FileName, rom, 0, Depth-1);
       end
    `ifndef SYNTHESIS
@@ -52,6 +52,4 @@ module icestorm_rom #(
          rom[wr_addr_i] <= wr_data_i;
       end
    end
-
-
 endmodule

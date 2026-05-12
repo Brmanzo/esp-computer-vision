@@ -11,14 +11,18 @@ module counter_roll #(
   input [0:0] clk_i
  ,input [0:0] rst_i
 
- ,input [0:0]       up_i
- ,input [0:0]       down_i
+ ,input [0:0] up_i
+ ,input [0:0] down_i
 
  ,output [CountBits-1:0] count_o
+ ,output [CountBits-1:0] next_o
+ ,output [0:0]           max_o
 );
 
  logic [CountBits-1:0] count_q, count_d;
  assign count_o      = count_q;
+ assign next_o       = count_d;
+ assign max_o        = (count_q == CountBits'(MaxVal));
 
  always_ff @(posedge clk_i) begin
    count_q <= count_d;

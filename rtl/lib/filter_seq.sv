@@ -15,11 +15,26 @@ module filter_seq #(
   ,parameter int unsigned AccBits     = 32
 
   ,localparam int unsigned KernelArea = KernelWidth * KernelWidth
-  ,parameter [8*256-1:0]   FileName   = ""
-  ,parameter logic signed [OutChannels*InChannels*KernelArea*WeightBits-1:0] Weights = '0
-  ,parameter logic signed [OutChannels*BiasBits-1:0]    Biases  = '0
-
-  ,localparam int unsigned ClassCountBits = (OutChannels > 1) ? $clog2(OutChannels) : 1
+  `ifdef VERILATOR
+    ,parameter string   FileName   = ""
+    ,parameter string   FileName_0 = ""
+  `else
+    ,parameter [8*256-1:0] FileName = ""
+    ,parameter [8*256-1:0] FileName_0 = ""
+  `endif
+  // Conditional loading of Weights from ROM or parameter
+  ,parameter logic signed [OutChannels*BiasBits-1:0]                         Biases  = '0
+  ,localparam int unsigned ChannelCountBits = (OutChannels > 1) ? $clog2(OutChannels) : 1
+  // DSP Indexing 
+  ,localparam int unsigned EffectiveDSPs     = (DSPCount > OutChannels) ? OutChannels : DSPCount
+  ,localparam int unsigned OutChannelsPerDSP = (EffectiveDSPs == 0) ? 0 : ((OutChannels + EffectiveDSPs - 1) / EffectiveDSPs)
+  ,localparam int unsigned DSPBits           = (OutChannelsPerDSP <= 1) ? 1 : $clog2(OutChannelsPerDSP)
+  // ROM Dimensioning
+  ,localparam int unsigned ROMWidth    = WeightBits * EffectiveDSPs
+  ,localparam int unsigned TotalTerms  = InChannels * KernelArea
+  ,localparam int unsigned TermBits    = (TotalTerms > 1) ? $clog2(TotalTerms) : 1
+  ,localparam int unsigned ROMDepth    = TotalTerms * OutChannelsPerDSP
+  ,localparam int unsigned ROMAddrBits = (ROMDepth > 1) ? $clog2(ROMDepth) : 1
 )  (
    input [0:0] clk_i
   ,input [0:0] rst_i
@@ -33,74 +48,82 @@ module filter_seq #(
   ,output logic signed [OutChannels-1:0][OutBits-1:0] data_o
 );
 
-  /* ------------------------------------ Parameters & Constants ------------------------------------ */
-  localparam int unsigned EffectiveDSPs  = (DSPCount > OutChannels) ? OutChannels : DSPCount;
-  localparam int unsigned NeuronsPerDSP  = (EffectiveDSPs == 0) ? 0 : ((OutChannels + EffectiveDSPs - 1) / EffectiveDSPs);
-  localparam int unsigned LocalClassBits = (NeuronsPerDSP <= 1) ? 1 : $clog2(NeuronsPerDSP);
-
   /* ------------------------------------ Internal Signals ------------------------------------ */
-  logic [0:0] valid_q;
-  logic [LocalClassBits-1:0] local_class_counter;
-  
-  wire  [0:0] last_local_class = (local_class_counter == LocalClassBits'(NeuronsPerDSP - 1));
-
-  logic [0:0] busy;
-  logic signed [InChannels*KernelArea*InBits-1:0] data_q;
-  logic [0:0] done;
-
-  assign valid_o = valid_q;
-
   wire [0:0] in_fire  = valid_i && ready_o;
   wire [0:0] out_fire = valid_o && ready_i;
 
-  assign ready_o = ~busy & ~valid_q & ~done;
+  // DSPs advance in parallel, sample DSP_0 to determine if valid output
+  wire  [EffectiveDSPs-1:0] dsp_done;
+  logic [0:0] busy;
+  wire  [0:0] dsps_valid = (busy && dsp_done[0]);
+  /* ------------------------------------ Counter Logic ------------------------------------ */
+  logic [DSPBits-1:0] channel_count_q;
+  wire  [0:0]         out_channel_done;
 
-  /* ------------------------------------ Control Logic ------------------------------------ */
-  wire [EffectiveDSPs-1:0] dsp_done;
+  wire [DSPBits-1:0] channel_count_d;
 
+  // Tracks completion of outchannel workload on DSPs
+  /* verilator lint_off PINCONNECTEMPTY */
+  counter_roll #(
+     .CountBits  (DSPBits)
+    ,.ResetVal   (0)
+    ,.MaxVal     (OutChannelsPerDSP - 1)
+    ,.EnableDown (1'b0)
+  ) out_channel_counter_inst (
+     .clk_i      (clk_i)
+    ,.rst_i      (rst_i | in_fire)
+    ,.up_i       (dsps_valid)
+    ,.down_i     (1'b0)
+    ,.count_o    (channel_count_q)
+    ,.next_o     (channel_count_d)
+    ,.max_o      (out_channel_done)
+  );
+  /* verilator lint_on PINCONNECTEMPTY */
+
+  /* ------------------------------------ Control FSM ------------------------------------ */
+  typedef enum logic [1:0] {Idle, Busy, Done} fsm_e;
+  fsm_e state_q, state_d;
+
+  // Capture filter input on in-fire
+  logic signed [InChannels*KernelArea*InBits-1:0] windows_q;
+  
+  // Valid Data when Done
+  assign valid_o = (state_q == Done);
+  // Ready to consume when Idle
+  assign ready_o = (state_q == Idle);
+
+  // Current state logic
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
-      valid_q   <= 1'b0;
-      busy      <= 1'b0;
-      data_q    <= '0;
-      done      <= 1'b0;
-      local_class_counter <= '0;
+      state_q   <= Idle;
+      windows_q <= '0;
     end else begin
-      if (in_fire) begin
-        data_q <= windows_i;
-        busy   <= 1'b1;
-        local_class_counter <= '0;
-      end else if (busy && dsp_done[0]) begin
-        if (last_local_class) begin
-          busy <= 1'b0;
-          done <= 1'b1;
-        end else begin
-          local_class_counter <= local_class_counter + 1;
-        end
-      end
-
-      if (done) begin
-        done    <= 1'b0;
-        valid_q <= 1'b1;
-      end
-
-      if (out_fire) valid_q <= 1'b0;
+      state_q   <= state_d;
+      // Register window input for DSP
+      if (in_fire) windows_q <= windows_i;
     end
   end
 
-  /* ------------------------------------ Weight ROM ------------------------------------ */
-  localparam int unsigned ROMWidth    = WeightBits * EffectiveDSPs;
-  localparam int unsigned TotalTerms  = InChannels * KernelArea;
-  localparam int unsigned ROMDepth    = TotalTerms * NeuronsPerDSP;
-  localparam int unsigned ROMAddrBits = (ROMDepth > 1) ? $clog2(ROMDepth) : 1;
+  // Next state logic
+  always_comb begin
+    state_d = state_q;
+    busy    = (state_q == Busy);
+    case (state_q)
+      Idle: if (in_fire)  state_d = Busy;
+      Busy: if (dsp_done[0] && out_channel_done) state_d = Done;
+      Done: if (out_fire) state_d = Idle;
+      default: state_d = Idle;
+    endcase
+  end
 
-  wire [ROMWidth-1:0] rom_weights;
-  wire [ROMAddrBits-1:0] rom_addr; // Driven by DSP term_idx and local_class_counter
+  /* ------------------------------------- ROM Dimensioning ------------------------------------- */
+  wire [ROMWidth-1:0]    rom_weights;
+  wire [ROMAddrBits-1:0] rom_addr; // Driven by DSP term_idx and channel_count_q
 
   icestorm_rom #(
      .Width    (ROMWidth)
     ,.Depth    (ROMDepth)
-    ,.FileName (FileName)
+    ,.FileName ((FileName_0 != "") ? FileName_0 : FileName)
   ) weight_rom_inst (
      .clk_i      (clk_i)
     ,.rst_i      (rst_i)
@@ -111,54 +134,46 @@ module filter_seq #(
     ,.wr_addr_i  ('0)
   );
 
-  /* ------------------------------------ Neural Logic ------------------------------------ */
-  logic signed [OutChannels-1:0][OutBits-1:0] data_out_reg;
-  wire signed [EffectiveDSPs-1:0][OutBits-1:0] filter_results;
+  /* ------------------------------------ DSP Capture Logic ------------------------------------ */
+  logic signed [OutChannels-1:0][OutBits-1:0] filter_o;
+  assign data_o = filter_o;
+  
+  wire signed  [EffectiveDSPs-1:0][OutBits-1:0] dsp_o;
 
+  // Pack DSP outputs onto filter output
   always_ff @(posedge clk_i) begin
-    if (busy && dsp_done[0]) begin
-      for (int i = 0; i < EffectiveDSPs; i++) begin
-        if (i * NeuronsPerDSP + int'(local_class_counter) < int'(OutChannels)) begin
-          data_out_reg[i * NeuronsPerDSP + int'(local_class_counter)] <= filter_results[i];
+    if (dsps_valid) begin
+      for (int dsp = 0; dsp < EffectiveDSPs; dsp++) begin
+        if (dsp * OutChannelsPerDSP + int'(channel_count_q) < int'(OutChannels)) begin
+          filter_o[dsp * OutChannelsPerDSP + int'(channel_count_q)] <= dsp_o[dsp];
         end
       end
     end
   end
 
-  assign data_o = data_out_reg;
-
-  localparam int unsigned TermBits    = (TotalTerms > 1) ? $clog2(TotalTerms) : 1;
-
+  /* ------------------------------------ DSP Instantiation ------------------------------------ */
   generate
-    // Capture signal for results
-    wire dsp_valid_w = (busy && dsp_done[0]);
+    // All DSPs advance in parallel sharing the same counter
+    assign rom_addr = ROMAddrBits'(int'(channel_count_d) * TotalTerms + int'(gen_dsps[0].next_dsp_term_idx));
 
-    // Combinatorial class selection logic to avoid off-by-one during in_fire
-    wire [LocalClassBits-1:0] next_class_counter = in_fire ? '0 : 
-                                                   (busy && dsp_done[0] && !last_local_class) ? (local_class_counter + 1) : 
-                                                   local_class_counter;
-
-    // All DSPs share the same term index and class counter
-    assign rom_addr = ROMAddrBits'(int'(next_class_counter) * TotalTerms + int'(gen_dsps[0].next_dsp_term_idx));
-
-    for (genvar dsp_idx = 0; dsp_idx < EffectiveDSPs; dsp_idx++) begin : gen_dsps
-      wire [ClassCountBits-1:0] next_class    = ClassCountBits'(ClassCountBits'(dsp_idx * NeuronsPerDSP) + next_class_counter);
-
-      wire [TermBits-1:0]          dsp_term_idx;
+    for (genvar dsp = 0; dsp < EffectiveDSPs; dsp++) begin : gen_dsps
+      wire [ChannelCountBits-1:0] next_class   = ChannelCountBits'(ChannelCountBits'(dsp * OutChannelsPerDSP) + channel_count_d);
+      wire [TermBits-1:0]         dsp_term_idx;
       
       // We start class 0 on in_fire, subsequent classes on dsp_done of previous class
       logic [0:0] dsp_start_pulse;
-      logic [0:0] dummy_ready_o;
       always_ff @(posedge clk_i) begin
         if (rst_i) dsp_start_pulse <= 1'b0;
-        else       dsp_start_pulse <= (busy && dsp_done[dsp_idx] && !last_local_class);
+        else       dsp_start_pulse <= (busy && dsp_done[dsp] && !out_channel_done);
       end
 
       wire [TermBits-1:0]          next_dsp_term_idx = dsp_term_idx;
 
-      wire signed [WeightBits-1:0] dsp_weight = $signed(rom_weights[dsp_idx*WeightBits +: WeightBits]);
+      // Index weight from ROM, and bias off of parameter
+      wire signed [WeightBits-1:0] dsp_weight = $signed(rom_weights[dsp*WeightBits +: WeightBits]);
       wire signed [BiasBits-1:0]   dsp_bias   = Biases[next_class*BiasBits +: BiasBits];
 
+      /* verilator lint_off PINCONNECTEMPTY */
       filter_dsp #(
          .InBits      (InBits)
         ,.OutBits     (OutBits)
@@ -167,20 +182,23 @@ module filter_seq #(
         ,.BiasBits    (BiasBits)
         ,.AccBits     (AccBits)
         ,.InChannels  (InChannels)
-        ,.DSPIdx      (dsp_idx)
+        ,.DSPIdx      (dsp)
       ) dsp_inst (
-         .clk_i    (clk_i)
-        ,.rst_i    (rst_i)
-        ,.valid_i  (in_fire | dsp_start_pulse)
-        ,.ready_o  (dummy_ready_o)
-        ,.windows_i(in_fire ? windows_i : data_q)
-        ,.term_idx_o(dsp_term_idx)
-        ,.weight_i (dsp_weight)
-        ,.bias_i   (dsp_bias)
-        ,.ready_i  (1'b1) // Sequential capture, always ready for result
-        ,.valid_o  (dsp_done[dsp_idx])
-        ,.data_o   (filter_results[dsp_idx])
+         .clk_i (clk_i)
+        ,.rst_i (rst_i)
+
+        ,.valid_i   (in_fire | dsp_start_pulse)
+        ,.ready_o   ()
+        ,.windows_i (in_fire ? windows_i : windows_q)
+        ,.weight_i  (dsp_weight)
+        ,.bias_i    (dsp_bias)
+
+        ,.ready_i    (1'b1)
+        ,.valid_o    (dsp_done[dsp])
+        ,.term_idx_o (dsp_term_idx)
+        ,.data_o     (dsp_o[dsp])
       );
+      /* verilator lint_on PINCONNECTEMPTY */
     end
   endgenerate
 

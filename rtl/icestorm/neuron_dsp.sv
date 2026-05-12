@@ -26,7 +26,7 @@ module neuron_dsp #(
   ,output logic signed [OutBits-1:0]    acc_o
 );
 
-  // Binary/Ternary input encoding
+  /* ------------------------ Binary/Ternary input encoding ------------------------ */
   logic signed [`SB_MAC16_IN-1:0] data_w;
   logic signed [`SB_MAC16_IN-1:0] weight_w;
 
@@ -42,7 +42,7 @@ module neuron_dsp #(
       data_w = `SB_MAC16_IN'($signed(data_i));
     end
   end
-
+  /* ------------------------ Binary/Ternary weight encoding ------------------------ */
   always_comb begin
     if (WeightBits == 1) begin
       weight_w = weight_i[0] ? `SB_MAC16_IN'(1) : `SB_MAC16_IN'(-1);
@@ -62,6 +62,7 @@ module neuron_dsp #(
   assign acc_o = acc_r;
   /* verilator lint_on WIDTHTRUNC */
 
+  /* -------------------------- Multiply and Accumulate via SB_MAC16 -------------------------- */
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
       acc_r <= '0;

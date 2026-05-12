@@ -19,7 +19,6 @@
         "rtl/blocks/framer.sv",
         "rtl/blocks/deframer.sv",
         "rtl/lib/multi_delay_buffer.sv",
-        "rtl/lib/multi_delay_ram.sv",
         "rtl/lib/mac.sv",
         "rtl/lib/filter.sv",
         "rtl/icestorm/filter_dsp.sv",
