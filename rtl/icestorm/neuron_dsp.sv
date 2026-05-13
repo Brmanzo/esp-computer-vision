@@ -34,10 +34,6 @@ module neuron_dsp #(
   always_comb begin
     if (InBits == 1) begin
       data_w = data_i[0] ? `SB_MAC16_IN'(1) : `SB_MAC16_IN'(-1);
-    end else if (InBits == 2) begin
-      data_w = (data_i == 2'sb01) ? `SB_MAC16_IN'( 1) :
-               (data_i == 2'sb11) ? `SB_MAC16_IN'(-1) :
-                                    `SB_MAC16_IN'( 0);
     end else begin
       data_w = `SB_MAC16_IN'($signed(data_i));
     end
@@ -46,10 +42,6 @@ module neuron_dsp #(
   always_comb begin
     if (WeightBits == 1) begin
       weight_w = weight_i[0] ? `SB_MAC16_IN'(1) : `SB_MAC16_IN'(-1);
-    end else if (WeightBits == 2) begin
-      weight_w = (weight_i == 2'sb01) ? `SB_MAC16_IN'( 1) :
-                 (weight_i == 2'sb11) ? `SB_MAC16_IN'(-1) :
-                                        `SB_MAC16_IN'( 0);
     end else begin
       weight_w = `SB_MAC16_IN'($signed(weight_i));
     end

@@ -39,6 +39,7 @@ class LinearLayerModel():
         self._InChannels  = int(dut.InChannels.value)
         self._OutChannels = int(dut.OutChannels.value)
         self._BiasBits    = int(dut.BiasBits.value)
+        self._Unsigned    = int(dut.Unsigned.value)
 
         self.w = np.array(weights, dtype=int)
         self.b = np.array(biases, dtype=int)
@@ -53,8 +54,16 @@ class LinearLayerModel():
         # 1. Handle BNN mapping if InBits == 1
         if self._InBits == 1:
             input_vals = [1 if x == 1 else -1 for x in raw_inputs]
+        elif self._InBits == 2:
+            input_vals = [1 if x == 1 else -1 if x == -1 else 0 for x in raw_inputs]
         else:
-            input_vals = raw_inputs
+            if self._Unsigned == 1:
+                # Treat raw bits as unsigned [0, 2^InBits - 1]
+                mask = (1 << self._InBits) - 1
+                input_vals = [x & mask for x in raw_inputs]
+            else:
+                # Treat as signed (two's complement)
+                input_vals = raw_inputs
 
         # 2. Compute expected output (Standard Math)
         expected = []

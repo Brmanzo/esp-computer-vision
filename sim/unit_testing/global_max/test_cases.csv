@@ -1,5 +1,6 @@
-InBits,TermCount,InChannels
-1,16,10
-8,9,1
-16,17,2
-32,33,4
+InBits,TermCount,InChannels,Unsigned
+1,16,10,0
+8,9,1,1
+16,17,2,1
+32,33,4,1
+8,10,1,0

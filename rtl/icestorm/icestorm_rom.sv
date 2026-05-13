@@ -10,7 +10,11 @@ module icestorm_rom #(
   ,parameter  int unsigned Depth     = 8
   ,localparam int unsigned DepthBits = (Depth <= 1) ? 1 : $clog2(Depth)
   ,parameter  int unsigned Init      = 1
+`ifdef VERILATOR
   ,parameter  string       FileName  = ""
+`else
+  ,parameter  [8*256-1:0]  FileName  = ""
+`endif
 )  (
    input [0:0] clk_i
   ,input [0:0] rst_i

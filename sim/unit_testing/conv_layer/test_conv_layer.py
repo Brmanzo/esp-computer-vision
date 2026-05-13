@@ -136,6 +136,15 @@ def test_dsps(test_name, simulator,
               LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount):
     run_conv_test(test_name, simulator, locals(), Weights, Biases, "dsps")
 
+TEST_CASES_OUT_ACT = load_tests_from_csv(os.path.join(tbpath, "test_cases_out_act.csv"), auto_rules, gen_rules)
+@pytest.mark.parametrize("test_name", tests)
+@pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+@auto_unpack(TEST_CASES_OUT_ACT)
+def test_out_act(test_name, simulator,
+                 InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
+                 LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount):
+    run_conv_test(test_name, simulator, locals(), Weights, Biases, "out_act")
+
 @pytest.mark.parametrize("simulator", ["verilator"])
 @pytest.mark.parametrize("DSPCount", [0, 1, 2, 4])
 @pytest.mark.parametrize("LineWidthPx, InBits, OutBits", [("16", "1", output_width(1, 2, 3, 1))])
@@ -303,10 +312,15 @@ async def rate_tests(dut, in_rate, out_rate):
                 for r in range(H_out):
                     print(" ".join(f"{output_activation[oc][r][c]:4d}" for c in range(W_out)))
 
+        shift_obj = getattr(dut, "ShiftBits", None)
+        shift_bits = int(shift_obj.value) if shift_obj is not None else 0
+        from functional_models.conv_layer import calc_acc_bits
+        acc_bits = calc_acc_bits(K, int(dut.InBits.value), WW, IC, BW)
         ref = torch_conv_ref(
-            input_activation, kernels_4d, S, 
-            in_bits=int(dut.InBits.value), out_bits=int(dut.OutBits.value), 
-            padding=int(dut.Padding.value), biases=biases_2d
+            input_activation, kernels_4d, S,
+            in_bits=int(dut.InBits.value), out_bits=int(dut.OutBits.value),
+            padding=int(dut.Padding.value), biases=biases_2d,
+            shift_bits=shift_bits, acc_bits=acc_bits
         )
         
         if sim_verbose():

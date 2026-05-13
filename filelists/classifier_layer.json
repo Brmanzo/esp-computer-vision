@@ -13,6 +13,7 @@
         "rtl/lib/counter_roll.sv",
         "rtl/lib/output_encoder.sv",
         "rtl/lib/neuron_seq.sv",
-        "rtl/icestorm/icestorm_rom.sv"
+        "rtl/icestorm/icestorm_rom.sv",
+        "rtl/lib/input_encoder.sv"
     ]
 }

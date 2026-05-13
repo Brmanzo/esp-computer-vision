@@ -7,10 +7,12 @@ module filter_seq #(
    parameter int unsigned DSPCount    = 1
   ,parameter int unsigned InBits      = 1
   ,parameter int unsigned OutBits     = 1
-  ,parameter int unsigned WeightBits = 2
-  ,parameter int unsigned BiasBits   = 8
-  ,parameter int unsigned InChannels = 1
+  ,parameter int unsigned WeightBits  = 2
+  ,parameter int unsigned BiasBits    = 8
+  ,parameter int unsigned InChannels  = 1
   ,parameter int unsigned OutChannels = 1
+  ,parameter int unsigned Unsigned    = (InBits > 2) ? 1:0
+  ,parameter int unsigned ShiftBits   = 0
   ,parameter int unsigned KernelWidth = 3
   ,parameter int unsigned AccBits     = 32
 
@@ -182,6 +184,8 @@ module filter_seq #(
         ,.BiasBits    (BiasBits)
         ,.AccBits     (AccBits)
         ,.InChannels  (InChannels)
+        ,.Unsigned    (Unsigned)
+        ,.ShiftBits   (ShiftBits)
         ,.DSPIdx      (dsp)
       ) dsp_inst (
          .clk_i (clk_i)

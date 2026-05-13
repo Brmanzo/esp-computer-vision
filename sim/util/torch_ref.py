@@ -20,23 +20,21 @@ def to_torch_weights(kernels4):
     w = torch.tensor(kernels4, dtype=torch.int32)           # (OC,IC,K,K)
     return w
 
-def torch_conv_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1, padding=0, biases=None):
+def torch_conv_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1, padding=0, biases=None, shift_bits=0, acc_bits=None):
     x = to_torch_input(input_activation).to(torch.float32)
     w = to_torch_weights(kernels4).to(torch.float32)
-    
+
     # 1. Prepare Biases
-    # PyTorch expects a 1D tensor of shape (OutChannels,)
     if biases is not None:
         b = torch.tensor(biases, dtype=torch.float32)
     else:
-        # Default to zeros if no bias provided
         b = torch.zeros(w.shape[0], dtype=torch.float32)
     print(f"TORCH_REF: weights_sum={w.sum().item()} bias={b[0].item()}")
 
     # 2. Input Encoding (Bipolar for 1-bit)
     if in_bits == 1:
         x = x * 2.0 - 1.0
-        pad_val = -1.0 
+        pad_val = -1.0
     else:
         pad_val = 0.0
 
@@ -45,23 +43,27 @@ def torch_conv_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1, pa
         x = F.pad(x, (padding, padding, padding, padding), mode='constant', value=pad_val)
 
     # 4. Run Convolution with Bias
-    # We pass 'b' directly into F.conv2d. 
-    # It adds the bias to each output channel before returning the result.
     y = F.conv2d(x, w, bias=b, stride=stride, padding=0).squeeze(0)
 
+    # 5. Output Encoding — mirrors output_encoder.sv branch selection
     if out_bits == 1:
+        # gen_binary_out: sign comparison -> {0, 1}
         y = (y > 0).to(torch.int32)
+    elif out_bits == 2:
+        # gen_ternary_out: sign comparison -> {-1, 0, 1}
+        y = torch.where(y > 0, torch.tensor(1,  dtype=torch.int32),
+            torch.where(y < 0, torch.tensor(-1, dtype=torch.int32),
+                                torch.tensor(0,  dtype=torch.int32)))
+    elif acc_bits is not None and out_bits < acc_bits:
+        # gen_learned_shift: ReLU + logical right shift + unsigned saturation
+        y_int = y.to(torch.int64)
+        y_relu = torch.clamp(y_int, min=0)
+        y_shifted = y_relu >> shift_bits
+        unsigned_max = (1 << out_bits) - 1
+        y = torch.clamp(y_shifted, 0, unsigned_max).to(torch.int32)
     else:
-        # 5. Simulate Hardware Truncation/Sign-Extension
-        # We convert to a bitmask to simulate the overflow wrap-around
-        y_int = y.to(torch.int32)
-        mask = (1 << out_bits) - 1
-        y_wrapped = y_int & mask
-        
-        # 6. Convert back to signed representation for comparison
-        sign_bit = 1 << (out_bits - 1)
-        y_signed = torch.where(y_wrapped >= sign_bit, y_wrapped - (1 << out_bits), y_wrapped)
-        y = y_signed.to(torch.int32)
+        # gen_full_out: accumulator fits in out_bits, signed pass-through
+        y = y.to(torch.int32)
 
     return y
 

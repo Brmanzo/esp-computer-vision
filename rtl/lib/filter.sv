@@ -9,6 +9,7 @@ module filter #(
   ,parameter   int unsigned WeightBits  = 2
   ,parameter   int unsigned BiasBits    = 8
   ,parameter   int unsigned AccBits     = 32
+  ,parameter   int unsigned ShiftBits   = 8
   ,parameter   int unsigned InChannels  = 8
   ,parameter   logic signed [BiasBits-1:0] Bias = '0
   ,localparam  int unsigned KernelArea  = KernelWidth * KernelWidth
@@ -65,8 +66,9 @@ module filter #(
   assign biased_sum_d = sum_pre_elastic_d + AccBits'($signed(Bias));
 
   output_encoder #(
-     .InBits  (AccBits)
-    ,.OutBits (OutBits)
+     .InBits   (AccBits)
+    ,.OutBits  (OutBits)
+    ,.ShiftBits(ShiftBits)
   ) out_enc_inst (
      .data_i (biased_sum_d[AccBits-1:0])
     ,.data_o (data_d)

@@ -1,7 +1,7 @@
-InBits,WeightBits,InChannels,OutBits,OutChannels,BiasBits,DSPCount
-1,2,1,AUTO,16,2,0
-1,2,2,AUTO,2,2,0
-2,3,2,AUTO,2,3,0
-4,5,4,AUTO,4,5,0
-8,8,32,AUTO,12,8,0
-8,8,32,AUTO,32,8,0
+InBits,WeightBits,InChannels,OutBits,OutChannels,BiasBits,DSPCount,Unsigned
+1,2,1,AUTO,16,2,0,0
+1,2,2,AUTO,2,2,0,0
+2,3,2,AUTO,2,3,0,0
+4,5,4,AUTO,4,5,0,0
+8,8,32,AUTO,12,8,0,0
+8,8,32,AUTO,32,8,0,0

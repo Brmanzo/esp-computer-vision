@@ -7,6 +7,7 @@ module global_max #(
   ,parameter  int unsigned OutBits     = InBits
   ,parameter  int unsigned TermCount   = 9
   ,parameter  int unsigned InChannels  = 1
+  ,parameter  int unsigned Unsigned    = 0
   ,localparam int unsigned CountWidth  = (TermCount <= 1) ? 1 : $clog2(TermCount)
 )  (
    input  [0:0] clk_i
@@ -65,15 +66,20 @@ module global_max #(
           end
         end
       end
-    end else begin : gen_signed_comparison
+    end else begin : gen_multibit_comparison
       always_comb begin
         max_d = max_q;
         if (in_fire) begin
           for (int ch = 0; ch < InChannels; ch++) begin
-            // Initialize max with first term
-            if (first_term)          max_d[ch] = data_i[ch];
-            // then update if current term is greater than max
-            else max_d[ch] = ($signed(max_q[ch]) > $signed(data_i[ch])) ? max_q[ch] : data_i[ch];
+            if (first_term) begin
+              max_d[ch] = data_i[ch];
+            end else begin
+              if (Unsigned == 1) begin
+                max_d[ch] = ($unsigned(max_q[ch]) > $unsigned(data_i[ch])) ? max_q[ch] : data_i[ch];
+              end else begin
+                max_d[ch] = ($signed(max_q[ch]) > $signed(data_i[ch])) ? max_q[ch] : data_i[ch];
+              end
+            end
           end
         end
       end

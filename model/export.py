@@ -4,11 +4,12 @@ import pandas as pd
 import ast
 from   pathlib import Path
 from   datetime import datetime
-from   typing import Any
+from   typing import Any, Optional
 
 from   model.config  import ModelConfig, ConvConfig, ClassifierConfig
 from   model.globals import DATAPATH, HAND_GESTURE_CFG
 from   model.model   import cnn_model, QuantConv2d
+from   model.quantize import LearnedShiftQuantizer
 
 def get_hardware_weights(fused_layer: QuantConv2d, previous_act_scale: float = 1.0):
     '''Extracts the folded integer weights and biases directly from the QAT layer.
@@ -75,6 +76,9 @@ def export_model_to_csv(model_path: Path, config: ModelConfig, output_csv: Path,
     # Features followed by Classifier
     all_modules = list(model.features.children()) + list(model.classifier.children())
 
+    # Track the learned classifier output shift separately
+    classifier_shift: Optional[int] = None
+
     for module in all_modules:
         if isinstance(module, QuantConv2d):
             layer_idx = len(all_hardware_data)
@@ -127,6 +131,26 @@ def export_model_to_csv(model_path: Path, config: ModelConfig, output_csv: Path,
                     # Handle fixed power-of-two scaling (shift)
                     current_act_scale = 2.0 ** module.shift
                     print(f"  Detected Activation Scaling: {current_act_scale:.6f} (Fixed Shift {module.shift})")
+
+        elif isinstance(module, LearnedShiftQuantizer):
+            # Use act_scale (clip_val / qmax) for weight-compensation propagation,
+            # mirroring the QuantizeActivation learnable path above.
+            classifier_shift  = module.hardware_shift
+            current_act_scale = module.act_scale
+            print(f"  Learned Classifier Shift: {classifier_shift}  act_scale={current_act_scale:.6f}  clip_val={module.clip_val.item():.4f}")
+            # Back-propagate into config so RTL render and downstream code always
+            # sees the trained value rather than the analytical default.
+            config.classifier_config._shift = classifier_shift
+            # Stamp onto the last feature-conv hardware data row.
+            if all_hardware_data:
+                all_hardware_data[-1]["classifier_shift"] = classifier_shift
+
+    # If no LearnedShiftQuantizer was encountered (e.g. random_weights path),
+    # fall back to the analytically-derived shift on the last feature conv row
+    if all_hardware_data and "classifier_shift" not in all_hardware_data[-2 if len(all_hardware_data) > 1 else -1]:
+        feature_row_idx = len(all_hardware_data) - 2  # last feature row, not classifier
+        if 0 <= feature_row_idx < len(all_hardware_data):
+            all_hardware_data[feature_row_idx]["classifier_shift"] = config.classifier_config._shift
 
     df = pd.DataFrame(all_hardware_data)
     df.to_csv(output_csv, index=False)
@@ -222,8 +246,14 @@ def export_csv_to_hex(csv_path: Path, sv_path: Path, hex_path: Path, config: Mod
         sv_lines.append(f"localparam logic signed [{w_total_bits-1:>{max_digits}}:0] LAYER_{i}_WEIGHTS = {w_total_bits}'h{packed_w:x};")
         sv_lines.append(f"localparam logic signed [{b_total_bits-1:>{max_digits}}:0] LAYER_{i}_BIASES  = {b_total_bits}'h{packed_b:x};")
         sv_lines.append("")
+
+        # 3. Emit CLASSIFIER_SHIFT for the final layer (carries the learned shift)
+        if hasattr(row, 'classifier_shift') and str(row.classifier_shift) not in ("", "nan", "None"):
+            learned_shift = int(float(str(row.classifier_shift)))
+            sv_lines.append(f"localparam int CLASSIFIER_SHIFT = {learned_shift};  // Learned right-shift for acc >> CLASSIFIER_SHIFT")
+            sv_lines.append("")
         
-        # 3. Generate Hex file if layer uses DSPs
+        # 4. Generate Hex file if layer uses DSPs
         layer_cfg: Any
         if i < len(config.layers):
             layer_cfg = config.layers[i].ConvLayer

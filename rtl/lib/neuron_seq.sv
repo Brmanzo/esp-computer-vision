@@ -6,10 +6,10 @@
 module neuron_seq #(
    parameter int unsigned DSPCount    = 1
   ,parameter int unsigned InBits      = 1
-  ,parameter int unsigned OutBits    = 32
-  ,parameter int unsigned WeightBits = 2
-  ,parameter int unsigned BiasBits   = 8
-  ,parameter int unsigned InChannels = 1
+  ,parameter int unsigned OutBits     = 32
+  ,parameter int unsigned WeightBits  = 2
+  ,parameter int unsigned BiasBits    = 8
+  ,parameter int unsigned InChannels  = 1
   ,parameter int unsigned OutChannels = 1
   `ifdef VERILATOR
     ,parameter string      FileName   = ""
@@ -21,8 +21,8 @@ module neuron_seq #(
   ,parameter logic signed [OutChannels*InChannels*WeightBits-1:0] Weights = '0
   ,parameter logic signed [OutChannels*BiasBits-1:0]              Biases  = '0
 
-  ,localparam int unsigned InChannelCountBits = InChannels  > 1 ? $clog2(InChannels)  : 1
-  ,localparam int unsigned OutChannelCountBits   = OutChannels > 1 ? $clog2(OutChannels) : 1
+  ,localparam int unsigned InChannelCountBits  = InChannels  > 1 ? $clog2(InChannels)  : 1
+  ,localparam int unsigned OutChannelCountBits = OutChannels > 1 ? $clog2(OutChannels) : 1
     // If DSPCount > OutChannels, we just use OutChannels DSPs.
   ,localparam int unsigned EffectiveDSPs     = (DSPCount > OutChannels) ? OutChannels : DSPCount
   ,localparam int unsigned OutChannelsPerDSP = (EffectiveDSPs == 0) ? 0 : ((OutChannels + EffectiveDSPs - 1) / EffectiveDSPs)
@@ -94,10 +94,11 @@ module neuron_seq #(
 
   logic signed [InChannels-1:0][InBits-1:0]   data_q;
   logic signed [OutChannels-1:0][OutBits-1:0] neuron_q;
-  assign data_o = neuron_q;
+  logic signed [OutChannels-1:0][OutBits-1:0] output_q;  // Double-buffered output to prevent read-write race
+  assign data_o = output_q;
 
   /* ------------------------------------ Control FSM ------------------------------------ */
-  typedef enum logic [2:0] {Idle, Busy, Flush1, Flush2, Done} fsm_e;
+  typedef enum logic [2:0] {Idle, Busy, Flush1, Flush2, Flush3, Done} fsm_e;
   fsm_e state_q, state_d;
 
   assign valid_o = (state_q == Done);
@@ -107,11 +108,16 @@ module neuron_seq #(
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
       state_q <= Idle;
-      data_q  <= '0;
     end else begin
       state_q <= state_d;
-      if (in_fire) data_q <= data_i;
     end
+  end
+
+  // Capture input data on in_fire and hold stable throughout DSP computation.
+  // This prevents upstream changes (e.g. global_max processing a new frame)
+  // from corrupting the data while DSPs are still computing.
+  always_ff @(posedge clk_i) begin
+    if (in_fire) data_q <= data_i;
   end
 
   // Next state logic
@@ -122,10 +128,22 @@ module neuron_seq #(
       Idle:   if (in_fire) state_d = Busy;
       Busy:   if (last_in_ch && last_out_ch) state_d = Flush1;
       Flush1: state_d = Flush2; // Wait for MAC pipeline
-      Flush2: state_d = Done;   // Wait for neuron_q capture
+      Flush2: state_d = Flush3; // Wait for neuron_q capture (dsp_valid_q fires here)
+      Flush3: state_d = Done;   // neuron_q is now stable; snapshot to output_q
       Done:   if (out_fire) state_d = Idle;
       default: state_d = Idle;
     endcase
+  end
+
+  // Snapshot neuron_q into output_q when entering Done state.
+  // This ensures data_o remains stable while neuron_q is being overwritten
+  // by the next frame's DSP results.
+  always_ff @(posedge clk_i) begin
+    if (rst_i) begin
+      output_q <= '0;
+    end else if (state_q == Flush3 && state_d == Done) begin
+      output_q <= neuron_q;
+    end
   end
 
   /* ------------------------------------ Weight ROM ------------------------------------ */
@@ -183,25 +201,28 @@ module neuron_seq #(
     for (genvar dsp_idx = 0; dsp_idx < EffectiveDSPs; dsp_idx++) begin : gen_dsps
       wire [OutChannelCountBits-1:0] current_class = OutChannelCountBits'(OutChannelCountBits'(dsp_idx * OutChannelsPerDSP) + OutChannelCountBits'(out_ch_counter));
 
+      wire [0:0] first_channel = (in_ch_counter == '0);
       wire signed [WeightBits-1:0] current_weight = $signed(rom_weights[dsp_idx*WeightBits +: WeightBits]);
       wire signed [BiasBits-1:0]   current_bias   = $signed(Biases[current_class*BiasBits +: BiasBits]);
       
       wire signed [OutBits-1:0]        neuron_out;
       assign neuron_results[dsp_idx] = neuron_out;
 
-      logic [0:0] en_r;
-      logic [0:0] load_bias_r;
+      logic [0:0] en_q;
+      logic [0:0] load_bias_q;
 
-      logic signed [InBits-1:0] data_r;
-      logic signed [BiasBits-1:0] bias_r;
+      // InBits is already InBits+1 (zero-extended) from linear_layer's input_encoder.
+      // No additional extension needed here.
+      logic signed [InBits-1:0] neuron_in;
+      logic signed [BiasBits-1:0] bias_q;
       always_ff @(posedge clk_i) begin
         // Enable SB_MAC16 when busy, 1 cycle delay to align with ROM
-        en_r <= busy;
+        en_q <= busy;
         // Capture current input off of input
-        data_r <= data_q[in_ch_counter];
+        neuron_in <= data_q[in_ch_counter];
         // Capture bias and load on first term
-        load_bias_r <= first_channel;
-        bias_r      <= current_bias;
+        load_bias_q <= first_channel;
+        bias_q      <= current_bias;
       end
 
       neuron_dsp #(
@@ -212,11 +233,11 @@ module neuron_seq #(
       ) dsp_inst (
          .clk_i      (clk_i)
         ,.rst_i      (rst_i)
-        ,.en_i       (en_r)
-        ,.load_bias_i(load_bias_r)
-        ,.data_i     (data_r)
-        ,.weight_i   (current_weight) // Delayed 1 cycle by icestorm_rom
-        ,.bias_i     (bias_r)
+        ,.en_i       (en_q)
+        ,.load_bias_i(load_bias_q)
+        ,.data_i     (neuron_in)
+        ,.weight_i   (current_weight)           // Delayed 1 cycle by icestorm_rom
+        ,.bias_i     (bias_q)
         ,.acc_o      (neuron_out)
       );
 

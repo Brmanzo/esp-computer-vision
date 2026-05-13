@@ -328,6 +328,8 @@ def inject_params(parameters: dict, param: int, param_name: str, param_bits: int
     
     # 3. Write out the Verilog Header (.vh)
     vh_path = os.path.join(work_dir, f"injected_{param_name.lower()}.vh")
+    if "biases" in param_name:
+        print(f"DEBUG: Injecting {param_name} ({param_bits} bits): 0x{packed_param:x}")
     with open(vh_path, "w") as f:
         f.write(
             f"localparam logic signed [{param_bits-1}:0] INJECTED_{param_name.upper()} = "
@@ -373,7 +375,7 @@ def inject_hex_weights(parameters: dict, weights_int: int, oc: int, ic: int, kw:
     
     # 3. Calculate hardware-accurate partitioning (matches RTL localparams)
     effective_dsps  = min(dsp_count, oc)
-    neurons_per_dsp = (oc // effective_dsps) if effective_dsps > 0 else 0
+    neurons_per_dsp = ((oc + effective_dsps - 1) // effective_dsps) if effective_dsps > 0 else 0
     total_terms     = ic * ka
     
     rom_depth = total_terms * neurons_per_dsp
@@ -419,6 +421,9 @@ def inject_weights_and_biases(
     
     os.makedirs(custom_work_dir, exist_ok=True)
     
+    # 1. Determine output channel count for bias/weight packing
+    oc = parameters.get(f"C{layer}_OutChannels", parameters.get("OutChannels", parameters.get("ClassCount", 1)))
+
     if dsp_count == 0:
         # Parallel Implementation: Use header-based injection for the giant vector
         # Total bits = weight_bits * weight_count
@@ -426,14 +431,13 @@ def inject_weights_and_biases(
     else:
         # Sequential ROM Implementation: Use hex-based injection
         # We need individual dimensions for correct DSP-aware packing
-        # Try to find dimensions with layer prefix (e.g. C0_OutChannels) or fallback
-        oc = parameters.get(f"C{layer}_OutChannels", parameters.get("OutChannels", 1))
         # In double blocks, Layer 1's input channels are Layer 0's output channels
         ic_key = f"C{layer}_InChannels"
         prev_oc_key = f"C{layer-1}_OutChannels"
         ic = parameters.get(ic_key, parameters.get(prev_oc_key, parameters.get("InChannels", 1)))
         kw = parameters.get(f"C{layer}_KernelWidth", parameters.get("KernelWidth", 1))
         
+        assert oc is not None and ic is not None and kw is not None, "oc parameter must exist"
         hex_filename = inject_hex_weights(parameters, Weights, int(oc), int(ic), int(kw), weight_bits, f"weights_{layer}", custom_work_dir, dsp_count)
         # Update the FileName parameter so the RTL can find the hex file
         # Wrap filename in quotes for Verilator/Icarus string parameter passing
@@ -447,6 +451,8 @@ def inject_weights_and_biases(
         inject_params(parameters, Weights, f"weights_{layer}", weight_bits * weight_count, custom_work_dir)
         
     # Biases currently stay as header parameters
+    if "Biases" in str(Biases): # Just a guard
+        print(f"DEBUG: Biases in inject_weights_and_biases: {Biases}")
     inject_params(parameters, Biases, f"biases_{layer}", bias_bits, custom_work_dir)
 
     return custom_work_dir

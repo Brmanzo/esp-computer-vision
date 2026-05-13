@@ -9,18 +9,20 @@
 
 `timescale 1ns/1ps
 module filter_dsp #(
-   parameter   int unsigned InBits      = 1
-  ,parameter   int unsigned OutBits     = 1
-  ,parameter   int unsigned KernelWidth = 3
-  ,parameter   int unsigned WeightBits  = 2
-  ,parameter   int unsigned BiasBits    = 8
-  ,parameter   int unsigned AccBits     = `SB_MAC16_OUT
-  ,parameter   int unsigned InChannels  = 4
-  ,parameter   int unsigned DSPIdx      = 0
+   parameter  int unsigned InBits      = 1
+  ,parameter  int unsigned OutBits     = 1
+  ,parameter  int unsigned KernelWidth = 3
+  ,parameter  int unsigned WeightBits  = 2
+  ,parameter  int unsigned BiasBits    = 8
+  ,parameter  int unsigned AccBits     = `SB_MAC16_OUT
+  ,parameter  int unsigned Unsigned    = (InBits > 2) ? 1:0
+  ,parameter  int unsigned ShiftBits   = 0
+  ,parameter  int unsigned InChannels  = 4
+  ,parameter  int unsigned DSPIdx      = 0
 
-  ,localparam  int unsigned KernelArea  = KernelWidth * KernelWidth
-  ,localparam  int unsigned TotalTerms  = InChannels * KernelArea
-  ,localparam  int unsigned TermBits    = (TotalTerms > 1) ? $clog2(TotalTerms) : 1
+  ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
+  ,localparam int unsigned TotalTerms  = InChannels * KernelArea
+  ,localparam int unsigned TermBits    = (TotalTerms > 1) ? $clog2(TotalTerms) : 1
 ) (
    input [0:0] clk_i
   ,input [0:0] rst_i
@@ -133,8 +135,9 @@ module filter_dsp #(
     );
     /* -------------------------------- Output Encoding -------------------------------- */
     output_encoder #(
-       .InBits  (AccBits)
-      ,.OutBits (OutBits)
+       .InBits    (AccBits)
+      ,.OutBits   (OutBits)
+      ,.ShiftBits (ShiftBits)
     ) out_enc_inst (
        .data_i (neuron_o[AccBits-1:0])
       ,.data_o (data_o)

@@ -16,6 +16,8 @@ module tb_conv_layer #(
   ,parameter int unsigned Stride       = 1
   ,parameter int unsigned Padding      = 0
   ,parameter int unsigned DSPCount     = 0
+  ,parameter int unsigned ShiftBits    = 0
+  ,parameter int unsigned Unsigned     = 0
   ,parameter string       FileName     = "memory_init_file.hex"
   ,parameter string       FileName_0   = ""
 )  (
@@ -47,6 +49,8 @@ conv_layer #(
     ,.OutChannels (OutChannels)
     ,.Stride      (Stride)
     ,.Padding     (Padding)
+    ,.ShiftBits   (ShiftBits)
+    ,.Unsigned    (Unsigned)
     ,.DSPCount    (DSPCount)
     ,.Weights     (INJECTED_WEIGHTS_0)
     ,.Biases      (INJECTED_BIASES_0)

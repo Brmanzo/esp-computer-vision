@@ -91,7 +91,7 @@ def render_wires(cfg: ModelConfig):
 
     return "\n".join(lines)
 
-def render_conv_layer(cfg: ConvConfig):
+def render_conv_layer(cfg: ConvConfig, is_last_feature: bool = False):
     '''Renders a convolution layer within the CNN SystemVerilog file.'''
     lines = [
         "  conv_layer #(",
@@ -109,6 +109,10 @@ def render_conv_layer(cfg: ConvConfig):
         f"    ,.Biases      (LAYER_{cfg._layer_num}_BIASES)",
         f"    ,.Padding     ({cfg._padding})",
         f"    ,.DSPCount    ({cfg._dsp_count})",
+    ]
+    if is_last_feature:
+        lines.append("    ,.ShiftBits   (CLASSIFIER_SHIFT)")
+    lines += [
         f"    ,.FileName    (FileName_{cfg._layer_num})",
         f"  ) conv_layer_inst_{cfg._layer_num} (",
         "     .clk_i     (clk_i)",
@@ -200,8 +204,9 @@ def render_verilog(cfg: ModelConfig) -> None:
         print("", file=f)
 
         # Render Feature Layers
-        for layer_cfg in cfg.layers:
-            print(render_conv_layer(layer_cfg.ConvLayer), file=f)
+        num_feature_layers = len(cfg.layers)
+        for i, layer_cfg in enumerate(cfg.layers):
+            print(render_conv_layer(layer_cfg.ConvLayer, is_last_feature=(i == num_feature_layers - 1)), file=f)
             if layer_cfg.PoolLayer is not None:
                 print(render_pool_layer(layer_cfg.PoolLayer), file=f)
 

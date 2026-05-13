@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 
 from model.config   import ModelConfig, ConvConfig, PoolConfig
-from model.quantize import QuantConv2d, QuantizeActivation
+from model.quantize import QuantConv2d, QuantizeActivation, LearnedShiftQuantizer
 from model.globals  import get_hand_gesture_cfg, BRAM_COUNT, DSP_COUNT
 
 class cnn_model(nn.Module):
@@ -17,28 +17,43 @@ class cnn_model(nn.Module):
 
         # 1. Dynamically Build the Feature Extractor
         feature_layers: list[nn.Module] = []
-        
+        self.cls_input_shift_quantizer: LearnedShiftQuantizer  # set below
+
         # Iterate naturally over all feature layers in model config
-        for layer_cfg in self.config.layers:
+        num_feature_layers = len(self.config.layers)
+        for i, layer_cfg in enumerate(self.config.layers):
             conv = layer_cfg.ConvLayer
             pool = layer_cfg.PoolLayer
-            
+
             feature_layers.append(QuantConv2d(
-                in_channels=conv._in_ch, 
-                out_channels=conv._out_ch, 
-                kernel_size=conv._kernel_width, 
-                padding=conv._padding, 
+                in_channels=conv._in_ch,
+                out_channels=conv._out_ch,
+                kernel_size=conv._kernel_width,
+                padding=conv._padding,
                 weight_bits=conv._q_schedule._q_min_bits,
                 bias_bits=conv._bias_bits,
                 bias=False
             ))
-            
-            feature_layers.append(QuantizeActivation(
-                bits=conv._out_bits,
-                learnable=(conv._out_bits <= 2),
-                shift=conv._shift
-            ))
-            
+
+            # Last feature conv output is the classifier input activation.
+            # Use a LearnedShiftQuantizer here so training discovers the optimal
+            # bit-window in the accumulator (hardware: barrel-shift, zero DSP cost).
+            if i == num_feature_layers - 1:
+                learned_q = LearnedShiftQuantizer(
+                    init_shift = conv._shift,
+                    out_bits   = conv._out_bits,
+                    min_shift  = max(0, conv._shift - 4),
+                    max_shift  = conv._shift + 4,
+                )
+                self.cls_input_shift_quantizer = learned_q
+                feature_layers.append(learned_q)
+            else:
+                feature_layers.append(QuantizeActivation(
+                    bits=conv._out_bits,
+                    learnable=(conv._out_bits <= 2),
+                    shift=conv._shift
+                ))
+
             if pool is not None:
                 if pool._mode == 0:
                     feature_layers.append(nn.MaxPool2d(pool._kernel_width))
@@ -47,16 +62,19 @@ class cnn_model(nn.Module):
 
         self.features = nn.Sequential(*feature_layers)
 
-        # 2. Build the Classifier Block 
+        # 2. Build the Classifier Block
         cls_cfg = config.classifier_config
-        
+
+        # Classifier outputs raw logits — argmax selects the class.
+        # No output quantizer needed here; the activation quantizer on the
+        # last feature conv (cls_input_shift_quantizer) handles the precision.
         self.classifier = nn.Sequential(
             nn.Dropout2d(p=0.1),
             # 1x1 kernel for fully convolutional classifiers
             QuantConv2d(
-                in_channels=cls_cfg._in_ch, 
-                out_channels=cls_cfg._num_classes, 
-                kernel_size=1, 
+                in_channels=cls_cfg._in_ch,
+                out_channels=cls_cfg._num_classes,
+                kernel_size=1,
                 weight_bits=cls_cfg._q_schedule._q_min_bits,
                 bias_bits=cls_cfg._bias_bits,
                 bias=False
@@ -84,8 +102,16 @@ class cnn_model(nn.Module):
         
         # Flatten the final output to (Batch, Num_Classes)
         x = torch.flatten(x, 1)
-        
+
         return x
+
+    @property
+    def hardware_shift(self) -> int:
+        '''Returns the learned integer right-shift applied to the classifier input
+        activation (last feature conv output). Used by RTL export to parameterize
+        the barrel-shift in output_encoder / classifier_layer.
+        '''
+        return self.cls_input_shift_quantizer.hardware_shift
 
     def _init_weights(self, m):
         if isinstance(m, nn.Conv2d) or isinstance(m, QuantConv2d):

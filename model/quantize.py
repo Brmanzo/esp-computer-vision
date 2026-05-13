@@ -1,5 +1,6 @@
 # model.quantize.py
 
+import math
 from   typing import cast, Optional
 import torch
 from   torch import nn
@@ -241,3 +242,78 @@ class QuantizeActivation(nn.Module):
     def forward(self, input):
         '''Return Quantized Straight Through Estimator output for activations.'''
         return QuantizeActivationSTE.apply(input, self.bits, self.clip_val, self.learnable, self.shift)
+
+
+class LearnedShiftQuantizer(nn.Module):
+    '''Unsigned learned-range quantizer for the classifier input activation.
+
+    During training: learns clip_val in the BN-normalised float domain (same
+    mechanism as QuantizeActivation with learnable=True) using unsigned ReLU
+    clamping [0, clip_val] and an STE rounding pass.  Gradients flow cleanly
+    through to all preceding layers.
+
+    On export: derives the integer hardware barrel-shift from clip_val and the
+    known full-precision accumulator width (acc_bits = init_shift + out_bits).
+    clip_val is also surfaced as act_scale so export.py propagates it into the
+    classifier weight-compensation path, exactly as for QuantizeActivation.
+
+    Args:
+        init_shift:  Analytically-derived shift (acc_bits - out_bits).  Used
+                     only to record acc_bits; does NOT initialise the scale.
+        out_bits:    Unsigned output bit-width (e.g. 4 -> range [0, 15]).
+        min_shift:   Lower bound clamped on hardware_shift (default 0).
+        max_shift:   Upper bound clamped on hardware_shift (default init_shift+4).
+    '''
+    def __init__(self, init_shift: int, out_bits: int,
+                 min_shift: int = 0, max_shift: Optional[int] = None):
+        super().__init__()
+        self._out_bits  = out_bits
+        self._acc_bits  = init_shift + out_bits  # full integer accumulator width
+        self._min_shift = min_shift
+        self._max_shift = max_shift if max_shift is not None else init_shift + 4
+        # Learnable upper clipping boundary in BN-normalised float space.
+        # 3.0 matches QuantizeActivation(learnable=True) default and keeps
+        # gradients from being crushed on the first epoch.
+        self.clip_val = nn.Parameter(torch.tensor(3.0))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        qmax     = float(2 ** self._out_bits - 1)   # unsigned: 15 for 4-bit
+        abs_clip = self.clip_val.abs().clamp(min=1e-4)
+        scale    = abs_clip / qmax
+
+        # --- Unsigned ReLU clamp [0, clip_val] ---
+        # Two chained clamps: torch.clamp requires min/max to be the same type
+        # (both scalar or both Tensor). Split so abs_clip stays a Tensor and
+        # clip_val continues to receive gradients via d(x_c)/d(abs_clip).
+        x_c = x.clamp(min=0.0).clamp(max=abs_clip)
+
+        # --- Quantise with STE: round in forward, straight-through gradient ---
+        q     = torch.round(x_c / scale)
+        x_out = x_c + (q * scale - x_c).detach()
+        return x_out
+
+    @property
+    def act_scale(self) -> float:
+        '''Float-domain scale = clip_val / qmax.  Surfaced for export.py weight
+        compensation, mirroring how QuantizeActivation.clip_val is used.
+        '''
+        qmax = 2 ** self._out_bits - 1
+        return float(self.clip_val.abs().item()) / qmax
+
+    @property
+    def hardware_shift(self) -> int:
+        '''Integer barrel-shift for RTL: acc >> hardware_shift.
+
+        A smaller clip_val means the model is using a tighter (higher) range
+        of the accumulator -> larger shift.  A larger clip_val means the model
+        is using a wider (lower) range -> smaller shift.
+
+            shift = acc_bits - out_bits - round(log2(clip_val / 3.0))
+
+        where 3.0 is the neutral init value matching the base analytical shift.
+        '''
+        base_shift = self._acc_bits - self._out_bits
+        clip       = float(self.clip_val.abs().item())
+        adjustment = round(math.log2(max(clip, 1e-4) / 3.0))
+        s = base_shift - adjustment
+        return max(self._min_shift, min(self._max_shift, s))

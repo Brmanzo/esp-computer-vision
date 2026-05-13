@@ -56,6 +56,8 @@ class ConvLayerModel():
             self._InChannels   = int(dut.InChannels.value)
             self._OutChannels  = int(dut.OutChannels.value)
             self._Stride       = int(dut.Stride.value)
+            shift_obj          = getattr(dut, "ShiftBits", None)
+            self._ShiftBits    = int(shift_obj.value) if shift_obj is not None else 0
             self._Padding      = int(dut.Padding.value) if hasattr(dut, 'Padding') else 0
         else:
             try:
@@ -69,12 +71,14 @@ class ConvLayerModel():
                 self._InChannels   = int(kwargs["InChannels"])
                 self._OutChannels  = int(kwargs["OutChannels"])
                 self._Stride       = int(kwargs["Stride"])
+                self._ShiftBits    = int(kwargs.get("ShiftBits", 0))
                 self._Padding      = int(kwargs.get("Padding", 0))
             except KeyError as e:
                 raise ValueError(f"Missing required parameter when dut is None: {e}")
 
         self._AccBits = calc_acc_bits(self._kernel_width, self._InBits, self._weight_width, self._InChannels, self._bias_bits)
-
+        assert self._OutBits + self._ShiftBits <= self._AccBits, "Output bits + shift must fit within accumulator bits to avoid overflow issues in gen_learned_shift mode."
+        
         if weights is None:
             raise ValueError("Weights must be provided to ConvLayerModel")
         if biases is None:
@@ -169,19 +173,23 @@ class ConvLayerModel():
             elif self._OutBits == 2:
                 # Ternary Output Encoding {-1,0,1} matching hardware output_encoder
                 result[oc] = 1 if biased_acc > 0 else (-1 if biased_acc < 0 else 0)
-            else:
-                # MSB Selection / Bit-slicing matching hardware behavior
-                # 1. Hardware performs accumulation in 32 bits (SB_MAC16)
-                # 2. neuron_dsp takes the AccBits LSBs
-                # 3. filter_dsp takes the OutBits MSBs of the AccBits LSBs
-                
+            elif self._OutBits >= self._AccBits:
+                # gen_full_out: signed pass-through (OutBits wide enough to hold full accumulator)
                 acc_mask = (1 << self._AccBits) - 1
-                usable_acc = biased_acc & acc_mask
-                
-                # Take the top OutBits of the AccBits range
-                # We need to treat usable_acc as signed within the AccBits range
-                usable_acc_signed = sign_extend(usable_acc, self._AccBits)
-                result[oc] = sign_extend((usable_acc_signed >> (self._AccBits - self._OutBits)) & ((1 << self._OutBits) - 1), self._OutBits)
+                result[oc] = sign_extend(biased_acc & acc_mask, self._AccBits)
+            else:
+                # gen_learned_shift: matches output_encoder.sv exactly
+                #   1. ReLU: clamp negatives to 0
+                #   2. Logical right shift by ShiftBits (== arithmetic for non-negative values)
+                #   3. Unsigned saturation at 2^OutBits-1
+                acc_mask = (1 << self._AccBits) - 1
+                usable_acc_signed = sign_extend(biased_acc & acc_mask, self._AccBits)
+                if usable_acc_signed < 0:
+                    result[oc] = 0
+                else:
+                    shifted = usable_acc_signed >> self._ShiftBits
+                    unsigned_max = (1 << self._OutBits) - 1
+                    result[oc] = min(shifted, unsigned_max)
 
         return result
 
@@ -289,9 +297,11 @@ class ConvLayerModel():
         for ch in range(self._OutChannels):
             raw = (packed >> (ch * self._OutBits)) & ((1 << self._OutBits) - 1)
             if self._OutBits == 1:
-                got = raw
+                got = raw  # binary {0,1}
+            elif self._OutBits > 2 and self._OutBits < self._AccBits:
+                got = raw  # gen_learned_shift: unsigned [0, 2^OutBits-1], no sign extension
             else:
-                got = sign_extend(raw, self._OutBits)
+                got = sign_extend(raw, self._OutBits)  # ternary or gen_full_out: signed
             
             exp = int(expected[ch])
 

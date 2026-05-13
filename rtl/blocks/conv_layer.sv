@@ -31,6 +31,8 @@ module conv_layer #(
    ,parameter  int unsigned KernelWidth = 3
    ,parameter  int unsigned WeightBits  = 2
    ,parameter  int unsigned BiasBits    = 8
+   ,parameter  int unsigned ShiftBits   = 0
+   ,parameter  int unsigned Unsigned    = (InBits > 2) ? 1:0
    ,parameter  int unsigned InChannels  = 1
    ,parameter  int unsigned OutChannels = 1
    ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
@@ -213,6 +215,7 @@ module conv_layer #(
         ,.WeightBits  (WeightBits)
         ,.BiasBits    (BiasBits)
         ,.AccBits     (AccBits)
+        ,.ShiftBits   (ShiftBits)
         ,.InChannels  (InChannels)
         ,.OutChannels (OutChannels)
         ,.Biases      (Biases)
@@ -236,6 +239,7 @@ module conv_layer #(
             ,.KernelWidth (KernelWidth)
             ,.WeightBits  (WeightBits)
             ,.AccBits     (AccBits)
+            ,.ShiftBits   (ShiftBits)
             ,.InChannels  (InChannels)
             ,.Bias        (Biases[oc*BiasBits+:BiasBits])
         ) filter_inst (

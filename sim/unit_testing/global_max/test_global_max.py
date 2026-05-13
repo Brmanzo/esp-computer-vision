@@ -32,7 +32,7 @@ TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"))
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @auto_unpack(TEST_CASES)
 def test_each(test_name, simulator,
-              InBits, TermCount, InChannels):
+              InBits, TermCount, InChannels, Unsigned):
 
     parameters = dict(locals())
     parameters.pop('test_name', None)
@@ -72,6 +72,7 @@ class GlobalMaxModel():
         self._out_bits    = int(dut.OutBits.value)
         self._in_channels = int(dut.InChannels.value)
         self._terms       = int(dut.TermCount.value)
+        self._Unsigned    = int(dut.Unsigned.value)
 
         self._term_counter = 0
         self._current_max  = None
@@ -86,7 +87,12 @@ class GlobalMaxModel():
         # Encode 1-bit inputs to bipolar if needed
         if self._in_bits == 1:
             x = [1 if val == 1 else -1 for val in raw_x]
+        elif self._Unsigned:
+            # Treat raw bits as unsigned [0, 2^InBits - 1]
+            mask = (1 << self._in_bits) - 1
+            x = [val & mask for val in raw_x]
         else:
+            # Treat as signed (two's complement)
             x = raw_x[:]
 
         if sim_verbose():
@@ -120,6 +126,11 @@ class GlobalMaxModel():
         # Encode 1-bit outputs to bipolar if needed
         if self._out_bits == 1:
             expected_list = [1 if val == 1 else 0 for val in expected]
+        elif self._Unsigned:
+            # Mask hardware output to treat bits as unsigned magnitude
+            mask = (1 << self._out_bits) - 1
+            got = [val & mask for val in got]
+            expected_list = list(expected)
         else:
             expected_list = list(expected)
 

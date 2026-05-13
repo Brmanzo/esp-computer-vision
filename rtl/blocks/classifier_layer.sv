@@ -8,19 +8,23 @@ module classifier_layer #(
   ,parameter  int unsigned BusBits    = 8 // Output bus width
   ,parameter  int unsigned InChannels = 1
   ,parameter  int unsigned ClassCount = 1
+  ,parameter  int unsigned Unsigned   = (TermBits > 2) ? 1 : 0
   ,localparam int unsigned IdBits     = (ClassCount <= 1) ? 1 : $clog2(ClassCount)
 
   ,parameter  int unsigned WeightBits = 2
   ,parameter  int unsigned BiasBits   = 4
+  ,parameter  int unsigned ShiftBits  = 0
 
   ,localparam int unsigned WeightIndex = InChannels * WeightBits
   ,parameter logic signed [ClassCount*WeightIndex-1:0] Weights = '0
   ,parameter logic signed [ClassCount*BiasBits-1:0]    Biases  = '0
   ,parameter int unsigned DSPCount  = 0
 `ifdef VERILATOR
-  ,parameter string       FileName = ""
+  ,parameter string       FileName   = ""
+  ,parameter string       FileName_0 = ""
 `else
-  ,parameter [8*256-1:0]  FileName = ""
+  ,parameter [8*256-1:0]  FileName   = ""
+  ,parameter [8*256-1:0]  FileName_0 = ""
 `endif
 )  (
    input  [0:0] clk_i
@@ -65,6 +69,7 @@ module classifier_layer #(
      .InBits     (TermBits)
     ,.TermCount  (TermCount)
     ,.InChannels (InChannels)
+    ,.Unsigned   (Unsigned)
   ) global_max_inst (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)
@@ -88,6 +93,8 @@ module classifier_layer #(
     ,.Weights     (Weights)
     ,.Biases      (Biases)
     ,.DSPCount    (DSPCount)
+    ,.Unsigned    (Unsigned)
+    ,.ShiftBits   (ShiftBits)
     ,.FileName    (FileName)
   ) linear_layer_inst (
      .clk_i   (clk_i)

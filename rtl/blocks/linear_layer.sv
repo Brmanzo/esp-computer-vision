@@ -10,6 +10,8 @@ module linear_layer #(
   ,parameter int unsigned BiasBits    = 8
   ,parameter int unsigned InChannels  = 1
   ,parameter int unsigned OutChannels = 1
+  ,parameter int unsigned Unsigned    = (InBits > 2) ? 1:0
+  ,parameter int unsigned ShiftBits   = 0
 
   ,localparam int unsigned WeightIndex = InChannels * WeightBits
   ,parameter logic signed [OutChannels*WeightIndex-1:0] Weights = '0
@@ -36,15 +38,32 @@ module linear_layer #(
   ,output logic signed [OutChannels-1:0][OutBits-1:0] data_o
 );
 
-  logic signed [InChannels*InBits-1:0] data_q;
   logic [0:0] valid_q;
+  logic signed [InChannels-1:0][(InBits):0] data_q;  // InBits+1 wide: zero-extended for unsigned activations
   logic signed [OutChannels-1:0][OutBits-1:0] data_out_q;
+
+  // Zero-extend each input channel from InBits to InBits+1 (unsigned post-ReLU contract).
+  // Each channel gets a 0 prepended as the sign bit so downstream signed multipliers
+  // treat the full InBits as magnitude, giving range [0, 2^InBits - 1].
+  wire signed [InChannels-1:0][(InBits):0] encoded_i;
+  generate
+    for (genvar enc_ch = 0; enc_ch < InChannels; enc_ch++) begin : gen_encode
+      input_encoder #(
+         .Unsigned(Unsigned)
+        ,.InBits  (InBits)
+        ,.OutBits (InBits + 1)
+      ) input_encoder_inst (
+         .data_i(data_i[enc_ch])
+        ,.data_o(encoded_i[enc_ch])
+      );
+    end
+  endgenerate
 
   generate
     if (DSPCount > 0) begin : gen_seq_neurons
       neuron_seq #(
-        .DSPCount    (DSPCount)
-        ,.InBits      (InBits)
+        .DSPCount     (DSPCount)
+        ,.InBits      (InBits + 1)
         ,.OutBits     (OutBits)
         ,.WeightBits  (WeightBits)
         ,.BiasBits    (BiasBits)
@@ -58,7 +77,7 @@ module linear_layer #(
         ,.rst_i   (rst_i)
         ,.ready_o (ready_o)
         ,.valid_i (valid_i)
-        ,.data_i  (data_i)
+        ,.data_i  (encoded_i)
         ,.ready_i (ready_i)
         ,.valid_o (valid_o)
         ,.data_o  (data_out_q)
@@ -76,14 +95,14 @@ module linear_layer #(
         end else begin
           if (ready_o) begin
             valid_q <= in_fire;
-            data_q  <= data_i;
+            data_q  <= encoded_i;
           end
         end
       end
 
       for (genvar ch = 0; ch < OutChannels; ch++) begin : gen_neurons
         neuron #(
-           .InBits    (InBits)
+           .InBits    (InBits + 1)
           ,.OutBits   (OutBits)
           ,.WeightBits(WeightBits)
           ,.BiasBits  (BiasBits)
@@ -104,6 +123,7 @@ module linear_layer #(
       output_encoder #(
          .InBits (OutBits)
         ,.OutBits(OutBits)
+        ,.ShiftBits(ShiftBits)
       ) out_enc_inst (
          .data_i(data_out_q[ch])
         ,.data_o(data_o[ch])
