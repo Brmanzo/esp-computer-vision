@@ -23,11 +23,10 @@ module packer #(
 );
 
   /*  ------------------------------------ Flush Logic ------------------------------------ */
-  logic [CountWidth-1:0] counter_q, counter_d;
-  wire  [CountWidth-1:0] max_count = CountWidth'(PackedNum - 1);
+  logic [CountWidth-1:0] counter_q;
   
   wire  [0:0] elastic_ready;
-  wire  [0:0] last       = (counter_q == max_count);
+  wire  [0:0] last;
   wire  [0:0] partial    = (counter_q != '0);
 
   wire  [0:0] in_fire    = valid_i && ready_o;
@@ -45,20 +44,22 @@ module packer #(
                         (flush_partial && elastic_ready);
 
   /* ------------------------------------ Counter Logic ------------------------------------ */
-
-  always_ff @(posedge clk_i) begin
-    if (rst_i) counter_q <= '0;
-    else counter_q <= counter_d;
-  end
-
-  always_comb  begin
-    counter_d = counter_q; // Default
-    // Clear counter on proper pack or flush
-    if (out_fire)     counter_d = '0;
-    // Increment counter on accepted input
-    else if (in_fire) counter_d = counter_q + 1;
-  end
-
+  /* verilator lint_off PINCONNECTEMPTY */
+  counter_roll #(
+     .CountBits  (CountWidth)
+    ,.MaxVal     (PackedNum - 1)
+    ,.ResetVal   (0)
+    ,.EnableDown (1'b0)
+  ) counter_roll_inst (
+     .clk_i   (clk_i)
+    ,.rst_i   (rst_i | out_fire)
+    ,.up_i    (in_fire)
+    ,.down_i  (1'b0)
+    ,.count_o (counter_q)
+    ,.next_o  ()
+    ,.max_o   (last)
+  );
+  /* verilator lint_on PINCONNECTEMPTY */
   /* ------------------------------------ Packing Logic ------------------------------------ */
   logic [PackedWidth-1:0] packed_q, packed_d;
 

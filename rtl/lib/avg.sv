@@ -5,6 +5,7 @@
 module avg #(
    parameter  int unsigned KernelWidth = 2
   ,parameter  int unsigned InBits      = 1
+  ,parameter  int unsigned Unsigned    = 0
   ,localparam int unsigned OutBits     = InBits
   ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
 )  (
@@ -30,17 +31,20 @@ module avg #(
     // If binary encoding, treat {0,1} as {-1,1}
     if (InBits == 1) begin : gen_binary_avg
       always_comb begin
-        acc = '0;
-        for (int i = 0; i < KernelArea; i++) begin
-          if (window[i][0]) acc = acc + AccOutBits'(1);
-          else              acc = acc - AccOutBits'(1);
-        end
+        // Sum of {-1, 1} encoding: count_of_1s - count_of_0s
+        // count_of_0s = KernelArea - count_of_1s
+        // Sum = count_of_1s - (KernelArea - count_of_1s) = 2 * count_of_1s - KernelArea
+        acc = AccOutBits'(2 * $countones(window) - KernelArea);
       end
     end else begin : gen_signed_avg
       always_comb begin
         acc = '0;
         for (int i = 0; i < KernelArea; i++) begin
-          acc = acc + AccOutBits'($signed(window[i]));
+          if (Unsigned == 1) begin
+            acc = acc + AccOutBits'($unsigned(window[i]));
+          end else begin
+            acc = acc + AccOutBits'($signed(window[i]));
+          end
         end
       end
     end

@@ -24,83 +24,99 @@ module unpacker #(
   ,output [0:0]               done_o
 );
 
-  /* -------------------------- Counter Logic -------------------------- */
-  wire  [CountWidth-1:0] counter;
-  wire  [CountWidth-1:0] max_count = CountWidth'(PackedNum - 1);
+  /* -------------------------- State Machine -------------------------- */
+  typedef enum logic [1:0] {Idle, Unpacking, Done} fsm_e;
+  fsm_e state_q, state_d;
 
-  /* -------------------------- Unpacking Logic -------------------------- */
-  logic [0:0]               unpacking;
+  /* -------------------------- Datapath -------------------------- */
   logic [PackedWidth-1:0]   shift_reg;
   logic [UnpackedWidth-1:0] unpacked;
+  logic [OffsetWidth-1:0]   offset;
 
-  // Maintain offset of current shift/select within shift_reg
-  logic [OffsetWidth-1:0] offset;
-  
   /* -------------------------- Handshaking Logic -------------------------- */
-  wire  [0:0] last;
-  wire  [0:0] elastic_ready;
-  wire  [0:0] in_fire  = valid_i && ready_o;
-  wire  [0:0] out_fire = unpacking && elastic_ready;
-  wire  [0:0] done     = last && out_fire;
-  assign ready_o       = (~unpacking) || done;
+  wire  [0:0]             elastic_ready;
 
-  /* -------------------------- Current State Logic -------------------------- */
+  wire  [0:0] out_fire  = (state_q == Unpacking) && elastic_ready;
+  wire  [0:0] in_fire   = valid_i && ready_o;
+
+  /* ------------------------------------ Counter Logic ------------------------------------ */
+  wire  [CountWidth-1:0] counter_q;
+  wire  [0:0]            last;
+  
+  // Counter to increment unpacking offset
+  /* verilator lint_off PINCONNECTEMPTY */
+  counter_roll #(
+     .CountBits  (CountWidth)
+    ,.MaxVal     (MaxCount)
+    ,.ResetVal   (0)
+    ,.EnableDown (1'b0)
+  ) counter_roll_inst (
+     .clk_i   (clk_i)
+    ,.rst_i   (rst_i)
+    ,.up_i    (out_fire)
+    ,.down_i  (1'b0)
+    ,.count_o (counter_q)
+    ,.next_o  ()
+    ,.max_o   (last)
+  );
+  /* verilator lint_on PINCONNECTEMPTY */
+
+  wire [0:0] done = last && out_fire;
+
+  assign ready_o   = (state_q != Unpacking) || done;
+  /* -------------------------- State Register -------------------------- */
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
+      state_q   <= Idle;
       shift_reg <= '0;
-      unpacking <= 1'b0;
     end else begin
-      if (in_fire) begin
-        shift_reg <= packed_i;
-        unpacking <= 1'b1;
-      end else if (done && !in_fire) begin
-        unpacking <= 1'b0;
-      end
+      state_q <= state_d;
+      if (in_fire) shift_reg <= packed_i;
     end
+  end
+
+  /* -------------------------- Next State Logic -------------------------- */
+  always_comb begin
+    state_d = state_q;
+    case (state_q)
+      Idle: if (in_fire) state_d = Unpacking;
+      Unpacking: begin
+        if (done) begin
+          if (in_fire) state_d = Unpacking;
+          else         state_d = Done;
+        end
+      end
+      Done: begin
+        if (in_fire) state_d = Unpacking;
+        else         state_d = Idle;
+      end
+      default: state_d = Idle;
+    endcase
   end
 
   /* -------------------------- Data Path Logic -------------------------- */
   always_comb begin
-    offset = OffsetWidth'(counter * UnpackedWidth);
-    unpacked = shift_reg[offset +: UnpackedWidth]; // Start at offset, select UnpackedWidth bits
+    offset   = OffsetWidth'(counter_q * UnpackedWidth);
+    unpacked = shift_reg[offset +: UnpackedWidth];
   end
 
-  // Counter to increment unpacking offset
-  /* verilator lint_off PINCONNECTEMPTY */
-  counter_roll #(
-     .CountBits(CountWidth)
-    ,.MaxVal   (MaxCount)
-    ,.ResetVal (0)
-    ,.EnableDown (1'b0)
-  ) counter_roll_inst (
-     .clk_i    (clk_i)
-    ,.rst_i    (rst_i)
-    ,.up_i     (out_fire)
-    ,.down_i   ('0)
-    ,.count_o  (counter)
-    ,.next_o   ()
-    ,.max_o    (last)
-  );
-  /* verilator lint_on PINCONNECTEMPTY */
-  /* verilator lint_off UNUSEDSIGNAL */
   wire [ElasticWidth-1:0] elastic_out;
   assign unpacked_o = elastic_out[UnpackedWidth-1:0];
-  // done_o now signals when the last element of a packed word is being consumed
-  assign done_o = elastic_out[UnpackedWidth] && valid_o && ready_i;
-  // Elastic Buffer to decouple unpacking from downstream logic
+  assign done_o     = elastic_out[UnpackedWidth] && valid_o && ready_i;
+
   elastic #(
-     .InBits(ElasticWidth)
+     .InBits       (ElasticWidth)
     ,.DatapathGate (1)
     ,.DatapathReset(1)
   ) elastic_inst (
-     .clk_i  (clk_i)
-    ,.rst_i  (rst_i)
-    ,.data_i ({last, unpacked})
-    ,.valid_i(unpacking)
-    ,.ready_o(elastic_ready)
-    ,.valid_o(valid_o)
-    ,.data_o (elastic_out)
-    ,.ready_i(ready_i)
+     .clk_i   (clk_i)
+    ,.rst_i   (rst_i)
+    ,.data_i  ({last, unpacked})
+    ,.valid_i ((state_q == Unpacking))
+    ,.ready_o (elastic_ready)
+    ,.valid_o (valid_o)
+    ,.data_o  (elastic_out)
+    ,.ready_i (ready_i)
   );
 
 endmodule

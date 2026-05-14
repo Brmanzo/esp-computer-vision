@@ -5,6 +5,5 @@
     ,"rtl/blocks/unpacker.sv"
     ,"rtl/lib/elastic.sv"
     ,"rtl/lib/counter_roll.sv"
-    ,"rtl/lib/counter.sv"
     ]
 }

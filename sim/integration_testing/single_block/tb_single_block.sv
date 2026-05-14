@@ -14,8 +14,10 @@ module tb_single_block #(
   ,parameter int unsigned C_OutChannels = 1
   ,parameter int unsigned C_Stride      = 1
   ,parameter int unsigned C_Padding     = 1
+  ,parameter int unsigned C_DSPCount    = 0
+  ,parameter int unsigned C_ShiftBits   = 0
+  ,parameter int unsigned C_Unsigned    = 0
   ,parameter int unsigned P_Mode        = 0 // 0 for max pooling, 1 for average pooling
-  ,parameter int unsigned DSPCount      = 0
   ,parameter string       FileName      = ""
   ,parameter string       FileName_0    = ""
 )  (
@@ -62,7 +64,9 @@ module tb_single_block #(
     ,.OutChannels (C_OutChannels)
     ,.Stride      (C_Stride)
     ,.Padding     (C_Padding)
-    ,.DSPCount    (DSPCount)
+    ,.DSPCount    (C_DSPCount)
+    ,.ShiftBits   (C_ShiftBits)
+    ,.Unsigned    (C_Unsigned)
     ,.Weights     (INJECTED_WEIGHTS_0)
     ,.Biases      (INJECTED_BIASES_0)
     ,.FileName    ((FileName_0 != "") ? FileName_0 : FileName)
@@ -86,7 +90,8 @@ module tb_single_block #(
     ,.OutBits     (C_OutBits)
     ,.KernelWidth (P_KernelWidth) 
     ,.InChannels  (C_OutChannels)  
-    ,.PoolMode    (P_Mode)              // Max pooling
+    ,.PoolMode    (P_Mode)
+    ,.Unsigned    (C_ShiftBits > 0)
   ) pool_layer_inst_0 (
      .clk_i    (clk_i)
     ,.rst_i    (rst_i)

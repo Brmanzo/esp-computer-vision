@@ -33,7 +33,7 @@ tests = ['reset_test'
 
 # Format: ("Target_Var", "CSV_Column", lambda <parsed_keys_needed>: func(...))
 auto_rules = [
-    ("OutBits", "OutBits", lambda InBits, WeightBits, KernelWidth, InChannels, BiasBits: output_width(InBits, WeightBits, KernelWidth, InChannels, BiasBits))
+    ("OutBits", "OutBits", lambda InBits, WeightBits, KernelWidth, InChannels, BiasBits, Unsigned: output_width(InBits, WeightBits, KernelWidth, InChannels, BiasBits, Unsigned))
 ]
 
 # Format: ("Target_Var", lambda <parsed_keys_needed>: func(...))
@@ -97,7 +97,7 @@ TEST_CASES_WIDTH = load_tests_from_csv(os.path.join(tbpath, "test_cases_width.cs
 @auto_unpack(TEST_CASES_WIDTH)
 def test_width(test_name, simulator,
                InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
-               LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount):
+               LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount, Unsigned):
     run_conv_test(test_name, simulator, locals(), Weights, Biases, "width")
 
 TEST_CASES_STRIDE = load_tests_from_csv(os.path.join(tbpath, "test_cases_stride.csv"), auto_rules, gen_rules)
@@ -106,7 +106,7 @@ TEST_CASES_STRIDE = load_tests_from_csv(os.path.join(tbpath, "test_cases_stride.
 @auto_unpack(TEST_CASES_STRIDE)
 def test_stride(test_name, simulator,
                 InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
-                LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount):
+                LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount, Unsigned):
     run_conv_test(test_name, simulator, locals(), Weights, Biases, "stride")
 
 TEST_CASES_PADDING = load_tests_from_csv(os.path.join(tbpath, "test_cases_padding.csv"), auto_rules, gen_rules)
@@ -115,7 +115,7 @@ TEST_CASES_PADDING = load_tests_from_csv(os.path.join(tbpath, "test_cases_paddin
 @auto_unpack(TEST_CASES_PADDING)
 def test_padding(test_name, simulator,
                  InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
-                 LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount):
+                 LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount, Unsigned):
     run_conv_test(test_name, simulator, locals(), Weights, Biases, "padding")
 
 TEST_CASES_CHANNELS = load_tests_from_csv(os.path.join(tbpath, "test_cases_channels.csv"), auto_rules, gen_rules)
@@ -124,7 +124,7 @@ TEST_CASES_CHANNELS = load_tests_from_csv(os.path.join(tbpath, "test_cases_chann
 @auto_unpack(TEST_CASES_CHANNELS)
 def test_channels(test_name, simulator,
                   InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
-                  LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount):
+                  LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount, Unsigned):
     run_conv_test(test_name, simulator, locals(), Weights, Biases, "channels")
 
 TEST_CASES_DSPS = load_tests_from_csv(os.path.join(tbpath, "test_cases_dsps.csv"), auto_rules, gen_rules)
@@ -133,7 +133,7 @@ TEST_CASES_DSPS = load_tests_from_csv(os.path.join(tbpath, "test_cases_dsps.csv"
 @auto_unpack(TEST_CASES_DSPS)
 def test_dsps(test_name, simulator,
               InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
-              LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount):
+              LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount, Unsigned):
     run_conv_test(test_name, simulator, locals(), Weights, Biases, "dsps")
 
 TEST_CASES_OUT_ACT = load_tests_from_csv(os.path.join(tbpath, "test_cases_out_act.csv"), auto_rules, gen_rules)
@@ -142,7 +142,7 @@ TEST_CASES_OUT_ACT = load_tests_from_csv(os.path.join(tbpath, "test_cases_out_ac
 @auto_unpack(TEST_CASES_OUT_ACT)
 def test_out_act(test_name, simulator,
                  InBits, WeightBits, OutBits, KernelWidth, LineWidthPx, Weights, Biases,
-                 LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount):
+                 LineCountPx, InChannels, OutChannels, BiasBits, Stride, Padding, DSPCount, ShiftBits, Unsigned):
     run_conv_test(test_name, simulator, locals(), Weights, Biases, "out_act")
 
 @pytest.mark.parametrize("simulator", ["verilator"])
@@ -173,6 +173,8 @@ async def single_test(dut):
     WW = int(dut.WeightBits.value)
     P  = int(dut.Padding.value)
     S  = int(dut.Stride.value)
+    unsigned_obj = getattr(dut, "Unsigned", None)
+    Unsigned = int(unsigned_obj.value) if unsigned_obj is not None else 0
 
     real_rows_before_out = max(0, (K - 1) - P)
     real_pixels_in_out_row = max(0, (K - 1) - P + 1)
@@ -236,6 +238,8 @@ async def rate_tests(dut, in_rate, out_rate):
     BW = int(dut.BiasBits.value)
     S  = int(dut.Stride.value)
     P  = int(dut.Padding.value)
+    unsigned_obj = getattr(dut, "Unsigned", None)
+    Unsigned = int(unsigned_obj.value) if unsigned_obj is not None else 0
 
     invalid = K - 1
     N_in = W * H
@@ -315,12 +319,12 @@ async def rate_tests(dut, in_rate, out_rate):
         shift_obj = getattr(dut, "ShiftBits", None)
         shift_bits = int(shift_obj.value) if shift_obj is not None else 0
         from functional_models.conv_layer import calc_acc_bits
-        acc_bits = calc_acc_bits(K, int(dut.InBits.value), WW, IC, BW)
+        acc_bits = calc_acc_bits(K, int(dut.InBits.value), WW, IC, BW, Unsigned)
         ref = torch_conv_ref(
             input_activation, kernels_4d, S,
             in_bits=int(dut.InBits.value), out_bits=int(dut.OutBits.value),
             padding=int(dut.Padding.value), biases=biases_2d,
-            shift_bits=shift_bits, acc_bits=acc_bits
+            shift_bits=shift_bits, acc_bits=acc_bits, unsigned=Unsigned
         )
         
         if sim_verbose():

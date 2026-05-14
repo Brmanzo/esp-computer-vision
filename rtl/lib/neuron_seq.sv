@@ -94,11 +94,10 @@ module neuron_seq #(
 
   logic signed [InChannels-1:0][InBits-1:0]   data_q;
   logic signed [OutChannels-1:0][OutBits-1:0] neuron_q;
-  logic signed [OutChannels-1:0][OutBits-1:0] output_q;  // Double-buffered output to prevent read-write race
-  assign data_o = output_q;
+  assign data_o = neuron_q;
 
   /* ------------------------------------ Control FSM ------------------------------------ */
-  typedef enum logic [2:0] {Idle, Busy, Flush1, Flush2, Flush3, Done} fsm_e;
+  typedef enum logic [2:0] {Idle, Busy, Flush1, Flush2, Done} fsm_e;
   fsm_e state_q, state_d;
 
   assign valid_o = (state_q == Done);
@@ -128,22 +127,10 @@ module neuron_seq #(
       Idle:   if (in_fire) state_d = Busy;
       Busy:   if (last_in_ch && last_out_ch) state_d = Flush1;
       Flush1: state_d = Flush2; // Wait for MAC pipeline
-      Flush2: state_d = Flush3; // Wait for neuron_q capture (dsp_valid_q fires here)
-      Flush3: state_d = Done;   // neuron_q is now stable; snapshot to output_q
+      Flush2: state_d = Done;   // Wait for neuron_q capture (dsp_valid_q fires here)
       Done:   if (out_fire) state_d = Idle;
       default: state_d = Idle;
     endcase
-  end
-
-  // Snapshot neuron_q into output_q when entering Done state.
-  // This ensures data_o remains stable while neuron_q is being overwritten
-  // by the next frame's DSP results.
-  always_ff @(posedge clk_i) begin
-    if (rst_i) begin
-      output_q <= '0;
-    end else if (state_q == Flush3 && state_d == Done) begin
-      output_q <= neuron_q;
-    end
   end
 
   /* ------------------------------------ Weight ROM ------------------------------------ */

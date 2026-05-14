@@ -11,10 +11,10 @@ module filter_seq #(
   ,parameter int unsigned BiasBits    = 8
   ,parameter int unsigned InChannels  = 1
   ,parameter int unsigned OutChannels = 1
-  ,parameter int unsigned Unsigned    = (InBits > 2) ? 1:0
   ,parameter int unsigned ShiftBits   = 0
   ,parameter int unsigned KernelWidth = 3
   ,parameter int unsigned AccBits     = 32
+  ,parameter int unsigned Unsigned    = 0
 
   ,localparam int unsigned KernelArea = KernelWidth * KernelWidth
   `ifdef VERILATOR
@@ -184,8 +184,8 @@ module filter_seq #(
         ,.BiasBits    (BiasBits)
         ,.AccBits     (AccBits)
         ,.InChannels  (InChannels)
-        ,.Unsigned    (Unsigned)
         ,.ShiftBits   (ShiftBits)
+        ,.Unsigned    (Unsigned)
         ,.DSPIdx      (dsp)
       ) dsp_inst (
          .clk_i (clk_i)

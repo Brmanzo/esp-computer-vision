@@ -11,8 +11,11 @@ module tb_filter #(
   ,parameter int unsigned OutChannels = 1
   ,parameter int unsigned KernelWidth = 3
   ,parameter int unsigned AccBits     = 32
+  ,parameter int unsigned Unsigned    = 0
+  ,parameter int unsigned ShiftBits   = 0
   ,parameter int unsigned GEN_DSP     = 0
   ,parameter string       FileName    = "injected_weights_0.hex"
+  ,parameter string       FileName_0  = ""
 )  (
    input [0:0] clk_i
   ,input [0:0] rst_i
@@ -40,6 +43,8 @@ module tb_filter #(
       ,.InChannels  (InChannels)
       ,.KernelWidth (KernelWidth)
       ,.AccBits     (AccBits)
+      ,.Unsigned    (Unsigned)
+      ,.ShiftBits   (ShiftBits)
       ,.Bias        (INJECTED_BIASES_0) // tb_filter only supports 1 OutChannel for parallel
     ) dut (
        .clk_i     (clk_i)
@@ -62,7 +67,10 @@ module tb_filter #(
       ,.OutChannels (OutChannels)
       ,.KernelWidth (KernelWidth)
       ,.AccBits     (AccBits)
+      ,.Unsigned    (Unsigned)
+      ,.ShiftBits   (ShiftBits)
       ,.FileName    (FileName)
+      ,.FileName_0  (FileName_0)
       ,.Biases      (INJECTED_BIASES_0)
     ) dut (
        .clk_i     (clk_i)

@@ -24,7 +24,7 @@ module global_max #(
 );
 
   /* ------------------------ Counter Logic ------------------------ */
-  logic [CountWidth-1:0] counter_d, counter_q;
+  logic [CountWidth-1:0] counter_q;
 
   wire  [0:0] first_term = (counter_q == '0);
   wire  [0:0] last_term;

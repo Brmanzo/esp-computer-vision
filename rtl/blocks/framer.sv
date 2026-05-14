@@ -38,29 +38,29 @@ module framer #(
   wire  [0:0] out_fire = valid_o && ready_i;
 
   /* ---------------------------------------- Counter Logic ---------------------------------------- */
-  // Tracks completed packet elements and drives flush logic for when packet doesn't divide evenly into packed elements.
+  // Tracks completed packet elements.
   // Counter saturates at max count and is reset on next packet.
-  logic [CountWidth-1:0]               counter_q, counter_d;
-  wire  [CountWidth-1:0] max_count   = CountWidth'(PacketLenElems - 1);
-  wire  [0:0]            counter_max = (counter_q == max_count);
+  wire  [0:0]            counter_max;
+  wire  [0:0]            footer_sent = (state_q == Footer1 && out_fire);
+  wire  [0:0]            forwarding  = (state_q == Forward && in_fire);
+  
+  /* verilator lint_off PINCONNECTEMPTY */
+  counter_roll #(
+     .CountBits (CountWidth)
+    ,.MaxVal    (PacketLenElems - 1)
+    ,.ResetVal  ('0)
+    ,.EnableDown(1'b0)
+  ) elem_counter_inst (
+     .clk_i  (clk_i)
+    ,.rst_i  (rst_i || footer_sent)
+    ,.up_i   (forwarding && !counter_max)
+    ,.down_i (1'b0)
+    ,.count_o()
+    ,.next_o ()
+    ,.max_o  (counter_max)
+  );
+  /* verilator lint_on PINCONNECTEMPTY */
 
-  // Saturating counter to track number of packed inputs
-  always_ff @(posedge clk_i) begin
-    if (rst_i) counter_q <= '0;
-    else       counter_q <= counter_d;
-  end
-
-  always_comb begin
-    counter_d = counter_q; // Default hold
-    // Reset counter when finishing footer
-    if (state_q == Footer1 && out_fire) begin
-      counter_d = '0;
-    // Increment counter when accepting input in forward state
-    end else if (state_q == Forward && in_fire) begin
-      // Saturate at max count
-      if (!counter_max) counter_d = counter_q + 1'b1;
-    end
-  end
 
   /* ------------------------------------------ Flush Logic ------------------------------------------ */
   // Flush logic for when packet doesn't divide evenly into packed elements. 
@@ -93,9 +93,9 @@ module framer #(
 
   // RX Complete logic to track when a full packet has been received
   always_ff @(posedge clk_i) begin
-    if (rst_i)                               rx_complete <= 1'b0;
-    else if (state_q == Footer1 && out_fire) rx_complete <= 1'b0;
-    else if (last_input)                     rx_complete <= 1'b1;
+    if (rst_i)            rx_complete <= 1'b0;
+    else if (footer_sent) rx_complete <= 1'b0;
+    else if (last_input)  rx_complete <= 1'b1;
   end
 
   // Current state logic
@@ -107,9 +107,7 @@ module framer #(
     end else begin
       data_q  <= data_d;
       valid_q <= valid_d;
-      if (out_fire) begin
-        state_q <= state_d;
-      end
+      if (out_fire) state_q <= state_d;
     end
   end
 
@@ -117,19 +115,11 @@ module framer #(
   always_comb begin
     state_d = state_q;
     case (state_q)
-      Wakeup: begin
-        if (out_fire)    state_d = Forward;
-      end
-      Forward: begin
-        if (tx_complete) state_d = Footer0;
-      end
-      Footer0: begin
-        if (out_fire)    state_d = Footer1;
-      end
-      Footer1: begin
-        if (out_fire)    state_d = Forward;
-      end
-      default:           state_d = Wakeup;
+      Wakeup:  if (out_fire)    state_d = Forward;
+      Forward: if (tx_complete) state_d = Footer0;
+      Footer0: if (out_fire)    state_d = Footer1;
+      Footer1: if (out_fire)    state_d = Forward;
+      default:                  state_d = Wakeup;
     endcase
   end
 

@@ -11,6 +11,7 @@ module pool_layer #(
     parameter int unsigned KernelWidth = 2,
     parameter int unsigned InChannels  = 1,
     parameter int unsigned PoolMode    = 0
+    ,parameter int unsigned Unsigned    = 0
 ) (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -156,6 +157,7 @@ module pool_layer #(
         max #(
            .KernelWidth(KernelWidth)
           ,.InBits     (InBits)
+          ,.Unsigned   (Unsigned)
         ) max_i (
            .window(windows[ch])
           ,.data_o(data_o[ch])
@@ -164,6 +166,7 @@ module pool_layer #(
         avg #(
            .KernelWidth(KernelWidth)
           ,.InBits     (InBits)
+          ,.Unsigned   (Unsigned)
         ) avg_i (
            .window(windows[ch])
           ,.data_o(data_o[ch])

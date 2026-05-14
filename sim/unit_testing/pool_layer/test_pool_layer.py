@@ -34,13 +34,14 @@ TEST_CASES_MAX = load_tests_from_csv(os.path.join(tbpath, "test_cases_max.csv"))
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @auto_unpack(TEST_CASES_MAX)
 def test_max(test_name, simulator,
-             LineWidthPx, LineCountPx, KernelWidth, InBits, InChannels, PoolMode):
+             LineWidthPx, LineCountPx, KernelWidth, InBits, InChannels, PoolMode, Unsigned):
     # This line must be first
     parameters = dict(locals())
     parameters.pop('test_name', None)
     parameters.pop('simulator', None)
     parameters['OutBits'] = InBits # Ensure OutBits matches InBits
-    param_str = f"InBits{InBits}_OutBits{InBits}_Channels{InChannels}_LineWidth{LineWidthPx}_LineCount{LineCountPx}_Kernel{KernelWidth}"
+    param_str = f"InBits{InBits}_OutBits{InBits}_Channels{InChannels}_LineWidth{LineWidthPx}_LineCount{LineCountPx}_Kernel{KernelWidth}_Unsigned{Unsigned}"
+
     custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
     runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
 
@@ -49,37 +50,39 @@ TEST_CASES_AVG = load_tests_from_csv(os.path.join(tbpath, "test_cases_avg.csv"))
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @auto_unpack(TEST_CASES_AVG)
 def test_avg(test_name, simulator,
-             LineWidthPx, LineCountPx, KernelWidth, InBits, InChannels, PoolMode):
+             LineWidthPx, LineCountPx, KernelWidth, InBits, InChannels, PoolMode, Unsigned):
     # This line must be first
     parameters = dict(locals())
     parameters.pop('test_name', None)
     parameters.pop('simulator', None)
     parameters['OutBits'] = InBits # Ensure OutBits matches InBits
-    param_str = f"InBits{InBits}_OutBits{InBits}_Channels{InChannels}_LineWidth{LineWidthPx}_LineCount{LineCountPx}_Kernel{KernelWidth}"
+    param_str = f"InBits{InBits}_OutBits{InBits}_Channels{InChannels}_LineWidth{LineWidthPx}_LineCount{LineCountPx}_Kernel{KernelWidth}_Unsigned{Unsigned}"
+
     custom_work_dir = os.path.join(tbpath, "run", "width", param_str, simulator)
     runner(simulator, timescale, tbpath, parameters, testname=test_name, work_dir=custom_work_dir)
 
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
-@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, InBits", 
-                         [("16", "16", "2", "1")])
+@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, InBits, Unsigned", 
+                         [("16", "16", "2", "1", "0")])
 
-def test_all(simulator, LineWidthPx, LineCountPx, KernelWidth, InBits):
+def test_all(simulator, LineWidthPx, LineCountPx, KernelWidth, InBits, Unsigned):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
+
     runner(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, InBits", [("16", "16", "2", "1")])
-def test_lint(simulator, LineWidthPx, LineCountPx, KernelWidth, InBits):
+@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, InBits, Unsigned", [("16", "16", "2", "1", "0")])
+def test_lint(simulator, LineWidthPx, LineCountPx, KernelWidth, InBits, Unsigned):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, InBits", [("16", "16", "2", "1")])
-def test_style(simulator, LineWidthPx, LineCountPx, KernelWidth, InBits):
+@pytest.mark.parametrize("LineWidthPx, LineCountPx, KernelWidth, InBits, Unsigned", [("16", "16", "2", "1", "0")])
+def test_style(simulator, LineWidthPx, LineCountPx, KernelWidth, InBits, Unsigned):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']

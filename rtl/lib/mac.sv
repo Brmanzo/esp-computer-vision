@@ -7,6 +7,7 @@ module mac #(
   ,parameter  int unsigned OutBits    = 32
   ,parameter  int unsigned WeightBits = 2
   ,parameter  int unsigned TermCount  = 3
+  ,parameter  int unsigned Unsigned   = 0
 )  (
    input  logic signed [TermCount-1:0][InBits-1:0]     window_i 
   ,input  logic signed [TermCount-1:0][WeightBits-1:0] weights_i
@@ -31,7 +32,7 @@ module mac #(
         wire signed [WeightBits-1:0] w_val = $signed(weights_i[i]);
         assign addends[i] = window_i[i][0] ? acc_t'(w_val) : -acc_t'(w_val);
       end
-    end else if (InBits == 2) begin : gen_ternary_in
+    end else if (InBits == 2 && Unsigned == 0) begin : gen_ternary_in
       for (genvar i = 0; i < TermCount; i++) begin : gen_ternary_multiply
         wire signed [WeightBits-1:0] w_val = $signed(weights_i[i]);
         assign addends[i] = (window_i[i] == 2'sb01) ?   acc_t'(w_val) :
@@ -41,7 +42,11 @@ module mac #(
     // Otherwise normal multiplication
     end else begin : gen_normal
       for (genvar i = 0; i < TermCount; i++) begin : gen_normal_multiply
-        assign addends[i] = acc_t'($signed(weights_i[i])) * $signed(window_i[i]);
+        if (Unsigned == 1) begin : gen_unsigned_mult
+          assign addends[i] = acc_t'($signed(weights_i[i]) * $signed({1'b0, window_i[i]}));
+        end else begin : gen_signed_mult
+          assign addends[i] = acc_t'($signed(weights_i[i]) * $signed(window_i[i]));
+        end
       end
     end
   endgenerate

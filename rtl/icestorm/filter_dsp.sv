@@ -15,14 +15,18 @@ module filter_dsp #(
   ,parameter  int unsigned WeightBits  = 2
   ,parameter  int unsigned BiasBits    = 8
   ,parameter  int unsigned AccBits     = `SB_MAC16_OUT
-  ,parameter  int unsigned Unsigned    = (InBits > 2) ? 1:0
   ,parameter  int unsigned ShiftBits   = 0
   ,parameter  int unsigned InChannels  = 4
   ,parameter  int unsigned DSPIdx      = 0
+  ,parameter  int unsigned Unsigned    = 0
 
   ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
   ,localparam int unsigned TotalTerms  = InChannels * KernelArea
   ,localparam int unsigned TermBits    = (TotalTerms > 1) ? $clog2(TotalTerms) : 1
+  // Widen narrow inputs so Yosys retains a $mul cell that ICE40_DSP can infer.
+  // 2-bit × 8-bit is simplified to mux/shift before the ICE40_DSP pass runs;
+  // anything ≥5 bits keeps a $mul and maps to SB_MAC16.
+  ,localparam int unsigned EffInBits   = (InBits < 5) ? 5 : InBits
 ) (
    input [0:0] clk_i
   ,input [0:0] rst_i
@@ -45,12 +49,12 @@ module filter_dsp #(
   wire [0:0] out_fire = valid_o && ready_i;
     /* ---------------------------- Counter Logic ---------------------------- */
   logic [TermBits-1:0] term_count_q;
+  wire  [TermBits-1:0] term_count_d;
 
   wire  [0:0] new_term = (term_count_q == '0);
   wire  [0:0] last_term;
   logic [0:0] busy;
 
-  /* verilator lint_off PINCONNECTEMPTY */
   counter_roll #(
       .CountBits  (TermBits)
     ,.ResetVal   (0)
@@ -62,10 +66,9 @@ module filter_dsp #(
     ,.up_i       (busy)
     ,.down_i     (1'b0)
     ,.count_o    (term_count_q)
-    ,.next_o     ()
+    ,.next_o     (term_count_d)
     ,.max_o      (last_term)
   );
-  /* verilator lint_on PINCONNECTEMPTY */
 
   /* ----------------------------- FSM Logic ----------------------------- */
   typedef enum logic [1:0] {Idle, Busy, Flush, Done} fsm_e;
@@ -93,24 +96,33 @@ module filter_dsp #(
   end
 
   /* ------------------------ Data Sequencing ------------------------ */
-  // term_idx follows term_count_q during busy cycles
+  // term_idx follows term_count_q during busy cycles (data mux)
   wire [TermBits-1:0] term_idx = term_count_q;
-  assign term_idx_o = term_idx;
+  // Expose NEXT count for ROM pre-fetch: compensates for 1-cycle synchronous read latency
+  assign term_idx_o = term_count_d;
 
-  // Access weights and windows directly without registration
-  logic [0:0] en_q;
-  logic [0:0] load_bias_r;
-  logic signed [InBits-1:0]   data_q;
+  // Combinational signals for the multiplier to start immediately in Cycle 1
+  wire [0:0] en_q;
+  wire [0:0] load_bias_r;
+  wire signed [EffInBits-1:0] data_q;
+  assign en_q        = busy;
+  assign load_bias_r = (busy && new_term);
+  
+  generate
+    if (InBits == 1) begin : gen_binary_data
+      assign data_q = windows_i[term_idx*InBits] ? EffInBits'(1) : EffInBits'(-1);
+    end else begin : gen_multibit_data
+      if (Unsigned == 1) begin : gen_unsigned_data
+        assign data_q = {{(EffInBits-InBits){1'b0}}, windows_i[term_idx*InBits +: InBits]};
+      end else begin : gen_signed_data
+        assign data_q = {{(EffInBits-InBits){windows_i[term_idx*InBits + InBits - 1]}}, windows_i[term_idx*InBits +: InBits]};
+      end
+    end
+  endgenerate
+
   logic signed [BiasBits-1:0] bias_q;
-
   always_ff @(posedge clk_i) begin
-    // Enable SB_MAC16 when busy, 1 cycle delay to align with ROM
-    en_q   <= busy;
-    // Capture current input off of window
-    data_q <= windows_i[term_idx*InBits +: InBits];
-    // Capture bias and load on first term
-    bias_q      <= bias_i;
-    load_bias_r <= (busy && new_term);
+    bias_q <= bias_i;
   end
 
   /* ------------------------------- Neuron DSP Unit ------------------------------- */
@@ -119,10 +131,11 @@ module filter_dsp #(
   wire signed [`SB_MAC16_OUT-1:0] neuron_o;
 
   neuron_dsp #(
-     .InBits     (InBits)
+     .InBits     (EffInBits)
     ,.WeightBits (WeightBits)
     ,.BiasBits   (BiasBits)
     ,.OutBits    (`SB_MAC16_OUT)
+    ,.Unsigned   (Unsigned)
   ) dsp_inst (
      .clk_i       (clk_i)
     ,.rst_i       (rst_i)

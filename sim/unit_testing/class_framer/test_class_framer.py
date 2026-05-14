@@ -38,6 +38,14 @@ def test_each(test_name, simulator, BusBits):
     parameters = {"BusBits": int(BusBits)}
     runner(simulator, timescale, tbpath, parameters, testname=test_name, pymodule="test_class_framer")
 
+@pytest.mark.parametrize("simulator", ["verilator"])
+@pytest.mark.parametrize("BusBits", [8])
+def test_lint(simulator, BusBits):
+    # This line must be first
+    parameters = dict(locals())
+    del parameters['simulator']
+    lint(simulator, timescale, tbpath, parameters)
+
 @cocotb.test
 async def reset_test(dut):
     """Test for Initialization"""

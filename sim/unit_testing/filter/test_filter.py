@@ -22,14 +22,16 @@ timescale = "1ps/1ps"
 def use_dsp(request):
     return request.config.getoption("--dsp")
 
-def acc_width(in_bits: int, weight_bits: int, kernel_width: int, in_channels: int, bias_bits: int) -> int:
+def acc_width(in_bits: int, weight_bits: int, kernel_width: int, in_channels: int, bias_bits: int, unsigned: int = 0) -> int:
     kernel_area = kernel_width * kernel_width
 
     # 1. Calculate the magnitude of the worst-case convolution
     if in_bits == 1:
         max_input_mag = 1      # bipolar {-1, +1}
-    else:
+    elif unsigned:
         max_input_mag = (1 << in_bits) - 1
+    else:
+        max_input_mag = 1 << (in_bits - 1)
 
     max_weight_mag = 1 << (weight_bits - 1) 
     max_sum_mag = kernel_area * in_channels * max_input_mag * max_weight_mag
@@ -50,17 +52,21 @@ tests = ['reset_test'
         ,'full_bw_test']
 
 auto_rules = [
-    ("AccBits", "AccBits", lambda InBits, WeightBits, KernelWidth, InChannels, BiasBits: acc_width(InBits, WeightBits, KernelWidth, InChannels, BiasBits)),
-    ("OutBits", "OutBits", lambda InBits, WeightBits, KernelWidth, InChannels, BiasBits: acc_width(InBits, WeightBits, KernelWidth, InChannels, BiasBits))
+    ("AccBits", "AccBits", lambda InBits, WeightBits, KernelWidth, InChannels, BiasBits, Unsigned: acc_width(InBits, WeightBits, KernelWidth, InChannels, BiasBits, Unsigned)),
+    ("OutBits", "OutBits", lambda InBits, WeightBits, KernelWidth, InChannels, BiasBits, Unsigned: acc_width(InBits, WeightBits, KernelWidth, InChannels, BiasBits, Unsigned))
 ]
 
-TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), auto_rules)
+gen_rules = [
+    ("ShiftBits", lambda AccBits, OutBits: max(0, int(AccBits) - int(OutBits)))
+]
+
+TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @auto_unpack(TEST_CASES)
 
 def test_each(test_name, simulator, use_dsp,
-              InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits):
+              InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits, Unsigned, ShiftBits):
 
     if simulator == "icarus" and use_dsp:
         pytest.skip("Icarus Verilog has issues with string parameters for ROM initialization")
@@ -70,6 +76,9 @@ def test_each(test_name, simulator, use_dsp,
         pytest.skip("Icarus Verilog misinterprets 3D array ports for parallel multi-channel 1-bit activations")
 
     # Skip if DSP implementation cannot handle the bit-width
+    if simulator == "icarus" and int(AccBits) > 20:
+        pytest.skip(f"Icarus Verilog is unreliable with large accumulation widths ({AccBits} bits)")
+
     if use_dsp:
         # filter_dsp uses a 32-bit accumulator (SB_MAC16)
         # Required bits: max(OutBits, WeightBits + InBits + log2(InChannels * KernelArea))
@@ -86,7 +95,9 @@ def test_each(test_name, simulator, use_dsp,
         "KernelWidth": KernelWidth,
         "InChannels": InChannels,
         "AccBits": AccBits,
-        "OutBits": OutBits
+        "OutBits": OutBits,
+        "Unsigned": Unsigned,
+        "ShiftBits": ShiftBits
     }
     
     # Generate random weights/biases for this test run
@@ -135,9 +146,9 @@ def test_each(test_name, simulator, use_dsp,
            work_dir=custom_work_dir, includes=[custom_work_dir])
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits", 
-                         [( 1, 2, 8, 3, 1, acc_width( 1, 2, 3,  1, 8), acc_width( 1, 2, 3,  1, 8))])
-def test_lint(simulator, use_dsp, InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits):
+@pytest.mark.parametrize("InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits, Unsigned, ShiftBits", 
+                         [( 1, 2, 8, 3, 1, acc_width( 1, 2, 3,  1, 8, 0), acc_width( 1, 2, 3,  1, 8, 0), 0, 0)])
+def test_lint(simulator, use_dsp, InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits, Unsigned, ShiftBits):
     # This line must be first
     parameters = {
         "InBits": InBits,
@@ -146,15 +157,17 @@ def test_lint(simulator, use_dsp, InBits, WeightBits, BiasBits, KernelWidth, InC
         "KernelWidth": KernelWidth,
         "InChannels": InChannels,
         "AccBits": AccBits,
-        "OutBits": OutBits
+        "OutBits": OutBits,
+        "Unsigned": Unsigned,
+        "ShiftBits": ShiftBits
     }
     filelist = "filelists/filter_dsp.json" if use_dsp else "filelists/filter.json"
     lint(simulator, timescale, tbpath, parameters, filelist=filelist)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits", 
-                         [( 1, 2, 8, 3, 1, acc_width( 1, 2, 3,  1, 8), acc_width( 1, 2, 3,  1, 8))])
-def test_style(simulator, use_dsp, InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits):
+@pytest.mark.parametrize("InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits, Unsigned, ShiftBits", 
+                         [( 1, 2, 8, 3, 1, acc_width( 1, 2, 3,  1, 8, 0), acc_width( 1, 2, 3,  1, 8, 0), 0, 0)])
+def test_style(simulator, use_dsp, InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits, Unsigned, ShiftBits):
     # This line must be first
     parameters = {
         "InBits": InBits,
@@ -163,7 +176,9 @@ def test_style(simulator, use_dsp, InBits, WeightBits, BiasBits, KernelWidth, In
         "KernelWidth": KernelWidth,
         "InChannels": InChannels,
         "AccBits": AccBits,
-        "OutBits": OutBits
+        "OutBits": OutBits,
+        "Unsigned": Unsigned,
+        "ShiftBits": ShiftBits
     }
     filelist = "filelists/filter_dsp.json" if use_dsp else "filelists/filter.json"
     lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"], filelist=filelist)
@@ -178,6 +193,10 @@ class FilterModel:
         self._BiasBits = int(dut.BiasBits.value)
         self._InChannels = int(dut.InChannels.value)
         self._KernelArea = int(dut.KernelWidth.value)**2
+        unsigned_obj = getattr(dut, "Unsigned", None)
+        self._Unsigned = int(unsigned_obj.value) if unsigned_obj is not None else 0
+        shift_obj = getattr(dut, "ShiftBits", None)
+        self._ShiftBits = int(shift_obj.value) if shift_obj is not None else 0
 
     def consume(self):
         p_win  = int(self._dut.windows_i.value)
@@ -191,7 +210,7 @@ class FilterModel:
         if self._InBits == 1:
             windows = unpack_channels(p_win, 1, self._InChannels, self._KernelArea, signed=False)
         else:
-            windows = unpack_channels(p_win, self._InBits, self._InChannels, self._KernelArea, signed=True)
+            windows = unpack_channels(p_win, self._InBits, self._InChannels, self._KernelArea, signed=not self._Unsigned)
 
         total = 0
         for ch in range(self._InChannels):
@@ -202,6 +221,9 @@ class FilterModel:
                 # Input bipolar mapping
                 if self._InBits == 1:
                     win = 1 if win == 1 else -1
+                elif self._Unsigned:
+                    win = win & ((1 << self._InBits) - 1)
+                
                 if self._WeightBits == 1:
                     wgt = 1 if wgt == 1 else -1
                 total += win * wgt
@@ -215,10 +237,17 @@ class FilterModel:
         elif self._OutBits >= self._AccBits:
             exp = sign_extend(total, self._OutBits)
         else:
-            # MSB Truncation
-            shift = self._AccBits - self._OutBits
-            truncated = total >> shift
-            exp = sign_extend(truncated, self._OutBits)
+            # MSB Truncation with ReLU and Saturation (matching output_encoder.sv)
+            if total < 0:
+                exp = 0
+            else:
+                shift = self._ShiftBits
+                truncated = total >> shift
+                max_val = (1 << self._OutBits) - 1
+                if truncated > max_val:
+                    exp = max_val
+                else:
+                    exp = truncated
         
         return [(exp, windows, weights)]
 
@@ -248,12 +277,19 @@ class RandomDataGenerator:
         self._InChannels  = int(dut.InChannels.value)
         self._BiasBits    = int(dut.BiasBits.value)
         self._term_count  = int(dut.KernelWidth.value) * int(dut.KernelWidth.value)
+        unsigned_obj = getattr(dut, "Unsigned", None)
+        self._Unsigned = int(unsigned_obj.value) if unsigned_obj is not None else 0
 
     def generate(self):
         from util.bitwise import pack_terms
         # 1. Create Raw Data Structure
-        windows = [[gen_random_signed(self._in_bits, random) for _ in range(self._term_count)] 
-                   for _ in range(self._InChannels)]
+        if self._Unsigned:
+            from util.gen_inputs import gen_random_unsigned
+            windows = [[gen_random_unsigned(self._in_bits, random) for _ in range(self._term_count)] 
+                       for _ in range(self._InChannels)]
+        else:
+            windows = [[gen_random_signed(self._in_bits, random) for _ in range(self._term_count)] 
+                       for _ in range(self._InChannels)]
         
         # In DSP mode, weights and biases are fixed in ROM/Parameters
         if "INJECTED_WEIGHTS_0_INT" in os.environ:

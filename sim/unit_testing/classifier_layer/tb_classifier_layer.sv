@@ -12,6 +12,7 @@ module tb_classifier_layer #(
   ,parameter  int unsigned WeightBits = 2
   ,parameter  int unsigned BiasBits   = 2
   ,parameter  int unsigned DSPCount   = 0
+  ,parameter  int unsigned Unsigned   = 0
   ,parameter  string       FileName   = "memory_init_file.hex"
   ,parameter  string       FileName_0 = ""
 
@@ -40,6 +41,7 @@ classifier_layer #(
     ,.InChannels  (InChannels)
     ,.ClassCount  (ClassCount)
     ,.DSPCount    (DSPCount)
+    ,.Unsigned    (Unsigned)
     
     ,.WeightBits  (WeightBits)
     ,.Weights     (INJECTED_WEIGHTS_0)

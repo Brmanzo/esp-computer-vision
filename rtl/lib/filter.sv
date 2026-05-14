@@ -11,6 +11,7 @@ module filter #(
   ,parameter   int unsigned AccBits     = 32
   ,parameter   int unsigned ShiftBits   = 8
   ,parameter   int unsigned InChannels  = 8
+  ,parameter   int unsigned Unsigned    = 0
   ,parameter   logic signed [BiasBits-1:0] Bias = '0
   ,localparam  int unsigned KernelArea  = KernelWidth * KernelWidth
 )  (
@@ -38,6 +39,7 @@ module filter #(
         ,.OutBits   (AccBits)
         ,.WeightBits(WeightBits)
         ,.TermCount (KernelArea)
+        ,.Unsigned  (Unsigned)
       ) mac_inst (
          .window_i (windows_i[ch])
         ,.weights_i(weights_i[ch])

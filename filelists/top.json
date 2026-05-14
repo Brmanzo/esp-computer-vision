@@ -5,7 +5,6 @@
         "rtl/blocks/conv_layer.sv",
         "rtl/blocks/pool_layer.sv",
         "rtl/blocks/unpacker.sv",
-        "rtl/lib/counter.sv",
         "rtl/lib/counter_roll.sv",
         "rtl/icestorm/icestorm_ram.sv",
         "rtl/lib/elastic.sv",
@@ -37,6 +36,7 @@
         "rtl/lib/filter_seq.sv",
         "rtl/lib/neuron_seq.sv",
         "rtl/lib/output_encoder.sv",
-        "rtl/icestorm/icestorm_rom.sv"
+        "rtl/icestorm/icestorm_rom.sv",
+        "rtl/lib/input_encoder.sv"
     ]
 }

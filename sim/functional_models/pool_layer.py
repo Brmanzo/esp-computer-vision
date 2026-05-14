@@ -11,9 +11,10 @@ class RandomDataGenerator:
     def __init__(self, dut):
         self._width_p = int(dut.InBits.value)
         self._InChannels = int(dut.InChannels.value)
+        self._Unsigned = int(dut.Unsigned.value)
 
     def generate(self):
-        raw_din = gen_input_channels(self._width_p, self._InChannels)
+        raw_din = gen_input_channels(self._width_p, self._InChannels, unsigned=bool(self._Unsigned))
         packed_din = pack_terms(raw_din, self._width_p)
         return (packed_din, raw_din)
 class PoolLayerModel():
@@ -40,6 +41,7 @@ class PoolLayerModel():
             self._OutChannels  = int(dut.InChannels.value)
             self._Stride       = int(dut.Stride.value)
             self._PoolMode     = int(dut.PoolMode.value)
+            self._Unsigned     = int(dut.Unsigned.value)
         else:
             # If a parameter is missing, kwargs will throw a KeyError automatically
             try:
@@ -52,6 +54,7 @@ class PoolLayerModel():
                 self._OutChannels  = int(kwargs["OutChannels"])
                 self._Stride       = int(kwargs["Stride"])
                 self._PoolMode     = int(kwargs["PoolMode"])
+                self._Unsigned     = int(kwargs["Unsigned"])
             except KeyError as e:
                 raise ValueError(f"Missing required parameter when dut is None: {e}")
 
@@ -162,7 +165,7 @@ class PoolLayerModel():
         if self._dut is not None:
             assert_resolvable(self._data_i)
             packed = int(self._data_i.value.integer)
-            raw_val = unpack_terms(packed, int(self._dut.InBits.value), self._InChannels)
+            raw_val = unpack_terms(packed, int(self._dut.InBits.value), self._InChannels, signed=not bool(self._Unsigned))
 
             # Call the pure math pipeline
             return self.step(raw_val, in_fire=True)
@@ -182,6 +185,8 @@ class PoolLayerModel():
                 got_raw = (packed >> (ch * w)) & ((1 << w) - 1)
                 
                 if w == 1:
+                    got = got_raw
+                elif self._Unsigned:
                     got = got_raw
                 else:
                     got = sign_extend(got_raw, w)

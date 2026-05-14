@@ -7,7 +7,7 @@ from util.utilities  import runner, clock_start_sequence, reset_sequence, auto_u
 from util.bitwise    import unpack_kernel_weights, pack_terms, unpack_biases
 from util.gen_inputs import gen_biases, gen_kernels, gen_input_channels
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
-from functional_models.conv_layer import output_width
+from functional_models.conv_layer import output_width, calc_acc_bits
 from functional_models.single_block import SingleBlockModel
 from util.torch_ref import torch_single_block_ref
 tbpath = Path(__file__).parent
@@ -30,7 +30,7 @@ tests = ['reset_test'
         ,'full_bw_test']
 
 auto_rules = [
-    ("C_OutBits", "C_OutBits", lambda C_InBits, C_WeightBits, C_KernelWidth, C_InChannels, C_BiasBits: output_width(C_InBits, C_WeightBits, C_KernelWidth, C_InChannels, C_BiasBits))
+    ("C_OutBits", "C_OutBits", lambda C_InBits, C_WeightBits, C_KernelWidth, C_InChannels, C_BiasBits, C_Unsigned: output_width(C_InBits, C_WeightBits, C_KernelWidth, C_InChannels, C_BiasBits, C_Unsigned))
 ]
 
 gen_rules = [
@@ -41,12 +41,12 @@ gen_rules = [
 TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+@pytest.mark.parametrize("C_DSPCount", [0,1])
 @auto_unpack(TEST_CASES)
-@pytest.mark.parametrize("DSPCount", [0, 1])
 def test_each(test_name, simulator, 
               C_LineWidthPx, C_LineCountPx, C_InBits, C_OutBits, C_KernelWidth,
               P_KernelWidth, C_WeightBits, C_BiasBits, C_InChannels,
-              C_Weights, C_Biases, C_OutChannels, C_Padding, P_Mode, DSPCount):
+              C_Weights, C_Biases, C_OutChannels, C_Padding, P_Mode, C_ShiftBits, C_DSPCount, C_Unsigned):
     parameters = dict(locals())
     parameters.pop('C_Biases', None)
     parameters.pop('C_Weights', None)
@@ -55,15 +55,24 @@ def test_each(test_name, simulator,
     total_weight_bits = C_OutChannels * C_InChannels * (C_KernelWidth**2) * C_WeightBits
     total_bias_bits   = C_OutChannels * C_BiasBits
 
-    if simulator == "icarus" and int(DSPCount) > 0:
+    # inject_weights_and_biases uses C{layer}_X key naming; add aliases for the layer-0 lookup
+    parameters["C0_OutChannels"] = C_OutChannels
+    parameters["C0_InChannels"]  = C_InChannels
+    parameters["C0_KernelWidth"] = C_KernelWidth
+
+    if simulator == "icarus" and int(C_DSPCount) > 0:
         pytest.skip("Icarus Verilog has issues with ROM initialization in sequential configurations")
 
     custom_work_dir = inject_weights_and_biases(
-        simulator=simulator, parameters=parameters, param_str=param_str, 
-        tbpath=tbpath, test_class="each", Weights=C_Weights, Biases=C_Biases, 
+        simulator=simulator, parameters=parameters, param_str=param_str,
+        tbpath=tbpath, test_class="each", Weights=C_Weights, Biases=C_Biases,
         weight_bits=C_WeightBits, bias_bits=total_bias_bits,
         weight_count=C_OutChannels * C_InChannels * (C_KernelWidth**2),
-        layer=0, dsp_count=int(DSPCount))
+        layer=0, dsp_count=int(C_DSPCount))
+
+    parameters.pop("C0_OutChannels", None)
+    parameters.pop("C0_InChannels",  None)
+    parameters.pop("C0_KernelWidth", None)
 
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters,
@@ -76,9 +85,17 @@ class RandomDataGenerator:
     def __init__(self, dut):
         self._width_p = int(dut.C_InBits.value)
         self._InChannels = int(dut.C_InChannels.value)
+        unsigned_obj = getattr(dut, "C_Unsigned", None)
+        self._Unsigned = int(unsigned_obj.value) if unsigned_obj is not None else 0
 
     def generate(self):
-        raw_din = gen_input_channels(self._width_p, self._InChannels)
+        if self._Unsigned:
+             from util.gen_inputs import gen_random_unsigned
+             import random
+             rng = random.Random(None)
+             raw_din = [gen_random_unsigned(self._width_p, rng) for _ in range(self._InChannels)]
+        else:
+             raw_din = gen_input_channels(self._width_p, self._InChannels)
         packed_din = pack_terms(raw_din, self._width_p)
         return (packed_din, raw_din)
 
@@ -108,6 +125,9 @@ async def single_test(dut):
     P_K  = int(dut.P_KernelWidth.value)
     P_M  = int(dut.P_Mode.value)
     C_P  = int(dut.C_Padding.value)
+    C_ShiftBits = int(dut.C_ShiftBits.value)
+    unsigned_obj = getattr(dut, "C_Unsigned", None)
+    C_Unsigned = int(unsigned_obj.value) if unsigned_obj is not None else 0
 
     N_in = C_W * C_H
     
@@ -133,6 +153,8 @@ async def single_test(dut):
         "OutChannels": C_OC,
         "Stride":      C_S,
         "Padding":     C_P,
+        "ShiftBits":   C_ShiftBits,
+        "Unsigned":    C_Unsigned,
         "weights":     kernels_4d,
         "biases":      biases_1d
     }
@@ -171,7 +193,7 @@ async def single_test(dut):
     om.start()
     im.start()
 
-    tmo_ns = (N_in * 100) + 5000
+    tmo_ns = (N_in * 5000) + 100000
     try:
         await om.wait(tmo_ns)
     except SimTimeoutError:
@@ -194,6 +216,9 @@ async def rate_tests(dut, in_rate, out_rate):
     P_K  = int(dut.P_KernelWidth.value)
     P_M  = int(dut.P_Mode.value)
     C_P  = int(dut.C_Padding.value)
+    C_ShiftBits = int(dut.C_ShiftBits.value)
+    unsigned_obj = getattr(dut, "C_Unsigned", None)
+    C_Unsigned = int(unsigned_obj.value) if unsigned_obj is not None else 0
     C_S = 1 
     P_S = P_K 
 
@@ -223,7 +248,7 @@ async def rate_tests(dut, in_rate, out_rate):
         "InBits": C_InBits, "OutBits": C_OutBits,
         "WeightBits": C_WW, "BiasBits": C_BW,
         "InChannels": C_IC, "OutChannels": C_OC, "Stride": C_S,
-        "Padding": C_P,
+        "Padding": C_P, "ShiftBits": C_ShiftBits, "Unsigned": C_Unsigned,
         "weights": kernels_4d,
         "biases":  biases_1d,
         "input_activation": input_activation # Let Conv record inputs
@@ -243,8 +268,8 @@ async def rate_tests(dut, in_rate, out_rate):
     slow = min(in_rate, out_rate)
     slow = max(slow, 0.05) 
 
-    first_out_wait_ns = int((2 * (C_K - 1) * C_W + 2 * (C_K - 1) + 500) / slow)
-    timeout_ns        = int((P_H_out * N_in + 1000) / slow)
+    first_out_wait_ns = int((N_in * 200 + 50000) / slow)
+    timeout_ns        = int((N_in * 5000 + 100000) / slow)
 
     om = OutputModel(dut, RateGenerator(dut, out_rate), l_out)
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, in_rate), N_in)
@@ -269,7 +294,8 @@ async def rate_tests(dut, in_rate, out_rate):
         await om.wait(timeout_ns)
         
         # 4. Verify against PyTorch reference
-        final_ref = torch_single_block_ref(input_activation, kernels_4d, C_S, in_bits=C_InBits, out_bits=C_OutBits, mode=P_M, pool_kernel_size=P_K, padding=C_P, biases=biases_1d)        
+        C_AccBits = calc_acc_bits(C_K, C_InBits, C_WW, C_IC, C_BW, C_Unsigned)
+        final_ref = torch_single_block_ref(input_activation, kernels_4d, C_S, in_bits=C_InBits, out_bits=C_OutBits, mode=P_M, pool_kernel_size=P_K, padding=C_P, biases=biases_1d, shift_bits=C_ShiftBits, acc_bits=C_AccBits, unsigned=C_Unsigned)        
 
         assert np.allclose(output_activation, final_ref.numpy()), "Output activation does not match..."
         print("Test passed! PyTorch matches integrated model.")

@@ -67,11 +67,12 @@ def run_classifier_test(test_name, simulator, parameters, Weights, Biases, test_
         layer=0, dsp_count=int(parameters.get('DSPCount', 0)))
         
     wrapper_path = os.path.join(tbpath, "tb_classifier_layer.sv")
+    filelist = "filelists/classifier_layer.json"
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=clean_params,
-        pymodule="test_classifier_layer", testname=test_name, work_dir=custom_work_dir,
-        sim_build=custom_work_dir, includes=[custom_work_dir], toplevel_override="tb_classifier_layer", 
-        extra_sources=[wrapper_path],
+        testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
+        toplevel_override="tb_classifier_layer", extra_sources=[wrapper_path],
+        filelist=filelist
     )
 
 TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), gen_rules=gen_rules)
@@ -80,7 +81,7 @@ TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), gen_rul
 @auto_unpack(TEST_CASES)
 def test_each(test_name, simulator,
               TermBits, TermCount, BusBits, InChannels,
-              ClassCount, WeightBits, Weights, BiasBits, Biases):
+              ClassCount, WeightBits, Weights, BiasBits, Biases, Unsigned):
     parameters = dict(locals())
     parameters['DSPCount'] = 0
     run_classifier_test(test_name, simulator, parameters, Weights, Biases, "each")
@@ -91,7 +92,7 @@ TEST_CASES_DSPS = load_tests_from_csv(os.path.join(tbpath, "test_cases_dsps.csv"
 @auto_unpack(TEST_CASES_DSPS)
 def test_dsps(test_name, simulator,
               TermBits, TermCount, BusBits, InChannels,
-              ClassCount, WeightBits, Weights, BiasBits, Biases, DSPCount):
+              ClassCount, WeightBits, Weights, BiasBits, Biases, DSPCount, Unsigned):
     run_classifier_test(test_name, simulator, locals(), Weights, Biases, "dsps")
 
 @pytest.mark.parametrize("simulator", ["verilator"])

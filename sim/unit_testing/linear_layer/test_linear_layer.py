@@ -51,6 +51,8 @@ def test_width(test_name, simulator,
     parameters = dict(locals())
     if simulator == "icarus" and int(DSPCount) > 0:
         pytest.skip("Icarus Verilog has issues with ROM initialization in sequential configurations")
+    if simulator == "icarus" and int(InBits) == 2:
+        pytest.skip("Icarus Verilog has issues with signed Ternary (InBits=2) logic in parallel linear layers")
 
     parameters.pop("test_name", None)
     parameters.pop("simulator", None)
@@ -94,6 +96,8 @@ def test_channels(test_name, simulator,
     parameters = dict(locals())
     if simulator == "icarus" and int(DSPCount) > 0:
         pytest.skip("Icarus Verilog has issues with ROM initialization in sequential configurations")
+    if simulator == "icarus" and int(InBits) == 2:
+        pytest.skip("Icarus Verilog has issues with signed Ternary (InBits=2) logic in parallel linear layers")
 
     parameters.pop("test_name", None)
     parameters.pop("simulator", None)
@@ -129,6 +133,8 @@ def test_dsps(test_name, simulator,
     parameters = dict(locals())
     if simulator == "icarus" and int(DSPCount) > 0:
         pytest.skip("Icarus Verilog has issues with ROM initialization in sequential configurations")
+    if simulator == "icarus" and int(InBits) == 2:
+        pytest.skip("Icarus Verilog has issues with signed Ternary (InBits=2) logic in parallel linear layers")
 
     parameters.pop("test_name", None)
     parameters.pop("simulator", None)

@@ -21,7 +21,9 @@ module classifier_layer #(
   ,parameter int unsigned DSPCount  = 0
 `ifdef VERILATOR
   ,parameter string       FileName   = ""
+  /* verilator lint_off UNUSEDPARAM */
   ,parameter string       FileName_0 = ""
+  /* verilator lint_on UNUSEDPARAM */
 `else
   ,parameter [8*256-1:0]  FileName   = ""
   ,parameter [8*256-1:0]  FileName_0 = ""

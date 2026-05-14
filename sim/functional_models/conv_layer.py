@@ -7,12 +7,20 @@ from util.utilities  import assert_resolvable, sim_verbose
 from util.bitwise    import sign_extend, pack_terms, unpack_terms
 from util.gen_inputs import gen_input_channels
 
-def output_width(width_in, weight_width, kernel_width, in_channels, bias_bits=8):
-    return str(calc_acc_bits(kernel_width, width_in, weight_width, in_channels, bias_bits))
+def output_width(width_in, weight_width, kernel_width, in_channels, bias_bits=8, unsigned=0):
+    return str(calc_acc_bits(kernel_width, width_in, weight_width, in_channels, bias_bits, unsigned))
 
-def calc_acc_bits(kernel_width, in_bits, weight_bits, in_channels, bias_bits):
+def calc_acc_bits(kernel_width, in_bits, weight_bits, in_channels, bias_bits, unsigned=0):
     terms = int(kernel_width) * int(kernel_width) * int(in_channels)
-    max_input = 1 if int(in_bits) <= 2 else (1 << (int(in_bits) - 1))
+    if int(in_bits) == 1:
+        max_input = 1
+    elif int(in_bits) == 2 and not unsigned:
+        max_input = 1 # Ternary
+    elif unsigned:
+        max_input = (1 << int(in_bits)) - 1
+    else:
+        max_input = 1 << (int(in_bits) - 1)
+        
     max_weight = 1 if int(weight_bits) <= 2 else (1 << (int(weight_bits) - 1))
     worst_case_sum = terms * max_input * max_weight
     wc_bits = worst_case_sum.bit_length() + 1
@@ -59,6 +67,8 @@ class ConvLayerModel():
             shift_obj          = getattr(dut, "ShiftBits", None)
             self._ShiftBits    = int(shift_obj.value) if shift_obj is not None else 0
             self._Padding      = int(dut.Padding.value) if hasattr(dut, 'Padding') else 0
+            unsigned_obj       = getattr(dut, "Unsigned", None)
+            self._Unsigned     = int(unsigned_obj.value) if unsigned_obj is not None else 0
         else:
             try:
                 self._kernel_width = int(kwargs["KernelWidth"])
@@ -73,10 +83,11 @@ class ConvLayerModel():
                 self._Stride       = int(kwargs["Stride"])
                 self._ShiftBits    = int(kwargs.get("ShiftBits", 0))
                 self._Padding      = int(kwargs.get("Padding", 0))
+                self._Unsigned     = int(kwargs.get("Unsigned", 0))
             except KeyError as e:
                 raise ValueError(f"Missing required parameter when dut is None: {e}")
 
-        self._AccBits = calc_acc_bits(self._kernel_width, self._InBits, self._weight_width, self._InChannels, self._bias_bits)
+        self._AccBits = calc_acc_bits(self._kernel_width, self._InBits, self._weight_width, self._InChannels, self._bias_bits, self._Unsigned)
         assert self._OutBits + self._ShiftBits <= self._AccBits, "Output bits + shift must fit within accumulator bits to avoid overflow issues in gen_learned_shift mode."
         
         if weights is None:
@@ -145,11 +156,13 @@ class ConvLayerModel():
                 # Input Encoding: matching hardware logic for 1-bit BNN and 2-bit Ternary
                 if self._InBits == 1:
                     win_enc = np.where(win == 1, 1, -1)
-                elif self._InBits == 2:
+                elif self._InBits == 2 and not self._Unsigned:
                     # Ternary mapping: 1 -> 1, 3 (-1) -> -1, else -> 0
                     win_enc = np.where(win == 1, 1, np.where((win == 3) | (win == -1), -1, 0))
                 else:
                     win_enc = np.vectorize(sign_extend)(win, self._InBits)
+                    if self._Unsigned:
+                        win_enc = win_enc & ((1 << self._InBits) - 1)
                 
                 # Weight Encoding: matching hardware logic for 1-bit BNN and 2-bit Ternary
                 kernel = self.k[oc, ic]
@@ -279,7 +292,7 @@ class ConvLayerModel():
         """
         if self._dut is not None:
             packed = int(self._dut.data_i.value)
-            raw_val = unpack_terms(packed, int(self._dut.InBits.value), self._InChannels)
+            raw_val = unpack_terms(packed, int(self._dut.InBits.value), self._InChannels, signed=not self._Unsigned)
             self._dut._log.info(f"MODEL CONSUME: raw_val={raw_val}")
             return self.step(raw_val, in_fire=True) 
 

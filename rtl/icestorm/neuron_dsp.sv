@@ -12,6 +12,7 @@ module neuron_dsp #(
   ,parameter int unsigned OutBits    = `SB_MAC16_OUT
   ,parameter int unsigned WeightBits = 2
   ,parameter int unsigned BiasBits   = `SB_MAC16_OUT
+  ,parameter int unsigned Unsigned   = 0
 ) (
    input  logic [0:0] clk_i
   ,input  logic [0:0] rst_i
@@ -35,7 +36,11 @@ module neuron_dsp #(
     if (InBits == 1) begin
       data_w = data_i[0] ? `SB_MAC16_IN'(1) : `SB_MAC16_IN'(-1);
     end else begin
-      data_w = `SB_MAC16_IN'($signed(data_i));
+      if (Unsigned == 1) begin
+        data_w = `SB_MAC16_IN'($unsigned(data_i));
+      end else begin
+        data_w = `SB_MAC16_IN'($signed(data_i));
+      end
     end
   end
   /* ------------------------ Binary/Ternary weight encoding ------------------------ */

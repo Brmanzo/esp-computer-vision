@@ -12,6 +12,8 @@ from functional_models.single_block import SingleBlockModel
 from functional_models.conv_layer   import ConvLayerModel, output_width
 from functional_models.classifier_layer import ClassifierLayerModel
 from util.utilities import assert_resolvable
+from util.torch_ref import torch_conv_ref, torch_pool_ref, torch_classifier_ref
+from functional_models.conv_layer import calc_acc_bits
 
 tbpath = Path(__file__).parent
 
@@ -84,7 +86,7 @@ class SingleBlockWithClassifierModel:
         packed = int(self._dut.data_i.value.integer)
         
         # Unpack the raw bits from the simulator
-        raw_val = unpack_terms(packed, self._InBits, self._InChannels)
+        raw_val = unpack_terms(packed, self._InBits, self._InChannels, signed=not self.layer_0_model.conv_model._Unsigned)
 
         # Step entire model
         return self.step(raw_val)
@@ -109,8 +111,8 @@ class SingleBlockWithClassifierModel:
 
 # Format: ("Target_Var", "CSV_Column", lambda <parsed_keys_needed>: func(...))
 auto_rules = [
-    ("C0_OutBits", "C0_OutBits", lambda C0_InBits, C0_WeightBits, C0_KernelWidth, C0_InChannels, C0_BiasBits: output_width(C0_InBits, C0_WeightBits, C0_KernelWidth, C0_InChannels, C0_BiasBits)),
-    ("C1_OutBits", "C1_OutBits", lambda C0_OutBits, C1_WeightBits, C1_KernelWidth, C0_OutChannels, C1_BiasBits: output_width(C0_OutBits, C1_WeightBits, C1_KernelWidth, C0_OutChannels, C1_BiasBits))
+    ("C0_OutBits", "C0_OutBits", lambda C0_InBits, C0_WeightBits, C0_KernelWidth, C0_InChannels, C0_BiasBits, C0_Unsigned: output_width(C0_InBits, C0_WeightBits, C0_KernelWidth, C0_InChannels, C0_BiasBits, C0_Unsigned)),
+    ("C1_OutBits", "C1_OutBits", lambda C0_OutBits, C1_WeightBits, C1_KernelWidth, C0_OutChannels, C1_BiasBits, C0_ShiftBits: output_width(C0_OutBits, C1_WeightBits, C1_KernelWidth, C0_OutChannels, C1_BiasBits, int(C0_ShiftBits > 0)))
 ]
 
 # Format: ("Target_Var", lambda <parsed_keys_needed>: func(...))
@@ -128,14 +130,14 @@ TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), auto_ru
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @auto_unpack(TEST_CASES)
-@pytest.mark.parametrize("DSPCount", [0, 1])
-def test_each(test_name, simulator, 
+def test_each(test_name, simulator,
               C0_LineWidthPx, C0_LineCountPx, C0_InBits, C0_OutBits,
               C0_KernelWidth, C0_WeightBits, C0_BiasBits, C0_InChannels, C0_OutChannels,
-              C0_Stride, C0_Padding, C0_Weights, C0_Biases,  P0_KernelWidth, P0_Mode, 
-              C1_OutBits, C1_KernelWidth, C1_WeightBits, C1_BiasBits, C1_OutChannels, 
+              C0_Stride, C0_Padding, C0_ShiftBits, C0_Weights, C0_Biases, C0_DSPCount, P0_KernelWidth, P0_Mode,
+              C1_OutBits, C1_ShiftBits, C1_KernelWidth, C1_WeightBits, C1_BiasBits, C1_OutChannels,
               C1_Stride, C1_Padding, C1_Weights, C1_Biases,
-              ClassCount, BusBits, ClassWeightBits, ClassBiasBits, C2_Weights, C2_Biases, DSPCount):
+              ClassCount, BusBits, ClassWeightBits, ClassBiasBits, ClassDSPCount,
+              C0_Unsigned, C2_Weights, C2_Biases):
     parameters = dict(locals())
     parameters.pop('C0_Weights', None)
     parameters.pop('C0_Biases', None)
@@ -144,39 +146,47 @@ def test_each(test_name, simulator,
     parameters.pop('C2_Weights', None)
     parameters.pop('C2_Biases', None)
     param_str = f"InBits_{C0_InBits}_OutBits0_{C0_OutBits}_OutBits1_{C1_OutBits}_test_{test_name}"
-    
-    weight_bits_0 = C0_OutChannels * C0_InChannels * (C0_KernelWidth**2) * C0_WeightBits
-    weight_bits_1 = C1_OutChannels * C0_OutChannels * (C1_KernelWidth**2) * C1_WeightBits
-    weight_bits_2 = ClassCount * C1_OutChannels * ClassWeightBits
 
-    bias_bits_0 = C0_OutChannels * C0_BiasBits
-    bias_bits_1 = C1_OutChannels * C1_BiasBits
-    bias_bits_2 = ClassCount * ClassBiasBits
-    
-    if simulator == "icarus" and int(DSPCount) > 0:
+    # 1. Prepare work directory
+    custom_work_dir = os.path.join(tbpath, "run", "each", param_str, simulator)
+    os.makedirs(custom_work_dir, exist_ok=True)
+
+    if simulator == "icarus" and (int(C0_DSPCount) > 0 or int(ClassDSPCount) > 0):
         pytest.skip("Icarus Verilog has issues with ROM initialization in sequential configurations")
 
-    custom_work_dir = inject_weights_and_biases(
-        simulator=simulator, parameters=parameters, param_str=param_str, 
-        tbpath=tbpath, test_class="each", Weights=C0_Weights, Biases=C0_Biases, 
-        weight_bits=C0_WeightBits, bias_bits=bias_bits_0,
+    # 2. Inject Weights and Biases for all layers
+    # Layer 0 (Conv+Pool Block)
+    inject_weights_and_biases(
+        simulator=simulator, parameters=parameters, param_str=param_str,
+        tbpath=tbpath, test_class="each", Weights=C0_Weights, Biases=C0_Biases,
+        weight_bits=C0_WeightBits, bias_bits=C0_OutChannels * C0_BiasBits,
         weight_count=C0_OutChannels * C0_InChannels * (C0_KernelWidth**2),
-        layer=0, dsp_count=int(DSPCount))
-    
+        layer=0, dsp_count=int(C0_DSPCount), custom_work_dir=custom_work_dir)
+
+    # Layer 1 (Second Conv Layer)
     inject_weights_and_biases(
-        simulator=simulator, parameters=parameters, param_str=param_str, 
-        tbpath=tbpath, test_class="each", Weights=C1_Weights, Biases=C1_Biases, 
-        weight_bits=C1_WeightBits, bias_bits=bias_bits_1,
+        simulator=simulator, parameters=parameters, param_str=param_str,
+        tbpath=tbpath, test_class="each", Weights=C1_Weights, Biases=C1_Biases,
+        weight_bits=C1_WeightBits, bias_bits=C1_OutChannels * C1_BiasBits,
         weight_count=C1_OutChannels * C0_OutChannels * (C1_KernelWidth**2),
-        layer=1, dsp_count=int(DSPCount))
+        layer=1, dsp_count=int(C0_DSPCount), custom_work_dir=custom_work_dir)
 
+    # Layer 2 (Classifier)
     inject_weights_and_biases(
-        simulator=simulator, parameters=parameters, param_str=param_str, 
-        tbpath=tbpath, test_class="each", Weights=C2_Weights, Biases=C2_Biases, 
-        weight_bits=ClassWeightBits, bias_bits=bias_bits_2,
+        simulator=simulator, parameters=parameters, param_str=param_str,
+        tbpath=tbpath, test_class="each", Weights=C2_Weights, Biases=C2_Biases,
+        weight_bits=ClassWeightBits, bias_bits=ClassCount * ClassBiasBits,
         weight_count=ClassCount * C1_OutChannels,
-        layer=2, dsp_count=int(DSPCount))
+        layer=2, dsp_count=int(ClassDSPCount), custom_work_dir=custom_work_dir)
 
+    # 3. Create a master header for the testbench
+    master_header_path = os.path.join(custom_work_dir, "injected_weights_top.vh")
+    with open(master_header_path, "w") as f:
+        for i in range(3):
+            f.write(f'`include "injected_weights_{i}.vh"\n')
+            f.write(f'`include "injected_biases_{i}.vh"\n')
+
+    # 4. Run simulator
     parameters.pop('FileName', None)
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters,
@@ -186,11 +196,20 @@ def test_each(test_name, simulator,
 
 class RandomDataGenerator:
     def __init__(self, dut):
+        self._dut = dut
         self._width_p = int(dut.C0_InBits.value)
         self._InChannels = int(dut.C0_InChannels.value)
 
     def generate(self):
-        raw_din = gen_input_channels(self._width_p, self._InChannels)
+        unsigned_obj = getattr(self._dut, "C0_Unsigned", None)
+        is_unsigned = int(unsigned_obj.value) if unsigned_obj is not None else 0
+        if is_unsigned:
+             from util.gen_inputs import gen_random_unsigned
+             import random
+             rng = random.Random(None)
+             raw_din = [gen_random_unsigned(self._width_p, rng) for _ in range(self._InChannels)]
+        else:
+             raw_din = gen_input_channels(self._width_p, self._InChannels)
         packed_din = pack_terms(raw_din, self._width_p)
         return (packed_din, raw_din)
 
@@ -218,6 +237,7 @@ async def single_test(dut):
     C0_OutBits = int(dut.C0_OutBits.value)
     C0_P  = int(dut.C0_Padding.value)
     C0_S  = int(dut.C0_Stride.value)
+    C0_ShiftBits = int(dut.C0_ShiftBits.value)
     
     P0_K  = int(dut.P0_KernelWidth.value)
     P0_M  = int(dut.P0_Mode.value)
@@ -230,6 +250,7 @@ async def single_test(dut):
     C1_BB = int(dut.C1_BiasBits.value)
     C1_InBits  = C0_OutBits
     C1_OutBits = int(dut.C1_OutBits.value)
+    C1_SB = int(dut.C1_ShiftBits.value)
     C1_P  = int(dut.C1_Padding.value)
     C1_S  = int(dut.C1_Stride.value)
 
@@ -240,6 +261,8 @@ async def single_test(dut):
     CL_BI = int(dut.ClassBiasBits.value)
 
     N_in = C0_W * C0_H
+
+    input_activation  = [[[0 for _ in range(C0_W)] for _ in range(C0_H)] for _ in range(C0_IC)]
 
     # 2. Calculate dimensions
     C0_W_out = ((C0_W + 2 * C0_P - C0_K) // C0_S) + 1
@@ -262,7 +285,9 @@ async def single_test(dut):
         "KernelWidth": C0_K, "LineWidthPx": C0_W, "LineCountPx": C0_H,
         "InBits": C0_InBits, "OutBits": C0_OutBits, "WeightBits": C0_WW, "BiasBits": C0_BB,
         "InChannels": C0_IC, "OutChannels": C0_OC, "Stride": C0_S,
-        "Padding": C0_P, "weights": kernels_4d_0, "biases": biases_0
+        "Padding": C0_P, "weights": kernels_4d_0, "biases": biases_0,
+        "ShiftBits": C0_ShiftBits, "input_activation": input_activation,
+        "Unsigned": int(dut.C0_Unsigned.value) if hasattr(dut, 'C0_Unsigned') else 0
     }
     pool_0_params = {
         "KernelWidth": P0_K, "LineWidthPx": C0_W_out, "LineCountPx": C0_H_out,
@@ -272,19 +297,22 @@ async def single_test(dut):
     }
     conv_1_params = {
         "KernelWidth": C1_K, "LineWidthPx": P0_W_out, "LineCountPx": P0_H_out,
-        "InBits": C0_OutBits, "OutBits": C1_OutBits, "WeightBits": C1_WW, "BiasBits": C1_BB,
+        "InBits": C0_OutBits, "OutBits": C1_OutBits, "ShiftBits": C1_SB,
+        "WeightBits": C1_WW, "BiasBits": C1_BB,
         "InChannels": C1_IC, "OutChannels": C1_OC, "Stride": C1_S,
-        "Padding": C1_P, "weights": kernels_4d_1, "biases": biases_1
+        "Padding": C1_P, "weights": kernels_4d_1, "biases": biases_1,
+        "Unsigned": int(C0_ShiftBits > 0)
     }
     classifier_params = {
         "term_bits": C1_OutBits, "term_count": CL_TC, "bus_bits": CL_BB,
-        "in_channels": C1_OC, "class_count": CL_CC, "weights": weights_2, "biases": biases_2
+        "in_channels": C1_OC, "class_count": CL_CC, "weights": weights_2, "biases": biases_2,
+        "unsigned_in": int(C1_SB > 0)
     }
 
     model = SingleBlockWithClassifierModel(dut, conv_0_params, pool_0_params, conv_1_params, classifier_params)
     m = ModelRunner(dut, model)
 
-    om = OutputModel(dut, RateGenerator(dut, 1), 1)                       
+    om = OutputModel(dut, RateGenerator(dut, 1), 1)
     im = InputModel(dut, RandomDataGenerator(dut), RateGenerator(dut, 1), N_in)
 
     timeout_ns = N_in * 500000
@@ -298,6 +326,39 @@ async def single_test(dut):
     try:
         await om.wait(timeout_ns)
         print("Success: Final Classification output produced!")
+        
+        # Verify against PyTorch reference
+        C0_AccBits = calc_acc_bits(C0_K, C0_InBits, C0_WW, C0_IC, C0_BB)
+        C1_AccBits = calc_acc_bits(C1_K, C1_InBits, C1_WW, C1_IC, C1_BB)
+        
+        ref_conv_0 = torch_conv_ref(
+            input_activation, kernels_4d_0, C0_S, 
+            in_bits=C0_InBits, out_bits=C0_OutBits, padding=C0_P, biases=biases_0,
+            shift_bits=C0_ShiftBits, acc_bits=C0_AccBits, unsigned=int(dut.C0_Unsigned.value) if hasattr(dut, 'C0_Unsigned') else 0
+        )
+        
+        ref_pool_0 = torch_pool_ref(
+            ref_conv_0, kernel_size=P0_K, stride=P0_S, mode=P0_M
+        )
+        
+        ref_conv_1 = torch_conv_ref(
+            ref_pool_0, kernels_4d_1, C1_S,
+            in_bits=C1_InBits, out_bits=C1_OutBits, padding=C1_P, biases=biases_1,
+            shift_bits=C1_SB, acc_bits=C1_AccBits, unsigned=int(C0_ShiftBits > 0)
+        )
+        
+        # Flatten and transpose for classifier: shape (TermCount, InChannels)
+        sequence = ref_conv_1.view(C1_OC, -1).transpose(0, 1).tolist()
+        class_id, logits = torch_classifier_ref(sequence, weights_2, biases_2, C1_OC, CL_CC)
+        
+        # Wait, the hardware output is checked inside ModelRunner against FunctionalModel.
+        # Let's verify that the PyTorch reference ALSO matches the expected!
+        assert class_id == model.final_outputs[-1] if hasattr(model, 'final_outputs') and model.final_outputs else class_id == int(dut.data_o.value.integer), \
+            f"PyTorch mismatch! Expected class {class_id}, got hardware output."
+            
+        if sim_verbose():
+            print(f"Test passed! PyTorch matches integrated model (Class ID: {class_id}).")
+
     except SimTimeoutError:
         assert False, f"Timed out. Expected 1 handshake. Got {om.nproduced()}"
 
@@ -314,6 +375,8 @@ async def rate_tests(dut, in_rate, out_rate):
     C0_OutBits = int(dut.C0_OutBits.value)
     C0_P  = int(dut.C0_Padding.value)
     C0_S  = int(dut.C0_Stride.value)
+    C0_ShiftBits = int(dut.C0_ShiftBits.value)
+    C0_Unsigned = int(dut.C0_Unsigned.value) if hasattr(dut, 'C0_Unsigned') else 0
     
     P0_K  = int(dut.P0_KernelWidth.value)
     P0_M  = int(dut.P0_Mode.value)
@@ -326,6 +389,7 @@ async def rate_tests(dut, in_rate, out_rate):
     C1_BB = int(dut.C1_BiasBits.value)
     C1_InBits  = C0_OutBits
     C1_OutBits = int(dut.C1_OutBits.value)
+    C1_SB = int(dut.C1_ShiftBits.value)
     C1_P  = int(dut.C1_Padding.value)
     C1_S  = int(dut.C1_Stride.value)
 
@@ -336,6 +400,8 @@ async def rate_tests(dut, in_rate, out_rate):
     CL_BI = int(dut.ClassBiasBits.value)
 
     N_in = C0_W * C0_H
+
+    input_activation  = [[[0 for _ in range(C0_W)] for _ in range(C0_H)] for _ in range(C0_IC)]
 
     # 2. Calculate dimensions
     C0_W_out = ((C0_W + 2 * C0_P - C0_K) // C0_S) + 1
@@ -358,7 +424,9 @@ async def rate_tests(dut, in_rate, out_rate):
         "KernelWidth": C0_K, "LineWidthPx": C0_W, "LineCountPx": C0_H,
         "InBits": C0_InBits, "OutBits": C0_OutBits, "WeightBits": C0_WW, "BiasBits": C0_BB,
         "InChannels": C0_IC, "OutChannels": C0_OC, "Stride": C0_S,
-        "Padding": C0_P, "weights": kernels_4d_0, "biases": biases_0
+        "Padding": C0_P, "weights": kernels_4d_0, "biases": biases_0,
+        "ShiftBits": C0_ShiftBits, "input_activation": input_activation,
+        "Unsigned": C0_Unsigned
     }
     pool_0_params = {
         "KernelWidth": P0_K, "LineWidthPx": C0_W_out, "LineCountPx": C0_H_out,
@@ -368,13 +436,16 @@ async def rate_tests(dut, in_rate, out_rate):
     }
     conv_1_params = {
         "KernelWidth": C1_K, "LineWidthPx": P0_W_out, "LineCountPx": P0_H_out,
-        "InBits": C0_OutBits, "OutBits": C1_OutBits, "WeightBits": C1_WW, "BiasBits": C1_BB,
+        "InBits": C0_OutBits, "OutBits": C1_OutBits, "ShiftBits": C1_SB,
+        "WeightBits": C1_WW, "BiasBits": C1_BB,
         "InChannels": C1_IC, "OutChannels": C1_OC, "Stride": C1_S,
-        "Padding": C1_P, "weights": kernels_4d_1, "biases": biases_1
+        "Padding": C1_P, "weights": kernels_4d_1, "biases": biases_1,
+        "Unsigned": int(C0_ShiftBits > 0)
     }
     classifier_params = {
         "term_bits": C1_OutBits, "term_count": CL_TC, "bus_bits": CL_BB,
-        "in_channels": C1_OC, "class_count": CL_CC, "weights": weights_2, "biases": biases_2
+        "in_channels": C1_OC, "class_count": CL_CC, "weights": weights_2, "biases": biases_2,
+        "unsigned_in": int(C1_SB > 0)
     }
 
     model = SingleBlockWithClassifierModel(dut, conv_0_params, pool_0_params, conv_1_params, classifier_params)
@@ -395,6 +466,38 @@ async def rate_tests(dut, in_rate, out_rate):
     try:
         await om.wait(timeout_ns)
         print("Success: Final Classification output produced!")
+        
+        # Verify against PyTorch reference
+        C0_AccBits = calc_acc_bits(C0_K, C0_InBits, C0_WW, C0_IC, C0_BB)
+        C1_AccBits = calc_acc_bits(C1_K, C1_InBits, C1_WW, C1_IC, C1_BB)
+        
+        ref_conv_0 = torch_conv_ref(
+            input_activation, kernels_4d_0, C0_S, 
+            in_bits=C0_InBits, out_bits=C0_OutBits, padding=C0_P, biases=biases_0,
+            shift_bits=C0_ShiftBits, acc_bits=C0_AccBits, unsigned=C0_Unsigned
+        )
+        
+        ref_pool_0 = torch_pool_ref(
+            ref_conv_0, kernel_size=P0_K, stride=P0_S, mode=P0_M
+        )
+        
+        ref_conv_1 = torch_conv_ref(
+            ref_pool_0, kernels_4d_1, C1_S,
+            in_bits=C1_InBits, out_bits=C1_OutBits, padding=C1_P, biases=biases_1,
+            shift_bits=C1_SB, acc_bits=C1_AccBits, unsigned=int(C0_ShiftBits > 0)
+        )
+        
+        # Flatten and transpose for classifier: shape (TermCount, InChannels)
+        sequence = ref_conv_1.view(C1_OC, -1).transpose(0, 1).tolist()
+        class_id, logits = torch_classifier_ref(sequence, weights_2, biases_2, C1_OC, CL_CC)
+        
+        # Store the class ID check
+        assert class_id == int(dut.data_o.value.integer), \
+            f"PyTorch mismatch! Expected class {class_id}, got hardware output {int(dut.data_o.value.integer)}."
+            
+        if sim_verbose():
+            print(f"Test passed! PyTorch matches integrated model (Class ID: {class_id}).")
+
     except SimTimeoutError:
         assert False, f"Timed out. Expected 1 handshake. Got {om.nproduced()}"
 

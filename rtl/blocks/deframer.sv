@@ -8,8 +8,7 @@ module deframer #(
   ,localparam int unsigned PackedWidth        = UnpackedWidth * PackedNum
   ,parameter  int unsigned PacketLenElems     = 1024 // Number of packed elements per packet
   ,localparam int unsigned CountWidth         = $clog2(PacketLenElems + 1)
-  ,localparam logic [CountWidth-1:0] MaxCount = CountWidth'(PacketLenElems)
-  
+    
   ,parameter logic [PackedWidth-1:0] HeaderByte0 = PackedWidth'($unsigned(165)) // 0xA5
   ,parameter logic [PackedWidth-1:0] HeaderByte1 = PackedWidth'($unsigned(90))  // 0x5A
 )  (
@@ -33,40 +32,40 @@ module deframer #(
   wire  [0:0]               unpack_ready;
   wire  [0:0]               unpack_valid;
   wire  [UnpackedWidth-1:0] unpack_data;
-  wire  [0:0]               unpack_done;
 
   // Internal Signals
   wire  [0:0] in_fire  = valid_i && ready_o;
-  wire  [0:0] out_fire = valid_o && ready_i;
 
   /* ---------------------------------------- Counter Logic ---------------------------------------- */
-  logic [CountWidth-1:0] counter_q;
+  wire  [0:0] counter_max;
+  wire  [0:0] starting   = ((state_q != Forward) && in_fire);
+  wire  [0:0] forwarding = ((state_q == Forward) && in_fire);
 
   /* verilator lint_off PINCONNECTEMPTY */
-  counter #(
-    .Width(CountWidth)
-  )  elem_counter_inst (
-    .clk_i(clk_i)
-    ,.rst_i(rst_i || (state_q == Header0))
-
-    // Stop incrementing once we've reached the last element
-    ,.up_i((state_q == Forward) && in_fire && !counter_max)
-    ,.down_i(1'b0)
-
-    ,.count_o(counter_q)
-    ,.next_count_o()
+  counter_roll #(
+     .CountBits (CountWidth)
+    ,.MaxVal    (PacketLenElems - 1)
+    ,.ResetVal  ('0)
+    ,.EnableDown(1'b0)
+  ) elem_counter_inst (
+     .clk_i  (clk_i)
+    ,.rst_i  (rst_i || (state_q == Header0))
+    ,.up_i   (forwarding && !counter_max)
+    ,.down_i (1'b0)
+    ,.count_o()
+    ,.next_o ()
+    ,.max_o  (counter_max)
   );
 
   /* ------------------------------------------- FSM Logic ------------------------------------------- */
-  // counter_max now signals when we are processing the VERY LAST word of the packet
-  wire  [0:0] counter_max = (counter_q == CountWidth'(PacketLenElems - 1));
+  // counter_max signals when we are processing the VERY LAST word of the packet
   // Current state logic
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
-      state_q       <= Header0;
+      state_q <= Header0;
     end else begin
       // Advance state: header states on in_fire, Forward once last word is accepted
-      if (((state_q != Forward) && in_fire) || (state_q == Forward && in_fire && counter_max)) begin
+      if (starting || (forwarding && counter_max)) begin
         state_q <= state_d;
       end
     end
@@ -89,9 +88,7 @@ module deframer #(
           else                            state_d = Header0;
         end
       end
-      Forward: begin
-        if (in_fire && counter_max) state_d = Header0;
-      end
+      Forward: if (in_fire && counter_max) state_d = Header0;
       default: state_d = Header0;
     endcase
   end
@@ -104,7 +101,6 @@ module deframer #(
   // Always ready for data during header states. When forwarding,
   // we defer pressure to the unpacker unless we are finishing the packet.
   assign ready_o = (state_q == Forward) ? unpack_ready : 1'b1;
-
 
   /* ------------------------------------------ Unpacker Inst ------------------------------------------ */
   // Unpacker to unpack 4 2-bit magnitude values into each 8-bit UART input
@@ -122,7 +118,7 @@ module deframer #(
     ,.unpacked_o(unpack_data)
     ,.valid_o   (unpack_valid)
     ,.ready_i   (ready_i) // Allow unpacker to finish even if FSM transitions to Header0
-    ,.done_o    (unpack_done)
+    ,.done_o    ()
   );
 
 endmodule

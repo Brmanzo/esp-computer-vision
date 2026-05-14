@@ -9,12 +9,17 @@ function automatic int unsigned conv_acc_bits(
     input int unsigned input_bits, 
     input int unsigned weight_bits, 
     input int unsigned in_channels, 
-    input int unsigned bias_bits
+    input int unsigned bias_bits,
+    input int unsigned unsigned_mode
 );
   longint unsigned max_input, max_weight, worst_case_sum;
   int unsigned wc_bits;
   begin
-    max_input = (input_bits <= 2) ? 64'd1 : (64'd1 << (input_bits - 1));
+    if (input_bits == 1)                        max_input = 64'd1;
+    else if (input_bits == 2 && unsigned_mode == 0) max_input = 64'd1; // Ternary
+    else if (unsigned_mode != 0)                    max_input = (64'd1 << input_bits) - 1;
+    else                                        max_input = (64'd1 << (input_bits - 1));
+
     max_weight = (weight_bits <= 2) ? 64'd1 : (64'd1 << (weight_bits - 1));
     worst_case_sum = longint'(kernel_area) * max_input * max_weight * longint'(in_channels);
     wc_bits = $clog2(worst_case_sum + 1) + 1;
@@ -32,7 +37,6 @@ module conv_layer #(
    ,parameter  int unsigned WeightBits  = 2
    ,parameter  int unsigned BiasBits    = 8
    ,parameter  int unsigned ShiftBits   = 0
-   ,parameter  int unsigned Unsigned    = (InBits > 2) ? 1:0
    ,parameter  int unsigned InChannels  = 1
    ,parameter  int unsigned OutChannels = 1
    ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
@@ -42,6 +46,7 @@ module conv_layer #(
 
    ,parameter int unsigned Padding  = 0
    ,parameter int unsigned DSPCount = 0 // 0: LUT, n>=1: Sequential DSP Allocation
+   ,parameter int unsigned Unsigned = 0
 
    ,localparam int unsigned PaddedWidth  = LineWidthPx + (2 * Padding)
    ,localparam int unsigned PaddedHeight = LineCountPx + (2 * Padding)
@@ -53,7 +58,9 @@ module conv_layer #(
    ,parameter logic signed [OutChannels*BiasBits-1:0] Biases = '0
 `ifdef VERILATOR
    ,parameter string FileName = ""
+   /* verilator lint_off UNUSEDPARAM */
    ,parameter string FileName_0 = ""
+   /* verilator lint_on UNUSEDPARAM */
 `else
    ,parameter [8*256-1:0] FileName = ""
    ,parameter [8*256-1:0] FileName_0 = ""
@@ -71,7 +78,7 @@ module conv_layer #(
    ,output logic signed [OutChannels-1:0][OutBits-1:0] data_o
 );
 
-  localparam AccBits = conv_acc_bits(KernelArea, InBits, WeightBits, InChannels, BiasBits);
+  localparam AccBits = conv_acc_bits(KernelArea, InBits, WeightBits, InChannels, BiasBits, Unsigned);
 
   /* ---------------------------------------- Kernel Validation ---------------------------------------- */
   logic [XBits-1:0] x_pos;
@@ -216,6 +223,7 @@ module conv_layer #(
         ,.BiasBits    (BiasBits)
         ,.AccBits     (AccBits)
         ,.ShiftBits   (ShiftBits)
+        ,.Unsigned    (Unsigned)
         ,.InChannels  (InChannels)
         ,.OutChannels (OutChannels)
         ,.Biases      (Biases)
@@ -240,6 +248,7 @@ module conv_layer #(
             ,.WeightBits  (WeightBits)
             ,.AccBits     (AccBits)
             ,.ShiftBits   (ShiftBits)
+            ,.Unsigned    (Unsigned)
             ,.InChannels  (InChannels)
             ,.Bias        (Biases[oc*BiasBits+:BiasBits])
         ) filter_inst (

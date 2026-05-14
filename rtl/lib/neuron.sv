@@ -33,7 +33,9 @@ module neuron#(
   );
 
   /* ------------------------------ Bias Logic ------------------------------ */
+  /* verilator lint_off UNUSEDSIGNAL */
   wire signed [AccBits-1:0] biased_sum;
+  /* verilator lint_on UNUSEDSIGNAL */
   assign biased_sum = mac_sum + AccBits'($signed(Bias));
 
   /* ------------------------------ Output Logic ------------------------------ */

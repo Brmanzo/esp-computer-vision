@@ -5,6 +5,7 @@
 module max #(
    parameter  int unsigned KernelWidth = 3
   ,parameter  int unsigned InBits      = 1
+  ,parameter  int unsigned Unsigned    = 0
   ,localparam int unsigned OutBits     = InBits
   ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
 )  (
@@ -22,7 +23,11 @@ module max #(
       always_comb begin
         max = window[0];
         for (int i = 1; i < KernelArea; i++) begin
-          if (window[i] > max) max = window[i];
+          if (Unsigned == 1) begin
+            if ($unsigned(window[i]) > $unsigned(max)) max = window[i];
+          end else begin
+            if ($signed(window[i]) > $signed(max)) max = window[i];
+          end
         end
       end
     end

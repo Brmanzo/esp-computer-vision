@@ -24,10 +24,12 @@ module skid_buffer #(
   ,output [0:0] rts_o // Stop UART if high
 );
   /* ------------------------------------ Pointer Declarations ------------------------------------ */
-  logic [AddrWidth-1:0] read_ptr_q, read_ptr_d, write_ptr;
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic [AddrWidth:0]   read_ptr_d;
+  /* verilator lint_on UNUSEDSIGNAL */
+  logic [AddrWidth-1:0] read_ptr_q, write_ptr;
   logic [AddrWidth-1:0] prev_write_ptr = '0;
   logic [0:0] read_wrap, write_wrap;
-
   /* ------------------------------------ Full/Empty Logic ------------------------------------ */
   always_ff @ (posedge clk_i) begin
     if (rst_i) prev_write_ptr <= '0;
@@ -79,29 +81,35 @@ module skid_buffer #(
   end
   /* ------------------------------- Pointer Counter Instantiation ------------------------------- */
   // Read Counter
-  counter #(
-     .Width   (AddrWidth+1) // One extra bit for full/empty distinction
-    ,.ResetVal('0)
+  counter_roll #(
+     .CountBits (AddrWidth+1)
+    ,.MaxVal    (2*Depth - 1)
+    ,.ResetVal  ('0)
+    ,.EnableDown(1'b0)
   ) read_counter_inst (
      .clk_i  (clk_i)
     ,.rst_i  (rst_i)
-    ,.up_i   (out_fire) // Increment if ready_i and valid_o
-    ,.down_i (1'b0) // Only increments then rolls over
+    ,.up_i   (out_fire)
+    ,.down_i (1'b0)
     ,.count_o({read_wrap, read_ptr_q})
-    ,.next_count_o(read_ptr_d)
+    ,.next_o (read_ptr_d)
+    ,.max_o  ()
   );
 
   // Write Counter
-  counter #(
-     .Width   (AddrWidth+1) // One extra bit for full/empty distinction
-    ,.ResetVal(1'b0)
+  counter_roll #(
+     .CountBits (AddrWidth+1)
+    ,.MaxVal    (2*Depth - 1)
+    ,.ResetVal  ('0)
+    ,.EnableDown(1'b0)
   ) write_counter_inst (
-     .clk_i   (clk_i)
-    ,.rst_i   (rst_i)
-    ,.up_i    (in_fire) // Increment if ready_o and valid_i
-    ,.down_i  (1'b0) // Only increments then rolls over
-    ,.count_o ({write_wrap, write_ptr})
-    ,.next_count_o()
+     .clk_i  (clk_i)
+    ,.rst_i  (rst_i)
+    ,.up_i   (in_fire)
+    ,.down_i (1'b0)
+    ,.count_o({write_wrap, write_ptr})
+    ,.next_o ()
+    ,.max_o  ()
   );
 
   /* ------------------------------------ RAM Instantiation ------------------------------------ */
@@ -118,7 +126,7 @@ module skid_buffer #(
     ,.wr_addr_i (write_ptr)
 
     ,.rd_valid_i(1'b1)
-    ,.rd_addr_i (read_ptr_d)
+    ,.rd_addr_i (read_ptr_d[AddrWidth-1:0])
     ,.rd_data_o (ram_data)
   );
 

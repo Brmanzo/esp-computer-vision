@@ -20,16 +20,22 @@ timescale = "1ps/1ps"
 tests = ['single_test'
         ,'full_bw_test']
 
-def output_width(in_width: int, weight_width: int, term_count: int) -> str:
+def output_width(in_width: int, weight_width: int, term_count: int, unsigned: int = 0) -> str:
     '''Calculates proper output width for mixed signed/unsigned MAC.'''
-    max_in = 1 if in_width == 1 else (1 << in_width) - 1 
+    if in_width == 1:
+        max_in = 1
+    elif unsigned:
+        max_in = (1 << in_width) - 1
+    else:
+        max_in = 1 << (in_width - 1) # Absolute max for signed
+
     max_weight = 1 << (weight_width - 1) 
     max_sum = term_count * max_in * max_weight
     abs_bits = max_sum.bit_length()
     return str(abs_bits + 1)
 
 auto_rules = [
-    ("OutBits", "OutBits", lambda InBits, WeightBits, TermCount: output_width(InBits, WeightBits, TermCount))
+    ("OutBits", "OutBits", lambda InBits, WeightBits, TermCount, Unsigned: output_width(InBits, WeightBits, TermCount, Unsigned))
 ]
 
 TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), auto_rules)
@@ -37,7 +43,7 @@ TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), auto_ru
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 @auto_unpack(TEST_CASES)
 
-def test_each(test_name, simulator, InBits, WeightBits, TermCount, OutBits):
+def test_each(test_name, simulator, InBits, WeightBits, TermCount, Unsigned, OutBits):
     # This line must be first
     parameters = dict(locals())
     parameters.pop('test_name', None)
@@ -45,18 +51,18 @@ def test_each(test_name, simulator, InBits, WeightBits, TermCount, OutBits):
     runner(simulator, timescale, tbpath, parameters, testname=test_name, pymodule="test_mac")
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("InBits, WeightBits, TermCount, OutBits", 
-                         [(1, 2, 2, output_width(1, 2, 2))])
-def test_lint(simulator, InBits, WeightBits, TermCount, OutBits):
+@pytest.mark.parametrize("InBits, WeightBits, TermCount, OutBits, Unsigned", 
+                         [(1, 2, 2, output_width(1, 2, 2, 0), 0)])
+def test_lint(simulator, InBits, WeightBits, TermCount, OutBits, Unsigned):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
     lint(simulator, timescale, tbpath, parameters)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("InBits, WeightBits, TermCount, OutBits", 
-                         [(1, 2, 2, output_width(1, 2, 2))])
-def test_style(simulator, InBits, WeightBits, TermCount, OutBits):
+@pytest.mark.parametrize("InBits, WeightBits, TermCount, OutBits, Unsigned", 
+                         [(1, 2, 2, output_width(1, 2, 2, 0), 0)])
+def test_style(simulator, InBits, WeightBits, TermCount, OutBits, Unsigned):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
@@ -73,6 +79,7 @@ class MacModel():
         self._OutBits     = int(dut.OutBits.value)
         self._WeightBits  = int(dut.WeightBits.value)    
         self._TermCount   = int(dut.TermCount.value)
+        self._Unsigned    = int(dut.Unsigned.value)
 
         self._weights = [0] * self._TermCount
         self._window  = [0] * self._TermCount
@@ -85,8 +92,8 @@ class MacModel():
         self._weights = unpack_terms(packed_weights, self._WeightBits, self._TermCount)
         
         # Windows: Use the same helper! 
-        # If InBits == 1, it returns [0, 1...]. If > 1, it returns signed ints.
-        self._window = unpack_terms(packed_windows, self._InBits, self._TermCount)
+        # Pass signed=False if self._Unsigned is 1
+        self._window = unpack_terms(packed_windows, self._InBits, self._TermCount, signed=not self._Unsigned)
 
         # Apply Bipolar mapping ONLY if 1-bit
         if self._InBits == 1:

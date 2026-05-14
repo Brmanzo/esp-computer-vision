@@ -20,7 +20,7 @@ def to_torch_weights(kernels4):
     w = torch.tensor(kernels4, dtype=torch.int32)           # (OC,IC,K,K)
     return w
 
-def torch_conv_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1, padding=0, biases=None, shift_bits=0, acc_bits=None):
+def torch_conv_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1, padding=0, biases=None, shift_bits=0, acc_bits=None, unsigned=False):
     x = to_torch_input(input_activation).to(torch.float32)
     w = to_torch_weights(kernels4).to(torch.float32)
 
@@ -36,6 +36,9 @@ def torch_conv_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1, pa
         x = x * 2.0 - 1.0
         pad_val = -1.0
     else:
+        if unsigned:
+            x = x.to(torch.int64) % (1 << int(in_bits))
+            x = x.to(torch.float32)
         pad_val = 0.0
 
     # 3. Manual Padding
@@ -76,9 +79,9 @@ def torch_pool_ref(input_activation, kernel_size, stride=None, mode=0):
         y = F.avg_pool2d(x, kernel_size=kernel_size, stride=stride, padding=0)
     return y.squeeze(0) 
 
-def torch_single_block_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1, mode=0, pool_kernel_size=2, padding=0, biases=None):
+def torch_single_block_ref(input_activation, kernels4, stride, in_bits=1, out_bits=1, mode=0, pool_kernel_size=2, padding=0, biases=None, shift_bits=0, acc_bits=None, unsigned=False):
     # 1. Run Convolution
-    conv_out = torch_conv_ref(input_activation, kernels4, stride, in_bits, out_bits, padding, biases)
+    conv_out = torch_conv_ref(input_activation, kernels4, stride, in_bits, out_bits, padding, biases, shift_bits, acc_bits, unsigned=unsigned)
 
     # 2. Chain directly into Pool
     pool_out = torch_pool_ref(conv_out, kernel_size=pool_kernel_size, stride=pool_kernel_size, mode=mode)

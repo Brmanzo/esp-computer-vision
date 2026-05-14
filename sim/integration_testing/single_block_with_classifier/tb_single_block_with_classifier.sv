@@ -1,12 +1,7 @@
 // Bradley Manzo, 2026
 
 `timescale 1ns / 1ps
-`include "injected_weights_0.vh"
-`include "injected_biases_0.vh"
-`include "injected_weights_1.vh"
-`include "injected_biases_1.vh"
-`include "injected_weights_2.vh"
-`include "injected_biases_2.vh"
+`include "injected_weights_top.vh"
 
 module tb_single_block_with_classifier #(
    // Parameters default to the macros injected by the Python testbench
@@ -21,11 +16,15 @@ module tb_single_block_with_classifier #(
   ,parameter int unsigned C0_OutChannels = 2
   ,parameter int unsigned C0_Stride      = 1
   ,parameter int unsigned C0_Padding     = 1
+  ,parameter int unsigned C0_DSPCount    = 0
+  ,parameter int unsigned C0_ShiftBits   = 0
+  ,parameter int unsigned C0_Unsigned    = 0
 
   ,parameter int unsigned P0_KernelWidth = 2
   ,parameter int unsigned P0_Mode        = 0
 
   ,parameter int unsigned C1_OutBits     = 1
+  ,parameter int unsigned C1_ShiftBits  = 0
   ,parameter int unsigned C1_KernelWidth = 3
   ,parameter int unsigned C1_WeightBits  = 2
   ,parameter int unsigned C1_BiasBits    = 8
@@ -33,14 +32,22 @@ module tb_single_block_with_classifier #(
   ,parameter int unsigned C1_Stride      = 1
   ,parameter int unsigned C1_Padding     = 1
   
-  ,parameter int unsigned ClassCount     = 10
-  ,parameter int unsigned BusBits        = 8
+  ,parameter int unsigned ClassCount      = 10
+  ,parameter int unsigned BusBits         = 8
   ,parameter int unsigned ClassWeightBits = 2
   ,parameter int unsigned ClassBiasBits   = 8
-  ,parameter int unsigned DSPCount        = 0
-  ,parameter string       FileName_0     = "memory_init_file.hex"
-  ,parameter string       FileName_1     = "memory_init_file.hex"
-  ,parameter string       FileName_2     = "memory_init_file.hex"
+  ,parameter int unsigned ClassDSPCount   = 0
+`ifdef VERILATOR
+  ,parameter string FileName_0 = "model/data/roms/hex/layer_0_weights.hex"
+  ,parameter string FileName_1 = "model/data/roms/hex/layer_1_weights.hex"
+  ,parameter string FileName_2 = "model/data/roms/hex/layer_2_weights.hex"
+  ,parameter string FileName_3 = "model/data/roms/hex/layer_3_weights.hex"
+`else
+  ,parameter [8*256-1:0] FileName_0 = "model/data/roms/hex/layer_0_weights.hex"
+  ,parameter [8*256-1:0] FileName_1 = "model/data/roms/hex/layer_1_weights.hex"
+  ,parameter [8*256-1:0] FileName_2 = "model/data/roms/hex/layer_2_weights.hex"
+  ,parameter [8*256-1:0] FileName_3 = "model/data/roms/hex/layer_3_weights.hex"
+`endif
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -105,14 +112,16 @@ module tb_single_block_with_classifier #(
     ,.KernelWidth (C0_KernelWidth)
     ,.WeightBits  (C0_WeightBits)
     ,.BiasBits    (C0_BiasBits)
+    ,.ShiftBits   (C0_ShiftBits)
     ,.InChannels  (C0_InChannels)
     ,.OutChannels (C0_OutChannels)
     ,.Stride      (C0_Stride)
     ,.Padding     (C0_Padding)
-    ,.DSPCount    (DSPCount)
+    ,.DSPCount    (C0_DSPCount)
     ,.Weights     (INJECTED_WEIGHTS_0)
     ,.Biases      (INJECTED_BIASES_0)
     ,.FileName    (FileName_0)
+    ,.Unsigned    (C0_Unsigned)
   ) conv_layer_inst_0 (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)
@@ -132,7 +141,8 @@ module tb_single_block_with_classifier #(
     ,.InBits      (C0_OutBits)     
     ,.KernelWidth (P0_KernelWidth) 
     ,.InChannels  (C0_OutChannels)  
-    ,.PoolMode    (P0_Mode)              
+    ,.PoolMode    (P0_Mode)
+    ,.Unsigned    (C0_ShiftBits > 0)
   ) pool_layer_inst_0 (
      .clk_i    (clk_i)
     ,.rst_i    (rst_i)
@@ -147,10 +157,11 @@ module tb_single_block_with_classifier #(
   );
 
   conv_layer #(
-     .LineWidthPx (C1_LineWidthPx) // Fixed: Uses Post-Pool dimensions
-    ,.LineCountPx (C1_LineCountPx) // Fixed: Uses Post-Pool dimensions
+     .LineWidthPx (C1_LineWidthPx)
+    ,.LineCountPx (C1_LineCountPx)
     ,.InBits      (C0_OutBits)
     ,.OutBits     (C1_OutBits)
+    ,.ShiftBits   (C1_ShiftBits)
     ,.KernelWidth (C1_KernelWidth)
     ,.WeightBits  (C1_WeightBits)
     ,.BiasBits    (C1_BiasBits)
@@ -158,10 +169,11 @@ module tb_single_block_with_classifier #(
     ,.OutChannels (C1_OutChannels)
     ,.Stride      (C1_Stride)
     ,.Padding     (C1_Padding)
-    ,.DSPCount    (DSPCount)
+    ,.DSPCount    (C0_DSPCount)
     ,.Weights     (INJECTED_WEIGHTS_1)
     ,.Biases      (INJECTED_BIASES_1)
     ,.FileName    (FileName_1)
+    ,.Unsigned    (C0_ShiftBits > 0)
   ) conv_layer_inst_1 (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)
@@ -183,7 +195,8 @@ module tb_single_block_with_classifier #(
     ,.ClassCount (ClassCount)
     ,.WeightBits (ClassWeightBits)
     ,.BiasBits   (ClassBiasBits)
-    ,.DSPCount   (DSPCount)
+    ,.Unsigned   (C1_ShiftBits > 0)
+    ,.DSPCount   (ClassDSPCount)
     ,.Weights    (INJECTED_WEIGHTS_2)
     ,.Biases     (INJECTED_BIASES_2)
     ,.FileName   (FileName_2)

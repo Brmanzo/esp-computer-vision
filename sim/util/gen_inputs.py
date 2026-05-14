@@ -17,9 +17,12 @@ def gen_random_signed(width, rng):
     min_val = -(1 << (width - 1))
     return rng.randint(min_val, max_val)
 
-def gen_input_channels(InBits: int, IC: int, seed: int | None = None):
+def gen_input_channels(InBits: int, IC: int, seed: int | None = None, unsigned: bool = False):
     rng = random.Random(seed)
-    return [gen_random_signed(InBits, rng) for _ in range(IC)]
+    if unsigned:
+        return [gen_random_unsigned(InBits, rng) for _ in range(IC)]
+    else:
+        return [gen_random_signed(InBits, rng) for _ in range(IC)]
 
 def gen_kernels(WW: int, OC: int, IC: int, K: int, seed: int | None = None):
     rng = random.Random(seed)

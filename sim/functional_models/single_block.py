@@ -59,7 +59,7 @@ class SingleBlockModel:
         packed = int(self._dut.data_i.value.integer)
         
         # Unpack the raw bits from the simulator
-        raw_val = unpack_terms(packed, self._InBits, self._InChannels)
+        raw_val = unpack_terms(packed, self._InBits, self._InChannels, signed=not self.conv_model._Unsigned)
 
         # Step entire model
         return self.step(raw_val)
@@ -83,6 +83,9 @@ class SingleBlockModel:
             got_raw = (packed >> (ch * w)) & ((1 << w) - 1)
             
             if w == 1:
+                got = got_raw
+            elif w > 2 and w < self.conv_model._AccBits:
+                # gen_learned_shift: unsigned [0, 2^OutBits-1], no sign extension
                 got = got_raw
             else:
                 got = sign_extend(got_raw, w)
