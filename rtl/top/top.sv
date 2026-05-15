@@ -1,12 +1,12 @@
 // top.sv
 // Bradley Manzo, 2026
 
-`define ESP // Comment out this line to target USB-to-UART bridge instead of ESP32c3
+// `define ESP // Comment out this line to target USB-to-UART bridge instead of ESP32c3
 module top #(
 )  (
    input [0:0] clk_12mhz_i
   ,input [0:0] reset_n_async_unsafe_i
-  ,input [3:1] button_async_unsafe_i
+  // ,input [3:1] button_async_unsafe_i
 
   ,input  [0:0] rx_serial_i
   ,output [0:0] tx_serial_o
@@ -16,7 +16,7 @@ module top #(
   ,input  [0:0] esp_rst_i
 
   ,output [0:0] uart_rts_o
-  ,output [5:1] led_o
+  // ,output [5:1] led_o
 );
 
   wire [0:0] clk_12mhz_o;
@@ -26,8 +26,8 @@ module top #(
   wire [0:0] reset_sync_q;
   wire [0:0] rst_sync; // Use this as your reset_signal
 
-  wire [3:1] button_sync_q;
-  wire [3:1] button_q;
+  // wire [3:1] button_sync_q;
+  // wire [3:1] button_q;
 
   wire [0:0] rts; // RTS to backpressure ESP UART
   assign uart_rts_o = rts;
@@ -37,7 +37,13 @@ module top #(
      .clk_i  (clk_12mhz_o)
     ,.reset_i(1'b0)
     ,.en_i   (1'b1)
+    // When not targeting ESP, esp_rst_i (pin 45) is unconnected and floats.
+    // Tie it to 1 so a floating pin can't hold the design in permanent reset.
+`ifdef ESP
     ,.d_i    (reset_n_async_unsafe_i & esp_rst_i)
+`else
+    ,.d_i    (reset_n_async_unsafe_i)
+`endif
     ,.q_o    (reset_n_sync_q)
   );
 
@@ -56,28 +62,28 @@ module top #(
     ,.q_o    (rst_sync)
   );
 
-  // Synchronize and Debounce Buttons
-  generate
-    for(genvar idx = 1; idx <= 3; idx++) begin : gen_sync
-      dff #(
-      ) sync_a ( 
-         .clk_i  (clk_12mhz_o)
-        ,.reset_i(1'b0)
-        ,.en_i   (1'b1)
-        ,.d_i    (button_async_unsafe_i[idx])
-        ,.q_o    (button_sync_q[idx])
-      );
+  // // Synchronize and Debounce Buttons
+  // generate
+  //   for(genvar idx = 1; idx <= 3; idx++) begin : gen_sync
+  //     dff #(
+  //     ) sync_a ( 
+  //        .clk_i  (clk_12mhz_o)
+  //       ,.reset_i(1'b0)
+  //       ,.en_i   (1'b1)
+  //       ,.d_i    (button_async_unsafe_i[idx])
+  //       ,.q_o    (button_sync_q[idx])
+  //     );
 
-      dff #(
-      ) sync_b (
-         .clk_i  (clk_12mhz_o)
-        ,.reset_i(1'b0)
-        ,.en_i   (1'b1)
-        ,.d_i    (button_sync_q[idx])
-        ,.q_o    (button_q[idx])
-      );
-    end
-  endgenerate
+  //     dff #(
+  //     ) sync_b (
+  //        .clk_i  (clk_12mhz_o)
+  //       ,.reset_i(1'b0)
+  //       ,.en_i   (1'b1)
+  //       ,.d_i    (button_sync_q[idx])
+  //       ,.q_o    (button_q[idx])
+  //     );
+  //   end
+  // endgenerate
        
   (* blackbox *)
   SB_PLL40_2_PAD #(

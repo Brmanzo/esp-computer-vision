@@ -42,10 +42,10 @@ module icestorm_rom #(
    `ifndef SYNTHESIS
       $display("%m: ROM[0] = %h, ROM[1] = %h", rom[0], rom[1]);
    `endif
-      // synopsys translate_off
+   `ifndef SYNTHESIS
       for (int i = 0; i < Depth; i++)
         $dumpvars(0, rom[i]);
-      // synopsys translate_on
+   `endif
    end
    
    // Synchronous read and write

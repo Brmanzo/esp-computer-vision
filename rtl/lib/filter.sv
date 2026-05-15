@@ -78,7 +78,7 @@ module filter #(
 
   elastic #(
      .InBits       (OutBits)
-    ,.DatapathGate (1)
+    ,.DatapathGate (0)
     ,.DatapathReset(1)
   ) output_elastic_inst (
      .clk_i  (clk_i)

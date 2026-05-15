@@ -1,135 +1,153 @@
 #!/usr/bin/env python3
-# Usage: python3 mag_demo.py <image_filename> <ttyUSBx>
+# Usage: python3 demo/python_demo.py <sample_idx> [ttyUSBx]
+# Run from project root.
 
-from sys import argv
-import serial
-import PIL.Image as Image
-import numpy as np
-import os
+import sys
 import time
+import serial
 import threading
+from pathlib import Path
 
-def producer() -> None:
-    sent_items = 0
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-    while sent_items < len(byte_arrays):
-        ser.write(bytes([byte_arrays[sent_items]]))
-        sent_items += 1
+from model.sample    import get_sample
+from model.inference import get_inference
 
-    return
+# ── Protocol constants (must match deframer.sv / class_framer.sv) ────────────
+HEADER    = bytes([0xA5, 0x5A])
+TAIL      = bytes([0xA5, 0x5A])
+WAKEUP    = 0x99
+IMG_BYTES = (320 * 240) // 8   # 9600 — 8 binary pixels per byte, LSB-first
 
-def consumer(mag_image: np.ndarray, width: int, height: int, pad: int) -> None:
-    untrimmed = np.zeros((height, width), dtype=np.uint8)
+# ── Serial config ─────────────────────────────────────────────────────────────
+BAUD = 115200  # 25 MHz / (prescale=27 * 8) ≈ 115741 baud
 
-    total_pixels = height * width
-    total_bytes  = (total_pixels + 7) // 8
-    
-    byte_i = 0
-    pixel_i = 0
+# ── Globals shared between threads ───────────────────────────────────────────
+hw_result: list = [None]   # hw_result[0] set by consumer thread
 
-    while byte_i < total_bytes:
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def pack_pixels(pixels: list) -> bytes:
+    """Pack a flat list of binary {0,1} pixels into bytes, LSB-first."""
+    buf = bytearray(IMG_BYTES)
+    for i, px in enumerate(pixels):
+        if px:
+            buf[i // 8] |= 1 << (i % 8)
+    return bytes(buf)
+
+
+def producer(frame: bytes) -> None:
+    ser.write(frame)
+
+
+def consumer() -> None:
+    """Read bytes from the FPGA, dump them all, then parse the frame."""
+    # Collect up to 16 bytes (enough to see any stale/extra bytes before the frame)
+    raw: list[int] = []
+    while len(raw) < 16:
         b = ser.read(1)
         if not b:
-            continue
+            break
+        raw.append(b[0])
 
-        value = b[0]
+    print(f"  Raw bytes received : {' '.join(f'{x:02x}' for x in raw)}")
 
-        for step in range(8):
-            if pixel_i >= total_pixels:
-                break
-            q = (value >> step) & 0x1 # LSB first
+    # Scan for the response frame: skip leading 0x99 wakeup bytes, then
+    # expect [class_byte, 0xA5, 0x5A]
+    i = 0
+    while i < len(raw) and raw[i] == WAKEUP:
+        print(f"  (skipping wakeup 0x{WAKEUP:02x} at offset {i})")
+        i += 1
 
-            gray = (q << 7) & 0xFF  # Scale back to 8 bits
+    if i + 3 > len(raw):
+        print(f"  Not enough bytes after wakeup skip (need 3, have {len(raw) - i}).")
+        return
 
-            r = pixel_i // width
-            c = pixel_i % width
-            untrimmed[r, c] = gray
+    class_byte = raw[i]
+    tail_got   = bytes(raw[i+1:i+3])
 
-            pixel_i += 1
+    print(f"  class_byte={class_byte:#04x}  tail={tail_got.hex(' ')}", end="  ")
 
-        byte_i += 1
-        if pixel_i % width == 0:
-            print(f"Processed row {pixel_i // width} of {height}")
+    if tail_got == TAIL:
+        print("✓")
+        hw_result[0] = class_byte
+    else:
+        print(f"✗ (expected {TAIL.hex(' ')})")
 
-    # Trim padding (pad pixels on each side)
-    mag_image[:, :] = untrimmed[pad:height, pad:width]
-# Image loading and setup
-path = os.path.dirname(os.path.realpath(__file__))
-if argv.__len__() < 2:
-    print("Usage: python3 mag_demo.py <image_filename> <ttyUSBx>")
-    exit(1)
 
-image_name = argv[1]
-if not os.path.exists(os.path.join(path, image_name)):
-    print(f"Image file '{image_name}' not found.")
-    exit(1)
+# ── Main ──────────────────────────────────────────────────────────────────────
 
-serial_port = '/dev/ttyUSB2'  # Default port
-if argv.__len__() > 2:
-    serial_port = '/dev/' + argv[2]
-else:
-    print(f"No serial port specified. Using default: {serial_port}")
-    
-img_path = os.path.join(path, image_name)
-img = Image.open(img_path).convert('RGB')
-img_array = np.array(img)
-height, width, _ = img_array.shape
+if len(sys.argv) < 2:
+    print("Usage: python3 demo/python_demo.py <sample_idx> [ttyUSBx]")
+    sys.exit(1)
 
-# Serial port setup
-# Serial port setup
-ser = serial.Serial(port=serial_port,
-                    baudrate=115200, 
-                    parity=serial.PARITY_NONE, 
-                    stopbits=serial.STOPBITS_ONE, 
-                    bytesize=serial.EIGHTBITS,
-                    timeout=1,
-                    rtscts=True)
+sample_idx  = int(sys.argv[1])
+serial_port = "/dev/" + sys.argv[2] if len(sys.argv) > 2 else "/dev/ttyUSB2"
 
-# Pre-generate all byte arrays for efficiency
-total_pixels = height * width
+# 1. Load sample from dataset
+print(f"Loading sample {sample_idx} from dataset...")
+pixels, label = get_sample(sample_idx)
+if pixels is None:
+    print("Failed to load sample.")
+    sys.exit(1)
+print(f"  Ground truth label : {label}")
 
-# Packing 8 binary inputs onto each byte
-total_bytes  = (total_pixels + 7) // 8
-byte_arrays  = bytearray(total_bytes)
+# 2. Hardware-accurate software inference
+print("Running software inference...")
+sw_pred = get_inference(sample_idx)
+print(f"  SW prediction      : {sw_pred}  {'✓' if sw_pred == label else '✗'}")
 
-step = 0
-acc  = 0
-byte_i = 0 
+# 3. Build the UART frame: [0xA5, 0x5A] + 9600 image bytes
+frame = HEADER + pack_pixels(pixels)
+print(f"\nSending {len(frame)} bytes to {serial_port} @ {BAUD} baud...")
 
-for row in range(height):
-    for col in range(width):
-        r, g, b = img_array[row, col]
-        gray = int(0.2989*r + 0.5870*g + 0.1140*b) & 0xFF
-        q = (gray >> 7) & 0x1  # Keep only the top bit
-        
-        acc |= q << step # LSB first
-        
-        step += 1
-        if step == 8:
-            byte_arrays[byte_i] = acc & 0xFF
-            byte_i += 1
-            acc = 0
-            step = 0
-if step != 0:
-    byte_arrays[byte_i] = acc & 0xFF
+# 4. Open serial port, start producer and consumer threads
+ser = serial.Serial(
+    port     = serial_port,
+    baudrate = BAUD,
+    parity   = serial.PARITY_NONE,
+    stopbits = serial.STOPBITS_ONE,
+    bytesize = serial.EIGHTBITS,
+    timeout  = 30,
+    rtscts   = False,  # FPGA rts_o=0 on reset → CTS=0 at host → deadlock if True
+)
 
-# repository image array
-mag_image = np.zeros((height, width), dtype=np.uint8)
-print("width,height:", width, height)
-# Start producer and consumer threads
-producer_thread = threading.Thread(target=producer, daemon=True)
-consumer_thread = threading.Thread(target=consumer, args=(mag_image, width, height, 0), daemon=True)
+producer_thread = threading.Thread(target=producer, args=(frame,), daemon=True)
+consumer_thread = threading.Thread(target=consumer, daemon=True)
 
 ser.reset_input_buffer()
 ser.reset_output_buffer()
 time.sleep(0.05)
 
+t0 = time.monotonic()
 producer_thread.start()
 consumer_thread.start()
 
 producer_thread.join()
 consumer_thread.join()
+ser.close()
 
-filename = "magnitude_output.png"
-Image.fromarray(mag_image).save(filename)
-print(f"Magnitude image saved as '{filename}'")
+tx_s = time.monotonic() - t0
+print(f"  Done in {tx_s:.2f} s")
+
+# 5. Report
+if hw_result[0] is None:
+    print("No valid response received from FPGA.")
+    sys.exit(1)
+
+hw_pred    = hw_result[0]
+hw_correct = hw_pred == label
+sw_correct = sw_pred == label
+
+print()
+print(f"  Ground truth  : {label}")
+print(f"  SW prediction : {sw_pred}  {'✓' if sw_correct else '✗'}")
+print(f"  HW prediction : {hw_pred}  {'✓' if hw_correct else '✗'}")
+print()
+
+if hw_pred == sw_pred:
+    print("\033[92m[MATCH]    HW and SW agree\033[0m", end="  ")
+else:
+    print("\033[91m[MISMATCH] HW and SW disagree\033[0m", end="  ")
+
+print("\033[92m[CORRECT]\033[0m" if hw_correct else "\033[91m[WRONG]\033[0m")

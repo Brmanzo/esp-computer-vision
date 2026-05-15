@@ -23,7 +23,7 @@ function automatic int unsigned conv_acc_bits(
     max_weight = (weight_bits <= 2) ? 64'd1 : (64'd1 << (weight_bits - 1));
     worst_case_sum = longint'(kernel_area) * max_input * max_weight * longint'(in_channels);
     wc_bits = $clog2(worst_case_sum + 1) + 1;
-    wc_bits = ((wc_bits > bias_bits) ? wc_bits : bias_bits) + 1;
+    wc_bits = ((wc_bits > bias_bits) ? wc_bits : bias_bits);// + 1;
     conv_acc_bits = (wc_bits > 32) ? 32 : wc_bits;
   end
 endfunction
@@ -103,9 +103,9 @@ module conv_layer #(
   /* verilator lint_on UNSIGNED */
   wire [0:0] pad_cycle = pad_x | pad_y;
 
-  wire [0:0] elastic_ready;
-  wire [0:0] in_fire = (valid_i | pad_cycle) & elastic_ready;
-  assign ready_o = elastic_ready & ~pad_cycle;
+  wire [0:0] all_filters_ready;
+  wire [0:0] in_fire = (valid_i | pad_cycle) & all_filters_ready;
+  assign ready_o = all_filters_ready & ~pad_cycle;
 
   always_ff @(posedge clk_i) begin
     if (rst_i) begin
@@ -136,12 +136,12 @@ module conv_layer #(
   end
 
   /* ------------------------------------ Elastic Handshaking Logic ------------------------------------ */
-  logic [0:0] valid_q;
+  logic [0:0] window_valid_q;
   wire  [0:0] produce = in_fire && valid_kernel_pos && valid_stride;
   
   always_ff @(posedge clk_i) begin
-    if (rst_i) valid_q <= 1'b0;
-    else if (elastic_ready) valid_q <= produce;
+    if (rst_i) window_valid_q <= 1'b0;
+    else if (all_filters_ready) window_valid_q <= produce;
   end
 
   logic [InChannels-1:0][KernelWidth-1:0][InBits-1:0] row_buffers;
@@ -188,9 +188,7 @@ module conv_layer #(
   endgenerate
 
   /* ------------------------------------ Window Generation Logic ------------------------------------ */
-  wire [0:0] window_valid;
-  logic signed [InChannels*KernelArea*InBits-1:0] windows_d, windows_q;
-  wire [0:0] filter_ready_combined;
+  logic signed [InChannels*KernelArea*InBits-1:0] windows_q;
 
   generate
     for (genvar ch = 0; ch < InChannels; ch++) begin : gen_windows
@@ -202,14 +200,10 @@ module conv_layer #(
         ,.rst_i         (rst_i)
         ,.in_fire_i     (in_fire)
         ,.row_buffers_i (row_buffers[ch])
-        ,.window_o      (windows_d[ch*KernelArea*InBits +: KernelArea*InBits])
+        ,.window_o      (windows_q[ch*KernelArea*InBits +: KernelArea*InBits])
       );
     end
   endgenerate
-
-  assign window_valid = valid_q;
-  assign elastic_ready = filter_ready_combined;
-  assign windows_q = windows_d;
 
   /* ------------------------------------ Filter Logic ------------------------------------ */
   generate
@@ -231,15 +225,15 @@ module conv_layer #(
       ) filter_seq_inst (
          .clk_i    (clk_i)
         ,.rst_i    (rst_i)
-        ,.valid_i  (window_valid)
-        ,.ready_o  (filter_ready_combined)
+        ,.valid_i  (window_valid_q)
+        ,.ready_o  (all_filters_ready)
         ,.windows_i(windows_q)
         ,.ready_i  (ready_i)
         ,.valid_o  (valid_o)
         ,.data_o   (data_o)
       );
     end else begin : gen_parallel_filters
-      wire [OutChannels-1:0] f_ready, f_valid;
+      wire [OutChannels-1:0] filter_ready, filter_valid;
       for (genvar oc = 0; oc < OutChannels; oc++) begin : gen_each_filter
         filter #(
              .InBits      (InBits)
@@ -254,17 +248,17 @@ module conv_layer #(
         ) filter_inst (
              .clk_i     (clk_i)
             ,.rst_i     (rst_i)
-            ,.valid_i   (window_valid)
-            ,.ready_o   (f_ready[oc])
+            ,.valid_i   (window_valid_q)
+            ,.ready_o   (filter_ready[oc])
             ,.windows_i (windows_q)
             ,.weights_i (Weights[oc*WeightIndex+:WeightIndex])
             ,.ready_i   (ready_i)
-            ,.valid_o   (f_valid[oc])
+            ,.valid_o   (filter_valid[oc])
             ,.data_o    (data_o[oc])
         );
       end
-      assign valid_o = &f_valid;
-      assign filter_ready_combined = &f_ready;
+      assign valid_o = &filter_valid;
+      assign all_filters_ready = &filter_ready;
     end
   endgenerate
 

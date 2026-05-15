@@ -16,9 +16,10 @@ module comparator_tree #(
   typedef logic signed [OutBits-1:0] comp_t;
   typedef logic        [IdBits-1:0]  id_t;
 
-  // Unpacked array of packed elements
-  comp_t tree [TreeLevels:0][TreeWidth-1:0];
-  id_t id   [TreeLevels:0][TreeWidth-1:0];
+  // Fully packed: Yosys treats packed arrays as wide wires, not memories,
+  // allowing dead-code elimination of the max_o path when it is unconnected.
+  logic signed [TreeLevels:0][TreeWidth-1:0][OutBits-1:0] tree;
+  logic        [TreeLevels:0][TreeWidth-1:0][IdBits-1:0]  id;
 
   always_comb begin
     // Initialize Tree: min signed for multi-bit, '0 (min unsigned) for 1-bit

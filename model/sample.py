@@ -37,6 +37,7 @@ def sample_to_hex(sample_idx:int=0, path:Path=DATAPATH):
     
     # 3. Save Visual Confirmation
     from torchvision.utils import save_image
+    path.mkdir(parents=True, exist_ok=True) # Ensure data directory exists
     img_path = path / f"sample_{sample_idx}.png"
     save_image(img_t, img_path)
     

@@ -40,9 +40,9 @@ module framer #(
   /* ---------------------------------------- Counter Logic ---------------------------------------- */
   // Tracks completed packet elements.
   // Counter saturates at max count and is reset on next packet.
-  wire  [0:0]            counter_max;
-  wire  [0:0]            footer_sent = (state_q == Footer1 && out_fire);
-  wire  [0:0]            forwarding  = (state_q == Forward && in_fire);
+  wire  [0:0] counter_max;
+  wire  [0:0] footer_sent = (state_q == Footer1 && out_fire);
+  wire  [0:0] forwarding  = (state_q == Forward && in_fire);
   
   /* verilator lint_off PINCONNECTEMPTY */
   counter_roll #(

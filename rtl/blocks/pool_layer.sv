@@ -137,6 +137,7 @@ module pool_layer #(
         ,.ready_i (1'b1)
       );
     end
+    /* verilator lint_on PINCONNECTEMPTY */
   endgenerate
 
   /* ------------------------------------ Window Generation Logic ------------------------------------ */

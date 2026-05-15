@@ -57,7 +57,7 @@ module classifier_layer #(
     end
   endfunction
 
-  localparam int unsigned LinearBits = 32;
+  localparam int unsigned LinearBits = acc_width(TermBits, WeightBits, InChannels, BiasBits) + ShiftBits;
 
   wire [0:0] global_max_valid;
   wire signed [InChannels-1:0][TermBits-1:0] global_max_data;

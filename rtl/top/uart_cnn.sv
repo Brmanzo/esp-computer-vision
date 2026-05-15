@@ -24,27 +24,27 @@ module uart_cnn #(
   // UART Interface Wires
   wire [0:0]                uart_ready;
   wire [0:0]                uart_valid;
-  wire [BusBits-1:0]       uart_data;
+  wire [BusBits-1:0]        uart_data;
 
   // Skid Buffer Wires
   wire [0:0]                skid_ready;
   wire [0:0]                skid_valid;
-  wire [BusBits-1:0]       skid_data;
+  wire [BusBits-1:0]        skid_data;
 
   // Deframer Wires
   wire [0:0]                deframer_ready;
   wire [0:0]                deframer_valid;
-  wire [InBits-1:0] deframer_data;
+  wire [InBits-1:0]         deframer_data;
 
   // cnn Wires
   wire [0:0]                cnn_ready;
   wire [0:0]                cnn_valid;
-  wire [BusBits-1:0]       cnn_data;
+  wire [BusBits-1:0]        cnn_data;
 
   // Class Framer Wires
   wire [0:0]              class_framer_ready;
   wire [0:0]              class_framer_valid;
-  wire [BusBits-1:0]     class_framer_data;
+  wire [BusBits-1:0]      class_framer_data;
 
   // UART head to convert UART serial data to AXIS data
   uart #(
@@ -68,7 +68,7 @@ module uart_cnn #(
     ,.rx_busy         ()
     ,.rx_overrun_error()
     ,.rx_frame_error  ()
-    ,.prescale        (16'd10) // Fclk / (baud * 8), 25 MHz / (312,500 * 8) = 10
+    ,.prescale        (16'd13) // Fclk / (baud * 8), 12 MHz / (115,200 * 8) ≈ 13 → 115,385 baud (0.16% err)
   );
 
   skid_buffer #(
