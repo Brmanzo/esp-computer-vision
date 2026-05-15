@@ -54,7 +54,7 @@ class PoolLayerModel():
                 self._OutChannels  = int(kwargs["OutChannels"])
                 self._Stride       = int(kwargs["Stride"])
                 self._PoolMode     = int(kwargs["PoolMode"])
-                self._Unsigned     = int(kwargs["Unsigned"])
+                self._Unsigned     = int(kwargs.get("Unsigned", 0))
             except KeyError as e:
                 raise ValueError(f"Missing required parameter when dut is None: {e}")
 

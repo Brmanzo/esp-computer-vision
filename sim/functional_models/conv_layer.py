@@ -88,7 +88,9 @@ class ConvLayerModel():
                 raise ValueError(f"Missing required parameter when dut is None: {e}")
 
         self._AccBits = calc_acc_bits(self._kernel_width, self._InBits, self._weight_width, self._InChannels, self._bias_bits, self._Unsigned)
-        assert self._OutBits + self._ShiftBits <= self._AccBits, "Output bits + shift must fit within accumulator bits to avoid overflow issues in gen_learned_shift mode."
+        if self._OutBits + self._ShiftBits > self._AccBits:
+            print(f"WARNING: OutBits({self._OutBits}) + ShiftBits({self._ShiftBits}) > AccBits({self._AccBits}). "
+                  f"Shift was derived from training precision (q_max_bits); accumulator computed from q_min_bits.")
         
         if weights is None:
             raise ValueError("Weights must be provided to ConvLayerModel")

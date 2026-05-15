@@ -1,4 +1,5 @@
 import os
+import math
 import torch
 import pandas as pd
 import ast
@@ -69,6 +70,7 @@ def export_model_to_csv(model_path: Path, config: ModelConfig, output_csv: Path,
 
     all_hardware_data: list[dict[str, Any]] = []
     current_act_scale = 1.0 # Input pixels are binarized {0, 1} or normalized, start at 1.0
+    last_w_scale      = 1.0 # Tracks w_scale of the most recent QuantConv2d, needed for LearnedShiftQuantizer
 
     print("Exporting Fused QAT layers to hardware CSV with scale propagation...")
 
@@ -99,6 +101,7 @@ def export_model_to_csv(model_path: Path, config: ModelConfig, output_csv: Path,
                 
                 # Extract compensated weights
                 w_int_tensor, b_hw, w_scale = get_hardware_weights(module, current_act_scale)
+                last_w_scale = w_scale
 
             # Convert to numpy
             w_int = w_int_tensor.to(torch.int32).cpu().numpy()
@@ -135,9 +138,19 @@ def export_model_to_csv(model_path: Path, config: ModelConfig, output_csv: Path,
         elif isinstance(module, LearnedShiftQuantizer):
             # Use act_scale (clip_val / qmax) for weight-compensation propagation,
             # mirroring the QuantizeActivation learnable path above.
-            classifier_shift  = module.hardware_shift
             current_act_scale = module.act_scale
-            print(f"  Learned Classifier Shift: {classifier_shift}  act_scale={current_act_scale:.6f}  clip_val={module.clip_val.item():.4f}")
+            # Correct shift formula: shift = log2(clip_val / (qmax_out * w_scale))
+            # module.hardware_shift uses acc_bits from q_max_bits, which overestimates the
+            # integer accumulator range for ternary inputs and lower-precision export weights.
+            # Using the actual w_scale of the preceding conv gives the true integer-to-float ratio.
+            qmax_out  = (2 ** module._out_bits) - 1
+            clip_abs  = float(module.clip_val.abs().clamp(min=1e-4).item())
+            raw_shift = math.log2(clip_abs / (qmax_out * last_w_scale))
+            # Do NOT clamp with module._min_shift / _max_shift — those bounds were derived
+            # from init_shift which used q_max_bits instead of q_min_bits, so they are
+            # systematically too high and would prevent the corrected value from being applied.
+            classifier_shift = max(0, round(raw_shift))
+            print(f"  Learned Classifier Shift: {classifier_shift} (formula gave {raw_shift:.2f}, module.hardware_shift={module.hardware_shift})  act_scale={current_act_scale:.6f}  clip_val={clip_abs:.4f}")
             # Back-propagate into config so RTL render and downstream code always
             # sees the trained value rather than the analytical default.
             config.classifier_config._shift = classifier_shift

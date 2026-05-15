@@ -83,6 +83,7 @@ class CNNModel:
     def _get_conv_params(self, cfg, index):
         w = self._weights_dict.get(f"LAYER_{index}_WEIGHTS")
         b = self._weights_dict.get(f"LAYER_{index}_BIASES")
+        is_last = (index == len(self._config.layers) - 1)
         return {
             "KernelWidth": cfg._kernel_width,
             "LineWidthPx": cfg._input_dims.width,
@@ -95,6 +96,7 @@ class CNNModel:
             "OutChannels": cfg._out_ch,
             "Stride":      cfg._stride,
             "Padding":     cfg._padding,
+            "ShiftBits":   self._config.classifier_config._shift if is_last else 0,
             "weights":     w,
             "biases":      b
         }
@@ -108,8 +110,9 @@ class CNNModel:
             "OutBits":     cfg._out_bits,
             "InChannels":  cfg._in_ch,
             "OutChannels": cfg._out_ch,
-            "Stride":      cfg._kernel_width, # Pool stride is usually same as kernel width
-            "PoolMode":    cfg._mode
+            "Stride":      cfg._kernel_width,
+            "PoolMode":    cfg._mode,
+            "Unsigned":    1 if cfg._in_bits > 2 else 0,
         }
 
     def _get_class_params(self, cfg, index):
@@ -121,6 +124,8 @@ class CNNModel:
             "bus_bits":    cfg._out_bits,
             "in_channels": cfg._in_ch,
             "class_count": cfg._num_classes,
+            "weight_bits": cfg._q_schedule._q_min_bits,
+            "bias_bits":   cfg._bias_bits,
             "weights":     w,
             "biases":      b
         }

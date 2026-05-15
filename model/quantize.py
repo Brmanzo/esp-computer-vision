@@ -137,12 +137,8 @@ class QuantConv2d(nn.Conv2d):
         # 6. Quantize the folded weights
         if self._quantize:
             w_q = cast(torch.Tensor, QuantizeWeight.apply(folded_w, self._weight_bits))
-            # 6b. Constrain the bias
             b_min = -2**(self._bias_bits - 1)
             b_max = 2**(self._bias_bits - 1) - 1
-            
-            # Use a Straight-Through Estimator (STE) approach or simple clamp
-            # Simple clamp is usually sufficient for biases in QAT
             folded_b = torch.clamp(folded_b, b_min, b_max)
         else:
             w_q = folded_w

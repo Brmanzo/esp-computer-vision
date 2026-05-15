@@ -334,7 +334,7 @@ async def single_test(dut):
         ref_conv_0 = torch_conv_ref(
             input_activation, kernels_4d_0, C0_S, 
             in_bits=C0_InBits, out_bits=C0_OutBits, padding=C0_P, biases=biases_0,
-            shift_bits=C0_ShiftBits, acc_bits=C0_AccBits, unsigned=int(dut.C0_Unsigned.value) if hasattr(dut, 'C0_Unsigned') else 0
+            shift_bits=C0_ShiftBits, acc_bits=C0_AccBits, unsigned=bool(int(dut.C0_Unsigned.value)) if hasattr(dut, 'C0_Unsigned') else False
         )
         
         ref_pool_0 = torch_pool_ref(
@@ -344,7 +344,7 @@ async def single_test(dut):
         ref_conv_1 = torch_conv_ref(
             ref_pool_0, kernels_4d_1, C1_S,
             in_bits=C1_InBits, out_bits=C1_OutBits, padding=C1_P, biases=biases_1,
-            shift_bits=C1_SB, acc_bits=C1_AccBits, unsigned=int(C0_ShiftBits > 0)
+            shift_bits=C1_SB, acc_bits=C1_AccBits, unsigned=(C0_ShiftBits > 0)
         )
         
         # Flatten and transpose for classifier: shape (TermCount, InChannels)
@@ -353,7 +353,8 @@ async def single_test(dut):
         
         # Wait, the hardware output is checked inside ModelRunner against FunctionalModel.
         # Let's verify that the PyTorch reference ALSO matches the expected!
-        assert class_id == model.final_outputs[-1] if hasattr(model, 'final_outputs') and model.final_outputs else class_id == int(dut.data_o.value.integer), \
+        final_outputs = getattr(model, 'final_outputs', None)
+        assert class_id == final_outputs[-1] if final_outputs else class_id == int(dut.data_o.value.integer), \
             f"PyTorch mismatch! Expected class {class_id}, got hardware output."
             
         if sim_verbose():
@@ -474,7 +475,7 @@ async def rate_tests(dut, in_rate, out_rate):
         ref_conv_0 = torch_conv_ref(
             input_activation, kernels_4d_0, C0_S, 
             in_bits=C0_InBits, out_bits=C0_OutBits, padding=C0_P, biases=biases_0,
-            shift_bits=C0_ShiftBits, acc_bits=C0_AccBits, unsigned=C0_Unsigned
+            shift_bits=C0_ShiftBits, acc_bits=C0_AccBits, unsigned=bool(C0_Unsigned)
         )
         
         ref_pool_0 = torch_pool_ref(
@@ -484,7 +485,7 @@ async def rate_tests(dut, in_rate, out_rate):
         ref_conv_1 = torch_conv_ref(
             ref_pool_0, kernels_4d_1, C1_S,
             in_bits=C1_InBits, out_bits=C1_OutBits, padding=C1_P, biases=biases_1,
-            shift_bits=C1_SB, acc_bits=C1_AccBits, unsigned=int(C0_ShiftBits > 0)
+            shift_bits=C1_SB, acc_bits=C1_AccBits, unsigned=(C0_ShiftBits > 0)
         )
         
         # Flatten and transpose for classifier: shape (TermCount, InChannels)

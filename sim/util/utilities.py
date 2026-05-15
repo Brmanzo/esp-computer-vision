@@ -405,24 +405,28 @@ def inject_hex_weights(parameters: dict, weights_int: int, oc: int, ic: int, kw:
 def inject_weights_and_biases(
     simulator: Literal['verilator', 'icarus'], parameters: dict, param_str: str, tbpath: Path, test_class: str, Weights: int,
     Biases: int, weight_bits: int, bias_bits: int, weight_count: int, layer: int = 0, dsp_count: int = 0,
-    custom_work_dir: Optional[str] = None
+    custom_work_dir: Optional[str] = None,
+    oc: Optional[int] = None, ic: Optional[int] = None, kw: Optional[int] = None
 ):
     """
     Helper function to inject both weights and biases.
     - If dsp_count == 0: Injects weights as a large packed parameter in a .vh header.
     - If dsp_count > 0: Injects weights into a .hex file for ROM initialization.
+
+    oc, ic, kw: explicit output channels, input channels, kernel width for DSP hex generation.
+    When not provided, they are looked up from the parameters dict (legacy behaviour).
     """
     parameters.pop('test_name', None)
     parameters.pop('simulator', None)
-    
+
     # Write to the run directory where cocotb-test actually executes the simulator
     if custom_work_dir is None:
         custom_work_dir = os.path.join(tbpath, "run", test_class, param_str, simulator)
-    
+
     os.makedirs(custom_work_dir, exist_ok=True)
-    
+
     # 1. Determine output channel count for bias/weight packing
-    oc = parameters.get(f"C{layer}_OutChannels", parameters.get("OutChannels", parameters.get("ClassCount", 1)))
+    _oc = oc if oc is not None else parameters.get(f"C{layer}_OutChannels", parameters.get("OutChannels", parameters.get("ClassCount", 1)))
 
     if dsp_count == 0:
         # Parallel Implementation: Use header-based injection for the giant vector
@@ -430,15 +434,14 @@ def inject_weights_and_biases(
         inject_params(parameters, Weights, f"weights_{layer}", weight_bits * weight_count, custom_work_dir)
     else:
         # Sequential ROM Implementation: Use hex-based injection
-        # We need individual dimensions for correct DSP-aware packing
-        # In double blocks, Layer 1's input channels are Layer 0's output channels
+        # Use explicit dims when provided; fall back to parameters dict for legacy callers
         ic_key = f"C{layer}_InChannels"
         prev_oc_key = f"C{layer-1}_OutChannels"
-        ic = parameters.get(ic_key, parameters.get(prev_oc_key, parameters.get("InChannels", 1)))
-        kw = parameters.get(f"C{layer}_KernelWidth", parameters.get("KernelWidth", 1))
-        
-        assert oc is not None and ic is not None and kw is not None, "oc parameter must exist"
-        hex_filename = inject_hex_weights(parameters, Weights, int(oc), int(ic), int(kw), weight_bits, f"weights_{layer}", custom_work_dir, dsp_count)
+        _ic = ic if ic is not None else parameters.get(ic_key, parameters.get(prev_oc_key, parameters.get("InChannels", 1)))
+        _kw = kw if kw is not None else parameters.get(f"C{layer}_KernelWidth", parameters.get("KernelWidth", 1))
+
+        assert _oc is not None and _ic is not None and _kw is not None, "oc/ic/kw must be determinable"
+        hex_filename = inject_hex_weights(parameters, Weights, int(_oc), int(_ic), int(_kw), weight_bits, f"weights_{layer}", custom_work_dir, dsp_count)
         # Update the FileName parameter so the RTL can find the hex file
         # Wrap filename in quotes for Verilator/Icarus string parameter passing
         parameters[f"FileName_{layer}"] = f'"{hex_filename}"'

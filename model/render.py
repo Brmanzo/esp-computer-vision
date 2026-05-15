@@ -131,6 +131,8 @@ def render_conv_layer(cfg: ConvConfig, is_last_feature: bool = False):
 
 def render_pool_layer(cfg: PoolConfig):
     '''Renders a pooling layer within the CNN SystemVerilog file.'''
+    # in_bits > 2 means input comes from a gen_learned_shift conv (ReLU + right-shift = unsigned)
+    unsigned = 1 if cfg._in_bits > 2 else 0
     lines = [
         "  pool_layer #(",
         f"     .LineWidthPx ({cfg._input_dims.width})",
@@ -139,7 +141,8 @@ def render_pool_layer(cfg: PoolConfig):
         f"    ,.OutBits     ({cfg._out_bits})",
         f"    ,.KernelWidth ({cfg._kernel_width})",
         f"    ,.InChannels  ({cfg._in_ch})",
-        f"    ,.PoolMode    ({cfg._mode})", # PoolMode is fixed to 0 (max pooling) for now since we only support max pooling
+        f"    ,.PoolMode    ({cfg._mode})",
+        f"    ,.Unsigned    ({unsigned})",
         f"  ) pool_layer_inst_{cfg._layer_num} (",
         "     .clk_i    (clk_i)",
         "    ,.rst_i    (rst_i)",

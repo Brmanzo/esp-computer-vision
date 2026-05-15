@@ -10,7 +10,6 @@
         "rtl/lib/comparator_tree.sv",
         "rtl/blocks/linear_layer.sv",
         "rtl/lib/neuron.sv",
-        "rtl/lib/counter.sv",
         "rtl/lib/counter_roll.sv",
         "rtl/lib/elastic.sv",
         "rtl/icestorm/icestorm_ram.sv",
@@ -26,6 +25,7 @@
         "rtl/lib/output_encoder.sv",
         "rtl/lib/filter_seq.sv",
         "rtl/icestorm/icestorm_rom.sv",
-        "rtl/lib/neuron_seq.sv"
+        "rtl/lib/neuron_seq.sv",
+        "rtl/lib/input_encoder.sv"
     ]
 }

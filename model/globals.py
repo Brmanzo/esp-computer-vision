@@ -20,11 +20,12 @@ def get_hand_gesture_cfg(num_classes: int = 8, img_h: int = 240, img_w: int = 32
         stride           = 1, # int or list
         num_classes      = num_classes, # From dataset
         bus_width        = 8, # Decision bit-width
-        bias_bits        = [8, 8, 16, 32], # Increased Layer 2 to 16-bit to prevent saturation
-        q_schedule       = [QSchedule( 60, [5, 5, 5, 5, 5, 10, 20], 8, 2),
-                            QSchedule( 70, [5],  8, 8),
-                            QSchedule( 90, [5],  8, 8),
-                            QSchedule(100, [50], 8, 8)],
+        bias_bits        = [8, 16, 16, 32], # Layer 1 increased to 16-bit: saturating at 8-bit
+        q_schedule = [QSchedule( 60, [5, 5, 5, 10, 20], 8, 4),
+                      QSchedule( 70, [5, 5, 30], 10, 8),   # 10→9→8, more time at 8
+                      QSchedule( 90, [5, 5, 30], 10, 8),   # same
+                      QSchedule(100, [50],        8, 8)],    # classifier unchanged
+
         use_dsp          = [0, 2, 4, 2])
 
 HAND_GESTURE_CFG = get_hand_gesture_cfg()

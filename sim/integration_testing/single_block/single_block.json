@@ -4,7 +4,6 @@
         "sim/integration_testing/single_block/tb_single_block.sv",
         "rtl/blocks/conv_layer.sv",
         "rtl/blocks/pool_layer.sv",
-        "rtl/lib/counter.sv",
         "rtl/lib/counter_roll.sv",
         "rtl/lib/elastic.sv",
         "rtl/icestorm/icestorm_ram.sv",
