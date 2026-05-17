@@ -1,5 +1,5 @@
 // Auto-generated hardware parameters
-// Date: May 14, 2026 06:18 PM
+// Date: May 16, 2026 11:15 AM
 
 localparam logic signed [143:0] LAYER_0_WEIGHTS = 144'h1fef0ff043fcf90000b2ef00e00dfff000;
 localparam logic signed [ 31:0] LAYER_0_BIASES  = 32'h5040604;

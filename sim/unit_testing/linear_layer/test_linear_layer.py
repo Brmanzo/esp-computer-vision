@@ -198,8 +198,8 @@ async def single_test(dut):
     rate  = 1.0
 
     # ---- Unpack injected weights (and biases) ----
-    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_0_INT"]), WW, OC, IC)
-    biases_1d = unpack_biases(int(os.environ["INJECTED_BIASES_0_INT"]), BW, OC)
+    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_0_INT"], 0), WW, OC, IC)
+    biases_1d = unpack_biases(int(os.environ["INJECTED_BIASES_0_INT"], 0), BW, OC)
     
     # Instantiate PyTorch reference model
     linear = torch_linear_ref(weights_2d, biases_1d, IC, OC)
@@ -259,8 +259,8 @@ async def rate_tests(dut, in_rate: float, out_rate: float, N_vec: int = 200):
     N_out = N_vec
 
     # --- Unpack injected weights ---
-    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_0_INT"]), WW, OC, IC)
-    biases_1d  = unpack_biases(int(os.environ["INJECTED_BIASES_0_INT"]), BW, OC)
+    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_0_INT"], 0), WW, OC, IC)
+    biases_1d  = unpack_biases(int(os.environ["INJECTED_BIASES_0_INT"], 0), BW, OC)
 
     # Instantiate PyTorch reference model
     linear = torch_linear_ref(weights_2d, biases_1d, IC, OC)

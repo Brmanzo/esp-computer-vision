@@ -129,13 +129,17 @@ gen_rules = [
 TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), auto_rules, gen_rules)
 @pytest.mark.parametrize("test_name", tests)
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+@pytest.mark.parametrize("C0_DSPCount", [0, 1])
+@pytest.mark.parametrize("C1_DSPCount", [0, 1])
+@pytest.mark.parametrize("ClassDSPCount", [0, 1])
+
 @auto_unpack(TEST_CASES)
 def test_each(test_name, simulator,
               C0_LineWidthPx, C0_LineCountPx, C0_InBits, C0_OutBits,
               C0_KernelWidth, C0_WeightBits, C0_BiasBits, C0_InChannels, C0_OutChannels,
               C0_Stride, C0_Padding, C0_ShiftBits, C0_Weights, C0_Biases, C0_DSPCount, P0_KernelWidth, P0_Mode,
               C1_OutBits, C1_ShiftBits, C1_KernelWidth, C1_WeightBits, C1_BiasBits, C1_OutChannels,
-              C1_Stride, C1_Padding, C1_Weights, C1_Biases,
+              C1_Stride, C1_Padding, C1_Weights, C1_Biases, C1_DSPCount,
               ClassCount, BusBits, ClassWeightBits, ClassBiasBits, ClassDSPCount,
               C0_Unsigned, C2_Weights, C2_Biases):
     parameters = dict(locals())
@@ -145,13 +149,13 @@ def test_each(test_name, simulator,
     parameters.pop('C1_Biases', None)
     parameters.pop('C2_Weights', None)
     parameters.pop('C2_Biases', None)
-    param_str = f"InBits_{C0_InBits}_OutBits0_{C0_OutBits}_OutBits1_{C1_OutBits}_test_{test_name}"
+    param_str = f"InBits_{C0_InBits}_OutBits0_{C0_OutBits}_OutBits1_{C1_OutBits}_DSP0_{C0_DSPCount}_DSP1_{C1_DSPCount}_DSPCl_{ClassDSPCount}_test_{test_name}"
 
     # 1. Prepare work directory
     custom_work_dir = os.path.join(tbpath, "run", "each", param_str, simulator)
     os.makedirs(custom_work_dir, exist_ok=True)
 
-    if simulator == "icarus" and (int(C0_DSPCount) > 0 or int(ClassDSPCount) > 0):
+    if simulator == "icarus" and (int(C0_DSPCount) > 0 or int(C1_DSPCount) > 0 or int(ClassDSPCount) > 0):
         pytest.skip("Icarus Verilog has issues with ROM initialization in sequential configurations")
 
     # 2. Inject Weights and Biases for all layers
@@ -169,7 +173,7 @@ def test_each(test_name, simulator,
         tbpath=tbpath, test_class="each", Weights=C1_Weights, Biases=C1_Biases,
         weight_bits=C1_WeightBits, bias_bits=C1_OutChannels * C1_BiasBits,
         weight_count=C1_OutChannels * C0_OutChannels * (C1_KernelWidth**2),
-        layer=1, dsp_count=int(C0_DSPCount), custom_work_dir=custom_work_dir)
+        layer=1, dsp_count=int(C1_DSPCount), custom_work_dir=custom_work_dir)
 
     # Layer 2 (Classifier)
     inject_weights_and_biases(
@@ -187,7 +191,8 @@ def test_each(test_name, simulator,
             f.write(f'`include "injected_biases_{i}.vh"\n')
 
     # 4. Run simulator
-    parameters.pop('FileName', None)
+    parameters.pop('FileName',    None)
+    parameters.pop('FileName_hi', None)
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters,
         pymodule="test_single_block_with_classifier", testname=test_name, work_dir=custom_work_dir,
@@ -271,14 +276,14 @@ async def single_test(dut):
     P0_H_out = ((C0_H_out - P0_K) // P0_S) + 1
 
     # 3. Unpack Weights
-    kernels_4d_0 = unpack_kernel_weights(int(os.environ["INJECTED_WEIGHTS_0_INT"]), C0_WW, C0_OC, C0_IC, C0_K)
-    biases_0 = unpack_biases(int(os.environ["INJECTED_BIASES_0_INT"]), C0_BB, C0_OC)
+    kernels_4d_0 = unpack_kernel_weights(int(os.environ["INJECTED_WEIGHTS_0_INT"], 0), C0_WW, C0_OC, C0_IC, C0_K)
+    biases_0 = unpack_biases(int(os.environ["INJECTED_BIASES_0_INT"], 0), C0_BB, C0_OC)
 
-    kernels_4d_1 = unpack_kernel_weights(int(os.environ["INJECTED_WEIGHTS_1_INT"]), C1_WW, C1_OC, C1_IC, C1_K)
-    biases_1 = unpack_biases(int(os.environ["INJECTED_BIASES_1_INT"]), C1_BB, C1_OC)
+    kernels_4d_1 = unpack_kernel_weights(int(os.environ["INJECTED_WEIGHTS_1_INT"], 0), C1_WW, C1_OC, C1_IC, C1_K)
+    biases_1 = unpack_biases(int(os.environ["INJECTED_BIASES_1_INT"], 0), C1_BB, C1_OC)
 
-    weights_2 = unpack_weights(int(os.environ["INJECTED_WEIGHTS_2_INT"]), CL_WB, CL_CC, C1_OC)
-    biases_2 = unpack_biases(int(os.environ["INJECTED_BIASES_2_INT"]), CL_BI, CL_CC)
+    weights_2 = unpack_weights(int(os.environ["INJECTED_WEIGHTS_2_INT"], 0), CL_WB, CL_CC, C1_OC)
+    biases_2 = unpack_biases(int(os.environ["INJECTED_BIASES_2_INT"], 0), CL_BI, CL_CC)
 
     # 4. Setup configuration dictionaries
     conv_0_params = {
@@ -411,14 +416,14 @@ async def rate_tests(dut, in_rate, out_rate):
     P0_H_out = ((C0_H_out - P0_K) // P0_S) + 1
 
     # 3. Unpack Weights
-    kernels_4d_0 = unpack_kernel_weights(int(os.environ["INJECTED_WEIGHTS_0_INT"]), C0_WW, C0_OC, C0_IC, C0_K)
-    biases_0 = unpack_biases(int(os.environ["INJECTED_BIASES_0_INT"]), C0_BB, C0_OC)
+    kernels_4d_0 = unpack_kernel_weights(int(os.environ["INJECTED_WEIGHTS_0_INT"], 0), C0_WW, C0_OC, C0_IC, C0_K)
+    biases_0 = unpack_biases(int(os.environ["INJECTED_BIASES_0_INT"], 0), C0_BB, C0_OC)
 
-    kernels_4d_1 = unpack_kernel_weights(int(os.environ["INJECTED_WEIGHTS_1_INT"]), C1_WW, C1_OC, C1_IC, C1_K)
-    biases_1 = unpack_biases(int(os.environ["INJECTED_BIASES_1_INT"]), C1_BB, C1_OC)
+    kernels_4d_1 = unpack_kernel_weights(int(os.environ["INJECTED_WEIGHTS_1_INT"], 0), C1_WW, C1_OC, C1_IC, C1_K)
+    biases_1 = unpack_biases(int(os.environ["INJECTED_BIASES_1_INT"], 0), C1_BB, C1_OC)
 
-    weights_2 = unpack_weights(int(os.environ["INJECTED_WEIGHTS_2_INT"]), CL_WB, CL_CC, C1_OC)
-    biases_2 = unpack_biases(int(os.environ["INJECTED_BIASES_2_INT"]), CL_BI, CL_CC)
+    weights_2 = unpack_weights(int(os.environ["INJECTED_WEIGHTS_2_INT"], 0), CL_WB, CL_CC, C1_OC)
+    biases_2 = unpack_biases(int(os.environ["INJECTED_BIASES_2_INT"], 0), CL_BI, CL_CC)
 
     # 4. Setup configuration dictionaries
     conv_0_params = {

@@ -18,8 +18,10 @@ module tb_single_block #(
   ,parameter int unsigned C_ShiftBits   = 0
   ,parameter int unsigned C_Unsigned    = 0
   ,parameter int unsigned P_Mode        = 0 // 0 for max pooling, 1 for average pooling
-  ,parameter string       FileName      = ""
-  ,parameter string       FileName_0    = ""
+  ,parameter              FileName      = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName_0    = ""
+  ,parameter              FileName_hi   = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName_0_hi = ""
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -69,7 +71,8 @@ module tb_single_block #(
     ,.Unsigned    (C_Unsigned)
     ,.Weights     (INJECTED_WEIGHTS_0)
     ,.Biases      (INJECTED_BIASES_0)
-    ,.FileName    ((FileName_0 != "") ? FileName_0 : FileName)
+    ,.FileName    ((FileName_0    != "") ? FileName_0    : FileName)
+    ,.FileName_hi ((FileName_0_hi != "") ? FileName_0_hi : FileName_hi)
   ) conv_layer_inst_0 (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)

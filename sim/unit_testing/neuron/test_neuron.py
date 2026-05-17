@@ -293,14 +293,14 @@ async def single_test(dut):
     await Timer(Decimal(1), units="step")
 
     weights_2d = unpack_weights(
-        packed_val=int(os.environ["INJECTED_WEIGHTS_0_INT"]),
+        packed_val=int(os.environ["INJECTED_WEIGHTS_0_INT"], 0),
         WW=WW,
         OC=1, 
         IC=IC
     )
     weights_1d = weights_2d[0] 
 
-    bias_raw = int(os.environ["INJECTED_BIASES_0_INT"])
+    bias_raw = int(os.environ["INJECTED_BIASES_0_INT"], 0)
     bias = sign_extend(bias_raw, int(dut.BiasBits.value))
 
     fc = torch_neuron_ref(weights_1d, bias, IC)
@@ -338,7 +338,7 @@ async def full_bw_test(dut):
     await Timer(Decimal(1), units="step")
 
     weights_2d = unpack_weights(
-        packed_val=int(os.environ["INJECTED_WEIGHTS_0_INT"]),
+        packed_val=int(os.environ["INJECTED_WEIGHTS_0_INT"], 0),
         WW=WW,
         OC=1,
         IC=IC
@@ -346,7 +346,7 @@ async def full_bw_test(dut):
     weights_1d = weights_2d[0]
     # -----------------------------------------------------------
 
-    bias_raw = int(os.environ["INJECTED_BIASES_0_INT"])
+    bias_raw = int(os.environ["INJECTED_BIASES_0_INT"], 0)
     bias = sign_extend(bias_raw, BW)
 
     # Instantiate PyTorch Reference Model using the signed bias

@@ -264,6 +264,7 @@ python3 -m model.render
 | Arducam         | [RPI Pico Cam Project](https://github.com/ArduCAM/RPI-Pico-Cam)                   |
 | Alex Forencich  | [Verilog-Uart Interface](https://github.com/alexforencichverilog-uart)            |
 | Dustin Richmond | [CSE 225 ASIC Design Course](https://courses.engineering.ucsc.edu/courses/cse225) |
+|Claire Wolf, Mathias Lasser | [Project IceStorm](https://prjicestorm.readthedocs.io/) |
 
 ## License
 

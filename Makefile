@@ -18,7 +18,10 @@ clean-all: clean
 .PHONY: test-all
 test-all:
 	@set -e; \
+	skip=$$([ -n "$(FROM)" ] && echo true || echo false); \
 	for d in $(UNIT_TEST_DIRS); do \
+	  case "$$d" in *"$(FROM)"*) skip=false ;; esac; \
+	  [ "$$skip" = "true" ] && continue; \
 	  echo "Testing $${d#$(REPO_ROOT)/}"; \
 	  $(MAKE) -C "$$d" test VERBOSE=0; \
 	done

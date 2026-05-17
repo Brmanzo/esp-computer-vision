@@ -201,8 +201,8 @@ class FilterModel:
     def consume(self):
         p_win  = int(self._dut.windows_i.value)
         # Sequential implementation: always recover from environment for consistency with wrapper
-        p_wgt  = int(os.environ["INJECTED_WEIGHTS_0_INT"])
-        p_bias = sign_extend(int(os.environ["INJECTED_BIASES_0_INT"]), self._BiasBits)
+        p_wgt  = int(os.environ["INJECTED_WEIGHTS_0_INT"], 0)
+        p_bias = sign_extend(int(os.environ["INJECTED_BIASES_0_INT"], 0), self._BiasBits)
 
         # Use unified unpacking (assuming utilities are in bitwise.py)
         weights = unpack_channels(p_wgt, self._WeightBits, self._InChannels, self._KernelArea)
@@ -293,7 +293,7 @@ class RandomDataGenerator:
         
         # In DSP mode, weights and biases are fixed in ROM/Parameters
         if "INJECTED_WEIGHTS_0_INT" in os.environ:
-            p_wgt = int(os.environ["INJECTED_WEIGHTS_0_INT"])
+            p_wgt = int(os.environ["INJECTED_WEIGHTS_0_INT"], 0)
             from util.bitwise import unpack_channels
             weights = unpack_channels(p_wgt, self._weight_bits, self._InChannels, self._term_count)
             if hasattr(self._dut, "Biases"):

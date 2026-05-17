@@ -78,35 +78,23 @@ def run_inference(sample_idx: int):
     else:
         print("\033[91mFAILURE: Model misidentified the gesture.\033[0m")
 
-def get_inference(sample_idx: int) -> int:
-    '''Hardware-accurate inference: runs the same integer arithmetic as the RTL using
-    the exported integer weights from hardware_weights.csv.
-
-    This replaces the PyTorch float model forward pass because the exported weights
-    include activation-scale compensation (act_scale from LearnedShiftQuantizer) that
-    the raw QAT model forward pass does not apply, causing a systematic mismatch.
-    '''
+def _hw_integer_forward(pixels: list, config) -> int:
+    '''Core hardware-accurate integer forward pass shared by get_inference() and
+    get_inference_from_pixels().  pixels is a flat list of binary {0,1} values.'''
     import re
     import ast
     import numpy as np
     import pandas as pd
-    from model.sample import get_sample
 
     DATAPATH = Path(__file__).parent / "data"
     CSV_PATH = DATAPATH / "hardware_weights.csv"
     VH_PATH  = DATAPATH / "hardware_weights.vh"
-    config   = HAND_GESTURE_CFG
-
-    pixels, _ = get_sample(sample_idx)
-    if pixels is None:
-        raise ValueError(f"Could not load sample {sample_idx}")
 
     H = config.in_dims.height
     W = config.in_dims.width
 
-    # Binary {0,1} pixel → signed {-1,+1} for convolution arithmetic (hardware XNOR maps this)
     act = np.array(pixels, dtype=np.int64).reshape(1, H, W)
-    act = 2 * act - 1
+    act = 2 * act - 1  # binary {0,1} → signed {-1,+1}
 
     df = pd.read_csv(CSV_PATH)
 
@@ -114,10 +102,9 @@ def get_inference(sample_idx: int) -> int:
         m = re.search(r"localparam\s+int\s+CLASSIFIER_SHIFT\s*=\s*(\d+)\s*;", f.read())
     classifier_shift = int(m.group(1)) if m else config.classifier_config._shift
 
-    def _conv(x: np.ndarray, w: np.ndarray, b: np.ndarray, pad: int) -> np.ndarray:
-        # x:[IC,H,W]  w:[OC,IC,kH,kW]  b:[OC]  →  [OC,OH,OW]  (all int64)
+    def _conv(x: np.ndarray, w: np.ndarray, b: np.ndarray, pad: int, pad_value: int = 0) -> np.ndarray:
         if pad > 0:
-            x = np.pad(x, ((0, 0), (pad, pad), (pad, pad)))
+            x = np.pad(x, ((0, 0), (pad, pad), (pad, pad)), constant_values=pad_value)
         _, Hp, Wp = x.shape
         OC, _, kH, kW = w.shape
         OH, OW = Hp - kH + 1, Wp - kW + 1
@@ -138,7 +125,10 @@ def get_inference(sample_idx: int) -> int:
         w = np.array(ast.literal_eval(str(row.weights_flat)), dtype=np.int64).reshape(oc, ic, kw, kw)
         b = np.array(ast.literal_eval(str(row.bias_flat)),    dtype=np.int64)
 
-        acc = _conv(act, w, b, conv._padding)
+        # Binary input layer (InBits=1): hardware pads with 1'b0, which mac.sv maps to -weight.
+        # Ternary layers (InBits=2): hardware pads with 2'b00 = ternary 0, contributing 0.
+        pad_value = -1 if i == 0 else 0
+        acc = _conv(act, w, b, conv._padding, pad_value)
 
         if i == len(config.layers) - 1:
             # Last feature layer: ReLU + logical right-shift + unsigned saturation
@@ -160,10 +150,8 @@ def get_inference(sample_idx: int) -> int:
                     pooled[:, r, c] = np.max(act[:, r*kp:r*kp+kp, c*kp:c*kp+kp], axis=(1, 2))
             act = pooled
 
-    # Global max per channel → [OC]
     act_gmax = np.max(act, axis=(1, 2))
 
-    # Classifier (linear layer using 1×1 integer weights)
     c_idx = len(config.layers)
     row   = df.iloc[c_idx]
     nc    = config.classifier_config._num_classes
@@ -173,7 +161,27 @@ def get_inference(sample_idx: int) -> int:
     b_cls = np.array(ast.literal_eval(str(row.bias_flat)),    dtype=np.int64)
 
     logits = w_cls @ act_gmax + b_cls
-    return int(np.argmax(logits))
+
+    # Hardware classifier_layer has ShiftBits=0 (not passed in cnn.sv, default=0).
+    # output_encoder applies ReLU + saturation only — no shift.
+    # classifier_shift was already consumed by the last conv layer (layer 2).
+    quantized_logits = np.clip(np.maximum(logits, 0), 0, (1 << config.classifier_config._out_bits) - 1)
+    
+    return int(np.argmax(quantized_logits))
+
+
+def get_inference(sample_idx: int) -> int:
+    '''Hardware-accurate inference on a dataset sample (index into test set).'''
+    from model.sample import get_sample
+    pixels, _ = get_sample(sample_idx)
+    if pixels is None:
+        raise ValueError(f"Could not load sample {sample_idx}")
+    return _hw_integer_forward(pixels, HAND_GESTURE_CFG)
+
+
+def get_inference_from_pixels(pixels: list, config=None) -> int:
+    '''Hardware-accurate inference on an explicit flat list of binary {0,1} pixels.'''
+    return _hw_integer_forward(pixels, config or HAND_GESTURE_CFG)
 
 if __name__ == "__main__":
     idx = int(sys.argv[1]) if len(sys.argv) > 1 else 10

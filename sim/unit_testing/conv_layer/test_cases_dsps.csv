@@ -7,3 +7,4 @@ InBits,WeightBits,OutBits,KernelWidth,LineWidthPx,LineCountPx,InChannels,OutChan
 1,2,AUTO,3,8,8,4,8,8,1,0,2,0,0
 1,2,AUTO,3,8,8,4,8,8,1,0,4,0,0
 1,2,AUTO,3,8,8,4,8,8,1,0,8,0,0
+2,8,4,3,8,8,8,12,16,1,0,8,0,6

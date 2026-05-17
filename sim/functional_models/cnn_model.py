@@ -12,19 +12,35 @@ from model.config import ModelConfig
 from util.bitwise import pack_terms
 
 class PictureGenerator:
-    def __init__(self, model) -> None:
+    def __init__(self, model, inject_pixels: Optional[List[int]] = None) -> None:
         self._width_p = model._InBits
         self._InChannels = model._InChannels
-        
-        # Pull sample index from environment if set, default to 0
-        self._sample_idx = int(os.environ.get("SAMPLE_IDX", 0))
-        from model.sample import get_sample
-        pixels, label = get_sample(self._sample_idx)
-        if pixels is None or label is None:
-            raise ValueError(f"Could not load sample {self._sample_idx}")
-        self._pixels: List[int] = pixels
-        self._label: int = label
-        
+
+        n_pixels = model._config.in_dims.width * model._config.in_dims.height
+
+        # Priority: explicit inject_pixels arg > INJECT_PIXELS env var > dataset sample
+        inject_env = os.environ.get("INJECT_PIXELS", "")
+        if inject_pixels is not None:
+            self._pixels = inject_pixels
+            self._label = None
+        elif inject_env == "zeros":
+            self._pixels = [0] * n_pixels
+            self._label = None
+        elif inject_env == "ones":
+            self._pixels = [1] * n_pixels
+            self._label = None
+        elif inject_env:
+            self._pixels = [int(v) for v in inject_env.split(",")]
+            self._label = None
+        else:
+            self._sample_idx = int(os.environ.get("SAMPLE_IDX", 0))
+            from model.sample import get_sample
+            pixels, label = get_sample(self._sample_idx)
+            if pixels is None or label is None:
+                raise ValueError(f"Could not load sample {self._sample_idx}")
+            self._pixels = pixels
+            self._label = label
+
         self._ptr = 0
 
     def generate(self) -> tuple[int, List[int]]:
@@ -127,7 +143,8 @@ class CNNModel:
             "weight_bits": cfg._q_schedule._q_min_bits,
             "bias_bits":   cfg._bias_bits,
             "weights":     w,
-            "biases":      b
+            "biases":      b,
+            "unsigned_in": 1 if cfg._in_bits > 2 else 0,
         }
 
     def step(self, x: List[int]):

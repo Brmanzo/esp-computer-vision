@@ -7,8 +7,33 @@ import sys
 from model.config  import ModelConfig, ConvConfig, PoolConfig, ClassifierConfig
 from model.globals import HAND_GESTURE_CFG
 
-def render_header(BusBits, num_layers=1):
+def _rom_needs_hi(cfg) -> bool:
+    '''True when a conv layer's ROM exceeds one SB_RAM40_4K tile (16 bits wide).'''
+    from model.config import ConvConfig
+    if not isinstance(cfg, ConvConfig) or cfg._dsp_count <= 0:
+        return False
+    effective_dsps = min(cfg._dsp_count, cfg._out_ch or 0)
+    return effective_dsps * cfg._q_schedule._q_min_bits > 16
+
+def _lo_hex(i: int) -> str:
+    return f"model/data/roms/hex/layer_{i}_weights_lo.hex"
+
+def _hi_hex(i: int) -> str:
+    return f"model/data/roms/hex/layer_{i}_weights_hi.hex"
+
+def _std_hex(i: int) -> str:
+    return f"model/data/roms/hex/layer_{i}_weights.hex"
+
+def render_header(cfg, num_layers: int = 1):
     '''Renders the header of the CNN SystemVerilog file.'''
+    from model.config import ModelConfig
+    if isinstance(cfg, ModelConfig):
+        BusBits = cfg._bus_width
+        layer_cfgs = [l.ConvLayer for l in cfg.layers]
+    else:
+        BusBits = cfg  # legacy: first arg is BusBits int
+        layer_cfgs = []
+
     # Timestamp the file for traceability
     date = datetime.now().strftime("%B %d, %Y %I:%M %p")
     lines = [
@@ -19,14 +44,30 @@ def render_header(BusBits, num_layers=1):
         "module cnn #(",
         f"  parameter int unsigned BusBits = {BusBits}",
     ]
-    
+
+    def _verilator_params():
+        for i in range(num_layers):
+            conv = layer_cfgs[i] if i < len(layer_cfgs) else None
+            if conv is not None and _rom_needs_hi(conv):
+                yield f"  ,parameter string FileName_{i}    = \"{_lo_hex(i)}\""
+                yield f"  ,parameter string FileName_{i}_hi = \"{_hi_hex(i)}\""
+            else:
+                yield f"  ,parameter string FileName_{i} = \"{_std_hex(i)}\""
+
+    def _synth_params():
+        for i in range(num_layers):
+            conv = layer_cfgs[i] if i < len(layer_cfgs) else None
+            if conv is not None and _rom_needs_hi(conv):
+                yield f"  ,parameter [8*256-1:0] FileName_{i}    = \"{_lo_hex(i)}\""
+                yield f"  ,parameter [8*256-1:0] FileName_{i}_hi = \"{_hi_hex(i)}\""
+            else:
+                yield f"  ,parameter [8*256-1:0] FileName_{i} = \"{_std_hex(i)}\""
+
     # Add FileName parameters for each layer to support ROM injection
     lines.append("`ifdef VERILATOR")
-    for i in range(num_layers):
-        lines.append(f"  ,parameter string FileName_{i} = \"model/data/roms/hex/layer_{i}_weights.hex\"")
+    lines.extend(_verilator_params())
     lines.append("`else")
-    for i in range(num_layers):
-        lines.append(f"  ,parameter [8*256-1:0] FileName_{i} = \"model/data/roms/hex/layer_{i}_weights.hex\"")
+    lines.extend(_synth_params())
     lines.append("`endif")
     
     lines.extend([
@@ -112,8 +153,10 @@ def render_conv_layer(cfg: ConvConfig, is_last_feature: bool = False):
     ]
     if is_last_feature:
         lines.append("    ,.ShiftBits   (CLASSIFIER_SHIFT)")
+    lines.append(f"    ,.FileName    (FileName_{cfg._layer_num})")
+    if _rom_needs_hi(cfg):
+        lines.append(f"    ,.FileName_hi (FileName_{cfg._layer_num}_hi)")
     lines += [
-        f"    ,.FileName    (FileName_{cfg._layer_num})",
         f"  ) conv_layer_inst_{cfg._layer_num} (",
         "     .clk_i     (clk_i)",
         "    ,.rst_i     (rst_i)",
@@ -201,7 +244,7 @@ def render_verilog(cfg: ModelConfig) -> None:
     out_file = repo_root / "rtl" / "blocks" / "cnn.sv"
 
     with open(out_file, "w", encoding="utf-8") as f:
-        print(render_header(cfg._bus_width, num_layers=len(cfg.layers) + 1), file=f)
+        print(render_header(cfg, num_layers=len(cfg.layers) + 1), file=f)
         # You might need to adjust render_wires to accept self.config.layers
         print(render_wires(cfg), file=f) 
         print("", file=f)

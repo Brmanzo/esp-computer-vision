@@ -17,15 +17,8 @@ module linear_layer #(
   ,parameter logic signed [OutChannels*WeightIndex-1:0] Weights = '0
   ,parameter logic signed [OutChannels*BiasBits-1:0]    Biases  = '0
   ,parameter int unsigned DSPCount  = 0 // 0: LUT, 1: Sequential DSP per class, 2: Fully Sequential DSP (one total)
-`ifdef VERILATOR
-  ,parameter  string FileName = ""
-  /* verilator lint_off UNUSEDPARAM */
-  ,parameter  string FileName_0 = ""
-  /* verilator lint_on UNUSEDPARAM */
-`else
-  ,parameter  [8*256-1:0] FileName = ""
-  ,parameter  [8*256-1:0] FileName_0 = ""
-`endif
+  ,parameter FileName    = "model/data/roms/hex/zeros.hex"
+  ,parameter FileName_hi = "model/data/roms/hex/zeros.hex"
 
 )  (
    input [0:0] clk_i
@@ -74,6 +67,7 @@ module linear_layer #(
         ,.Weights     (Weights)
         ,.Biases      (Biases)
         ,.FileName    (FileName)
+        ,.FileName_hi (FileName_hi)
       ) filter_select_inst (
         .clk_i   (clk_i)
         ,.rst_i   (rst_i)

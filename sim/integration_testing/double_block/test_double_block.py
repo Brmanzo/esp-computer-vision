@@ -145,19 +145,20 @@ TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), auto_ru
 @pytest.mark.parametrize("simulator", ["verilator", "icarus"])
 # Pass the dynamically generated list directly into parametrize!
 @auto_unpack(TEST_CASES)
-@pytest.mark.parametrize("DSPCount", [0, 1])
+@pytest.mark.parametrize("C0_DSPCount", [0, 1])
+@pytest.mark.parametrize("C1_DSPCount", [0, 1])
 def test_each(test_name, simulator, 
               C0_LineWidthPx, C0_LineCountPx, C0_InBits, C0_OutBits,
               C0_KernelWidth, C0_WeightBits, C0_BiasBits, C0_InChannels, C0_OutChannels,
               C0_Stride, C0_Padding, C0_Weights, C0_Biases,  P0_KernelWidth, P0_Mode, 
               C1_OutBits, C1_KernelWidth, C1_WeightBits, C1_BiasBits, C1_OutChannels, 
-              C1_Stride, C1_Padding, C1_Weights, C1_Biases, P1_KernelWidth, P1_Mode, DSPCount):
+              C1_Stride, C1_Padding, C1_Weights, C1_Biases, P1_KernelWidth, P1_Mode, C0_DSPCount, C1_DSPCount):
     parameters = dict(locals())
     parameters.pop('C0_Weights', None)
     parameters.pop('C0_Biases', None)
     parameters.pop('C1_Weights', None)
     parameters.pop('C1_Biases', None)
-    param_str = f"InBits_{C0_InBits}_OutBits0_{C0_OutBits}_OutBits1_{C1_OutBits}_test_{test_name}"
+    param_str = f"InBits_{C0_InBits}_OutBits0_{C0_OutBits}_OutBits1_{C1_OutBits}_DSP0_{C0_DSPCount}_DSP1_{C1_DSPCount}_test_{test_name}"
     
     weight_bits_0 = C0_OutChannels * C0_InChannels * (C0_KernelWidth**2) * C0_WeightBits
     weight_bits_1 = C1_OutChannels * C0_OutChannels * (C1_KernelWidth**2) * C1_WeightBits
@@ -165,7 +166,7 @@ def test_each(test_name, simulator,
     bias_bits_0 = C0_OutChannels * C0_BiasBits
     bias_bits_1 = C1_OutChannels * C1_BiasBits
     
-    if simulator == "icarus" and int(DSPCount) > 0:
+    if simulator == "icarus" and (int(C0_DSPCount) > 0 or int(C1_DSPCount) > 0):
         pytest.skip("Icarus Verilog has issues with ROM initialization in sequential configurations")
 
     custom_work_dir = inject_weights_and_biases(
@@ -173,16 +174,17 @@ def test_each(test_name, simulator,
         tbpath=tbpath, test_class="each", Weights=C0_Weights, Biases=C0_Biases, 
         weight_bits=C0_WeightBits, bias_bits=bias_bits_0,
         weight_count=C0_OutChannels * C0_InChannels * (C0_KernelWidth**2),
-        layer=0, dsp_count=int(DSPCount))
+        layer=0, dsp_count=int(C0_DSPCount))
     
     inject_weights_and_biases(
         simulator=simulator, parameters=parameters, param_str=param_str, 
         tbpath=tbpath, test_class="each", Weights=C1_Weights, Biases=C1_Biases, 
         weight_bits=C1_WeightBits, bias_bits=bias_bits_1,
         weight_count=C1_OutChannels * C0_OutChannels * (C1_KernelWidth**2),
-        layer=1, dsp_count=int(DSPCount))
+        layer=1, dsp_count=int(C1_DSPCount))
 
-    parameters.pop('FileName', None) # Remove fallback FileName to avoid Verilator "parameter not found" error
+    parameters.pop('FileName',    None)
+    parameters.pop('FileName_hi', None)
 
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters,
@@ -259,16 +261,16 @@ async def single_test(dut):
     P1_H_out = ((C1_H_out - P1_K) // P1_S) + 1
 
     # 3. Unpack Weights for both blocks
-    packed_weights_0 = int(os.environ["INJECTED_WEIGHTS_0_INT"])
+    packed_weights_0 = int(os.environ["INJECTED_WEIGHTS_0_INT"], 0)
     kernels_4d_0 = unpack_kernel_weights(packed_weights_0, C0_WW, C0_OC, C0_IC, C0_K)
 
-    packed_weights_1 = int(os.environ["INJECTED_WEIGHTS_1_INT"])
+    packed_weights_1 = int(os.environ["INJECTED_WEIGHTS_1_INT"], 0)
     kernels_4d_1 = unpack_kernel_weights(packed_weights_1, C1_WW, C1_OC, C1_IC, C1_K)
 
-    packed_biases_0 = int(os.environ["INJECTED_BIASES_0_INT"])
+    packed_biases_0 = int(os.environ["INJECTED_BIASES_0_INT"], 0)
     biases_0 = unpack_biases(packed_biases_0, C0_BB, C0_OC)
 
-    packed_biases_1 = int(os.environ["INJECTED_BIASES_1_INT"])
+    packed_biases_1 = int(os.environ["INJECTED_BIASES_1_INT"], 0)
     biases_1 = unpack_biases(packed_biases_1, C1_BB, C1_OC)
 
     # 4. Setup configuration dictionaries
@@ -377,16 +379,16 @@ async def rate_tests(dut, in_rate, out_rate):
     output_activation = [[[0 for _ in range(P1_W_out)] for _ in range(P1_H_out)] for _ in range(C1_OC)]
 
     # 3. Unpack Weights for both blocks
-    packed_weights_0 = int(os.environ["INJECTED_WEIGHTS_0_INT"])
+    packed_weights_0 = int(os.environ["INJECTED_WEIGHTS_0_INT"], 0)
     kernels_4d_0 = unpack_kernel_weights(packed_weights_0, C0_WW, C0_OC, C0_IC, C0_K)
 
-    packed_weights_1 = int(os.environ["INJECTED_WEIGHTS_1_INT"])
+    packed_weights_1 = int(os.environ["INJECTED_WEIGHTS_1_INT"], 0)
     kernels_4d_1 = unpack_kernel_weights(packed_weights_1, C1_WW, C1_OC, C1_IC, C1_K)
 
-    packed_biases_0 = int(os.environ["INJECTED_BIASES_0_INT"])
+    packed_biases_0 = int(os.environ["INJECTED_BIASES_0_INT"], 0)
     biases_0 = unpack_biases(packed_biases_0, C0_BB, C0_OC)
 
-    packed_biases_1 = int(os.environ["INJECTED_BIASES_1_INT"])
+    packed_biases_1 = int(os.environ["INJECTED_BIASES_1_INT"], 0)
     biases_1 = unpack_biases(packed_biases_1, C1_BB, C1_OC)
 
     # 4. Setup configuration dictionaries

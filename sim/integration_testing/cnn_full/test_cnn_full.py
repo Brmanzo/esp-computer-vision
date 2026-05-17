@@ -19,6 +19,10 @@ from model.globals import HAND_GESTURE_CFG
 async def full_cnn_test(dut) -> None:
     """
     Full CNN Integration Test using ModelConfig and Hardware Weights.
+
+    Controlled by env vars:
+      INJECT_PIXELS : "zeros" | "ones" | "<comma-separated ints>" | "" (dataset)
+      SAMPLE_IDX    : dataset index when INJECT_PIXELS is not set (default 10)
     """
     # 1. Load Architecture Config
     config = HAND_GESTURE_CFG
@@ -30,30 +34,30 @@ async def full_cnn_test(dut) -> None:
     from typing import Any
     weights_dict: dict[str, Any] = {}
     from util.bitwise import unpack_kernel_weights, unpack_weights, unpack_biases
-    
+
     for i, layer_cfg in enumerate(config.layers):
         cfg = layer_cfg.ConvLayer
-        W_int = int(os.environ[f"INJECTED_WEIGHTS_{i}_INT"])
-        B_int = int(os.environ[f"INJECTED_BIASES_{i}_INT"])
+        W_int = int(os.environ[f"INJECTED_WEIGHTS_{i}_INT"], 0)
+        B_int = int(os.environ[f"INJECTED_BIASES_{i}_INT"], 0)
         if cfg._bias_bits is None or cfg._out_ch is None:
             raise ValueError("Bias bits or out channels must be non-zero")
         weights_dict[f"LAYER_{i}_WEIGHTS"] = unpack_kernel_weights(W_int, cfg._q_schedule._q_min_bits, cfg._out_ch, cfg._in_ch, cfg._kernel_width)
         weights_dict[f"LAYER_{i}_BIASES"] = unpack_biases(B_int, cfg._bias_bits, cfg._out_ch)
-        
+
     c_idx = len(config.layers)
     c_cfg = config.classifier_config
-    CW_int = int(os.environ[f"INJECTED_WEIGHTS_{c_idx}_INT"])
-    CB_int = int(os.environ[f"INJECTED_BIASES_{c_idx}_INT"])
+    CW_int = int(os.environ[f"INJECTED_WEIGHTS_{c_idx}_INT"], 0)
+    CB_int = int(os.environ[f"INJECTED_BIASES_{c_idx}_INT"], 0)
     weights_dict[f"LAYER_{c_idx}_WEIGHTS"] = unpack_weights(CW_int, c_cfg._q_schedule._q_min_bits, c_cfg._num_classes, c_cfg._in_ch)
     weights_dict[f"LAYER_{c_idx}_BIASES"] = unpack_biases(CB_int, c_cfg._bias_bits, c_cfg._num_classes)
 
     functional_model = CNNModel(dut, config, weights_dict)
-    
+
     # 3. Setup verification components
     if config.in_dims.width is None or config.in_dims.height is None:
         assert False, "CNN input dimensions are not set!"
     n_pixels = config.in_dims.width * config.in_dims.height
-    
+
     m = ModelRunner(dut, functional_model)
     om = OutputModel(dut, length=1) # Expect 1 classification ID
     im = InputModel(dut, PictureGenerator(functional_model), RateGenerator(dut, 1), n_pixels)
@@ -73,42 +77,71 @@ async def full_cnn_test(dut) -> None:
 
     # 5. Report Results
     from model.preprocess import get_class_names
-    from model.inference import get_inference
+    from model.inference import get_inference, get_inference_from_pixels
     from model.sample import get_sample
 
     class_names = get_class_names()
-    sample_idx = int(os.environ.get("SAMPLE_IDX", "10"))
 
     assert len(functional_model.results) > 0, "No hardware output captured — pipeline may have timed out"
     got_id = functional_model.results[0]
-    torch_id = get_inference(sample_idx)
-    _, label = get_sample(sample_idx)
-    assert label is not None
 
-    dut._log.info(f"--- CNN VERIFICATION RESULTS (Sample {sample_idx}) ---")
-    dut._log.info(f"Ground Truth:    {label} ({class_names[label]})")
-    dut._log.info(f"Hardware Output: {got_id} ({class_names[got_id]})")
-    dut._log.info(f"Functional Model: {got_id} ({class_names[got_id]})") # Asserted equal within functional model
-    dut._log.info(f"PyTorch Ref:     {torch_id} ({class_names[torch_id]})")
+    inject_env = os.environ.get("INJECT_PIXELS", "")
+    # Verilog predicts 1, Functional model predicts 2, Pytorch predicts 1, FPGA predicts 6
+    if inject_env == "zeros":
+        pixels = [0] * n_pixels
+        sw_id  = get_inference_from_pixels(pixels, config)
+        label  = None
+        desc   = "injected all-zeros"
+    # Verilog predicts 1, Functional model predicts 2, Pytorch predicts 0, FPGA predicts 5
+    elif inject_env == "ones":
+        pixels = [1] * n_pixels
+        sw_id  = get_inference_from_pixels(pixels, config)
+        label  = None
+        desc   = "injected all-ones"
+    elif inject_env:
+        pixels = [int(v) for v in inject_env.split(",")]
+        sw_id  = get_inference_from_pixels(pixels, config)
+        label  = None
+        desc   = f"injected custom ({len(pixels)} px)"
+    else:
+        sample_idx = int(os.environ.get("SAMPLE_IDX", "10"))
+        sw_id  = get_inference(sample_idx)
+        _, label = get_sample(sample_idx)
+        desc   = f"dataset sample {sample_idx}"
 
-    assert got_id == torch_id, (
-        f"Hardware/PyTorch mismatch: hardware={got_id} ({class_names[got_id]}), "
-        f"pytorch={torch_id} ({class_names[torch_id]}), ground_truth={label} ({class_names[label]})"
+    dut._log.info(f"--- CNN VERIFICATION RESULTS ({desc}) ---")
+    dut._log.info(f"Ground Truth:     {label}")
+    dut._log.info(f"Hardware Output:  {got_id} ({class_names[got_id]})")
+    dut._log.info(f"SW Integer Model: {sw_id} ({class_names[sw_id]})")
+
+    assert got_id == sw_id, (
+        f"Hardware/SW mismatch: hardware={got_id} ({class_names[got_id]}), "
+        f"sw={sw_id} ({class_names[sw_id]}), input={desc}"
     )
-    dut._log.info("SUCCESS: Hardware output matches PyTorch prediction!")
+    dut._log.info("SUCCESS: Hardware output matches SW integer prediction!")
 
-def test_full() -> None:
-    """Pytest entry point"""
+def test_full(inject_pixels: str = "") -> None:
+    """Pytest entry point.
+
+    Args:
+        inject_pixels: "zeros" | "ones" | "<comma-separated ints>" | "" (dataset, default)
+    """
     tbpath = Path(__file__).parent
     config = HAND_GESTURE_CFG
     simulator = "verilator"
     params = {"BusBits": 8}
     testname = "full_cnn_test"
-    
+
     # 1. Prepare work directory
     param_str = get_param_string(params)
     work_dir = os.path.join(tbpath, "run", testname, param_str, simulator)
     os.makedirs(work_dir, exist_ok=True)
+
+    # Propagate inject mode to cocotb test via env var
+    if inject_pixels:
+        os.environ["INJECT_PIXELS"] = inject_pixels
+    else:
+        os.environ.pop("INJECT_PIXELS", None)
     
     # 2. Load weights from original .vh for injection
     vh_path = (tbpath / ".." / ".." / ".." / "model" / "data" / "hardware_weights.vh").resolve()

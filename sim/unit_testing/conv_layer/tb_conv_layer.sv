@@ -18,8 +18,10 @@ module tb_conv_layer #(
   ,parameter int unsigned DSPCount     = 0
   ,parameter int unsigned ShiftBits    = 0
   ,parameter int unsigned Unsigned     = 0
-  ,parameter string       FileName     = "memory_init_file.hex"
-  ,parameter string       FileName_0   = ""
+  ,parameter               FileName     = "memory_init_file.hex"
+  ,parameter               FileName_0   = ""
+  ,parameter               FileName_hi  = "memory_init_file.hex"
+  ,parameter               FileName_0_hi = ""
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -55,6 +57,7 @@ conv_layer #(
     ,.Weights     (INJECTED_WEIGHTS_0)
     ,.Biases      (INJECTED_BIASES_0)
     ,.FileName    ((FileName_0 != "") ? FileName_0 : FileName)
+    ,.FileName_hi ((FileName_0_hi != "") ? FileName_0_hi : FileName_hi)
   ) dut (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)

@@ -13,8 +13,10 @@ module tb_classifier_layer #(
   ,parameter  int unsigned BiasBits   = 2
   ,parameter  int unsigned DSPCount   = 0
   ,parameter  int unsigned Unsigned   = 0
-  ,parameter  string       FileName   = "memory_init_file.hex"
-  ,parameter  string       FileName_0 = ""
+  ,parameter               FileName   = "memory_init_file.hex"
+  ,parameter               FileName_0 = ""
+  ,parameter               FileName_hi = "memory_init_file.hex"
+  ,parameter               FileName_0_hi = ""
 
   ,localparam int unsigned IdBits     = (ClassCount <= 1) ? 1 : $clog2(ClassCount)
 )  (
@@ -48,6 +50,7 @@ classifier_layer #(
     ,.BiasBits    (BiasBits)
     ,.Biases      (INJECTED_BIASES_0)
     ,.FileName    ((FileName_0 != "") ? FileName_0 : FileName)
+    ,.FileName_hi ((FileName_0_hi != "") ? FileName_0_hi : FileName_hi)
   ) dut (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)

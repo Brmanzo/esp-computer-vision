@@ -25,8 +25,10 @@ ice40.pdf: ice40.json
 	$(NETLISTSVG) $< -o $(subst pdf,svg,$@)
 	$(RSVG) -f pdf $(subst pdf,svg,$@) -o $@
 
+HEX_FILES := $(wildcard $(REPO_ROOT)/model/data/roms/hex/*.hex)
+
 synth-ice40: ice40.json
-ice40.json: $(TOP_SV) $(FILELIST) $(SYNTH_SOURCES)
+ice40.json: $(TOP_SV) $(FILELIST) $(SYNTH_SOURCES) $(HEX_FILES)
 	$(YOSYS) -ql ice40.yslog -p 'read_verilog -sv -DSYNTHESIS $(TOP_SV) $(SYNTH_SOURCES); hierarchy -top top; synth_ice40 -dsp -top top; delete t:$$scopeinfo; clean -purge; write_json $@'
 
 # These commands will always work.

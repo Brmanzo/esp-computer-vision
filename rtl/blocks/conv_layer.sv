@@ -23,7 +23,7 @@ function automatic int unsigned conv_acc_bits(
     max_weight = (weight_bits <= 2) ? 64'd1 : (64'd1 << (weight_bits - 1));
     worst_case_sum = longint'(kernel_area) * max_input * max_weight * longint'(in_channels);
     wc_bits = $clog2(worst_case_sum + 1) + 1;
-    wc_bits = ((wc_bits > bias_bits) ? wc_bits : bias_bits);// + 1;
+    wc_bits = ((wc_bits > bias_bits) ? wc_bits : bias_bits) + 1;
     conv_acc_bits = (wc_bits > 32) ? 32 : wc_bits;
   end
 endfunction
@@ -56,15 +56,8 @@ module conv_layer #(
    ,localparam int unsigned WeightIndex = InChannels * KernelArea * WeightBits
    ,parameter logic signed [OutChannels*WeightIndex-1:0] Weights = '0
    ,parameter logic signed [OutChannels*BiasBits-1:0] Biases = '0
-`ifdef VERILATOR
-   ,parameter string FileName = ""
-   /* verilator lint_off UNUSEDPARAM */
-   ,parameter string FileName_0 = ""
-   /* verilator lint_on UNUSEDPARAM */
-`else
-   ,parameter [8*256-1:0] FileName = ""
-   ,parameter [8*256-1:0] FileName_0 = ""
-`endif
+   ,parameter FileName    = "model/data/roms/hex/zeros.hex"
+   ,parameter FileName_hi = "model/data/roms/hex/zeros.hex"
 ) (
     input  [0:0] clk_i
    ,input  [0:0] rst_i
@@ -222,6 +215,7 @@ module conv_layer #(
         ,.OutChannels (OutChannels)
         ,.Biases      (Biases)
         ,.FileName    (FileName)
+        ,.FileName_hi (FileName_hi)
       ) filter_seq_inst (
          .clk_i    (clk_i)
         ,.rst_i    (rst_i)

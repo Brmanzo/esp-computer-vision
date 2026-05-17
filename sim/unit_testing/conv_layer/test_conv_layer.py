@@ -182,9 +182,9 @@ async def single_test(dut):
     N_out = 1
     rate = 1
 
-    packed_weights = int(os.environ["INJECTED_WEIGHTS_0_INT"])
+    packed_weights = int(os.environ["INJECTED_WEIGHTS_0_INT"], 0)
     kernels_4d = unpack_kernel_weights(packed_weights, WW, OC, IC, K)
-    packed_biases = int(os.environ.get("INJECTED_BIASES_0_INT", "0"))
+    packed_biases = int(os.environ.get("INJECTED_BIASES_0_INT", "0"), 0)
     biases_2d = unpack_biases(packed_biases, BW, OC)
     
     model = ConvLayerModel(dut, weights=kernels_4d, biases=biases_2d)
@@ -266,8 +266,8 @@ async def rate_tests(dut, in_rate, out_rate):
     first_out_wait_ns = int((2 * (K - 1) * W + 2 * (K - 1) + 200) * scale / slow)
     timeout_ns        = int((H_out * N_in + 5000) * scale / slow)
 
-    packed_weights = int(os.environ["INJECTED_WEIGHTS_0_INT"])
-    packed_biases  = int(os.environ.get("INJECTED_BIASES_0_INT", "0"))
+    packed_weights = int(os.environ["INJECTED_WEIGHTS_0_INT"], 0)
+    packed_biases  = int(os.environ.get("INJECTED_BIASES_0_INT", "0"), 0)
 
     kernels_4d = unpack_kernel_weights(packed_weights, WW, OC, IC, K)
     biases_2d  = unpack_biases(packed_biases, BW, OC)

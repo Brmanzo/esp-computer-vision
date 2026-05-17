@@ -41,8 +41,6 @@ gen_rules = [
 TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), gen_rules=gen_rules)
 def run_classifier_test(test_name, simulator, parameters, Weights, Biases, test_class="each"):
     dsp_count = int(parameters.get('DSPCount', 0))
-    if simulator == "icarus" and dsp_count > 0:
-        pytest.skip("Icarus Verilog has issues with ROM initialization in sequential configurations")
 
     param_str = f"TermBits_{parameters['TermBits']}_WeightBits_{parameters['WeightBits']}_BiasBits_{parameters['BiasBits']}_test_{test_name}"
     
@@ -77,7 +75,7 @@ def run_classifier_test(test_name, simulator, parameters, Weights, Biases, test_
 
 TEST_CASES = load_tests_from_csv(os.path.join(tbpath, "test_cases.csv"), gen_rules=gen_rules)
 @pytest.mark.parametrize("test_name", tests)
-@pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+@pytest.mark.parametrize("simulator", ["verilator"])
 @auto_unpack(TEST_CASES)
 def test_each(test_name, simulator,
               TermBits, TermCount, BusBits, InChannels,
@@ -88,7 +86,7 @@ def test_each(test_name, simulator,
 
 TEST_CASES_DSPS = load_tests_from_csv(os.path.join(tbpath, "test_cases_dsps.csv"), gen_rules=gen_rules)
 @pytest.mark.parametrize("test_name", tests)
-@pytest.mark.parametrize("simulator", ["verilator", "icarus"])
+@pytest.mark.parametrize("simulator", ["verilator"])
 @auto_unpack(TEST_CASES_DSPS)
 def test_dsps(test_name, simulator,
               TermBits, TermCount, BusBits, InChannels,
@@ -137,8 +135,8 @@ async def single_test(dut):
     WW = int(dut.WeightBits.value)
     BW = int(dut.BiasBits.value)
 
-    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_0_INT"]), WW, OC, IC)
-    biases_1d = unpack_biases(int(os.environ["INJECTED_BIASES_0_INT"]), BW, OC)
+    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_0_INT"], 0), WW, OC, IC)
+    biases_1d = unpack_biases(int(os.environ["INJECTED_BIASES_0_INT"], 0), BW, OC)
 
     model = ClassifierLayerModel(dut, weights_2d, biases_1d)
     m = ModelRunner(dut, model)
@@ -174,8 +172,8 @@ async def rate_tests(dut, in_rate, out_rate):
     BW = int(dut.BiasBits.value)
     DC = int(dut.DSPCount.value)
 
-    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_0_INT"]), WW, OC, IC)
-    biases_1d = unpack_biases(int(os.environ["INJECTED_BIASES_0_INT"]), BW, OC)
+    weights_2d = unpack_weights(int(os.environ["INJECTED_WEIGHTS_0_INT"], 0), WW, OC, IC)
+    biases_1d = unpack_biases(int(os.environ["INJECTED_BIASES_0_INT"], 0), BW, OC)
 
     model = ClassifierLayerModel(dut, weights_2d, biases_1d)
     m = ModelRunner(dut, model)

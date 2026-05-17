@@ -17,7 +17,12 @@ import json
 import os
 from   pathlib import Path
 import pytest
+import sys
 from   typing import Literal, Optional
+
+# Large weight tensors exceed Python 3.11+'s 4300-decimal-digit int-to-str limit
+# when pytest builds parametrize test IDs. Disable the limit for test infrastructure.
+sys.set_int_max_str_digits(0)
 
 
 import cocotb
@@ -268,7 +273,7 @@ def get_param_string(parameters):
     parameters -- a dictionary of key value pairs
     """
     # Filter out large or volatile parameters that shouldn't affect the build directory name
-    filtered = {k: v for k, v in parameters.items() if k not in ["FileName", "Biases", "Weights"]}
+    filtered = {k: v for k, v in parameters.items() if not k.startswith("FileName") and k not in ["Biases", "Weights"]}
     return "_".join(("{}={}".format(k, v) for k, v in filtered.items()))
 
 
@@ -336,8 +341,8 @@ def inject_params(parameters: dict, param: int, param_name: str, param_bits: int
             f"{param_bits}'h{packed_param:0{hex_width}x};\n"
         )
 
-    # 4. Pass the integer strictly through the OS environment to Cocotb testbench
-    os.environ[f"INJECTED_{param_name.upper()}_INT"] = str(param)
+    # 4. Pass via env as hex to avoid Python's 4300-digit int-to-str limit for large weight tensors
+    os.environ[f"INJECTED_{param_name.upper()}_INT"] = hex(packed_param)
 
 def inject_raw_param(parameters: dict, param: int, param_name: str, param_bits: int, work_dir: str, vh_name: str, env_name: str):
     """
@@ -359,48 +364,77 @@ def inject_raw_param(parameters: dict, param: int, param_name: str, param_bits: 
             f"{param_bits}'h{packed_param:0{hex_width}x};\n"
         )
 
-    # 4. Pass via environment
-    os.environ[env_name] = str(param)
+    # 4. Pass via environment as hex to avoid Python's 4300-digit int-to-str limit
+    os.environ[env_name] = hex(packed_param)
 
 def inject_hex_weights(parameters: dict, weights_int: int, oc: int, ic: int, kw: int, weight_bits: int, param_name: str, work_dir: str, dsp_count: int):
     """
     Slices a large packed integer of weights and writes them to hex file for $readmemh,
     packing multiple weights per line if multiple DSPs are used in parallel.
+    Supports splitting into two tiles if width > 16 bits (matching filter_seq.sv).
     """
     # 1. Safely remove from CLI parameters dict
     parameters.pop(param_name, None)
 
     # 2. Extract dimensions
-    ka = kw**2
-    
-    # 3. Calculate hardware-accurate partitioning (matches RTL localparams)
-    effective_dsps  = min(dsp_count, oc)
+    ka = kw**2 # 9
+    effective_dsps  = min(dsp_count, oc) # 1
+                       # 17
     neurons_per_dsp = ((oc + effective_dsps - 1) // effective_dsps) if effective_dsps > 0 else 0
+    # 17 * 9 = 153
     total_terms     = ic * ka
-    
+    # 153 *17 - 2601
     rom_depth = total_terms * neurons_per_dsp
     rom_width_bits = weight_bits * effective_dsps
     
-    # 4. Setup file path and formatting
-    filename = f"injected_{param_name.lower()}.hex"
-    hex_path = os.path.join(work_dir, filename)
-    hex_width = (rom_width_bits + 3) // 4
-    mask = (1 << weight_bits) - 1
-    
-    # 5. Pack and write: for each local neuron in workload, for each term, pack all DSPs
-    with open(hex_path, "w") as f:
-        for local_neuron in range(neurons_per_dsp):
-            for term in range(total_terms):
-                packed_line = 0
-                for dsp_idx in range(effective_dsps):
-                    global_oc = dsp_idx * neurons_per_dsp + local_neuron
-                    if global_oc < oc:
-                        idx = global_oc * total_terms + term
-                        weight = (weights_int >> (idx * weight_bits)) & mask
-                        packed_line |= (weight << (dsp_idx * weight_bits))
-                f.write(f"{packed_line:0{hex_width}x}\n")
-            
-    return os.path.abspath(hex_path)
+    # 3. Handle Tiling (matching filter_seq.sv / neuron_seq.sv tiling logic).
+    # lo tile: always 16 bits (or full width if <= 16).
+    # hi tile: exactly rom_width_bits - 16 bits — NOT a second 16-bit tile.
+    # This ensures {hi, lo} reconstructs the full rom_width_bits word in RTL.
+    # Weights are packed into the full word first, then split at the 16-bit boundary
+    # so that DSP weights straddling the boundary are handled correctly.
+    TILE_BITS = 16
+    lo_bits  = min(rom_width_bits, TILE_BITS)
+    hi_bits  = rom_width_bits - lo_bits  # 0 when single tile
+    lo_hex_w = (lo_bits + 3) // 4
+    hi_hex_w = (hi_bits + 3) // 4
+    lo_mask  = (1 << lo_bits) - 1
+    hi_mask  = (1 << hi_bits) - 1 if hi_bits > 0 else 0
+    mask     = (1 << weight_bits) - 1
+
+    split = rom_width_bits > TILE_BITS
+    filenames = []
+
+    if split:
+        fn_lo = os.path.join(work_dir, f"injected_{param_name.lower()}_lo.hex")
+        fn_hi = os.path.join(work_dir, f"injected_{param_name.lower()}_hi.hex")
+        filenames = [fn_lo, fn_hi]
+        f_lo = open(fn_lo, "w")
+        f_hi = open(fn_hi, "w")
+    else:
+        fn_0 = os.path.join(work_dir, f"injected_{param_name.lower()}_0.hex")
+        filenames = [fn_0]
+        f_lo = open(fn_0, "w")
+        f_hi = None
+
+    for local_neuron in range(neurons_per_dsp):
+        for term in range(total_terms):
+            packed = 0
+            for dsp_idx in range(effective_dsps):
+                global_oc = dsp_idx * neurons_per_dsp + local_neuron
+                if global_oc < oc:
+                    idx = global_oc * total_terms + term
+                    weight = (weights_int >> (idx * weight_bits)) & mask
+                    packed |= weight << (dsp_idx * weight_bits)
+            f_lo.write(f"{packed & lo_mask:0{lo_hex_w}x}\n")
+            if f_hi is not None:
+                f_hi.write(f"{(packed >> TILE_BITS) & hi_mask:0{hi_hex_w}x}\n")
+
+    f_lo.close()
+    if f_hi is not None:
+        f_hi.close()
+
+    return filenames
 
 def inject_weights_and_biases(
     simulator: Literal['verilator', 'icarus'], parameters: dict, param_str: str, tbpath: Path, test_class: str, Weights: int,
@@ -439,23 +473,30 @@ def inject_weights_and_biases(
         prev_oc_key = f"C{layer-1}_OutChannels"
         _ic = ic if ic is not None else parameters.get(ic_key, parameters.get(prev_oc_key, parameters.get("InChannels", 1)))
         _kw = kw if kw is not None else parameters.get(f"C{layer}_KernelWidth", parameters.get("KernelWidth", 1))
-
-        assert _oc is not None and _ic is not None and _kw is not None, "oc/ic/kw must be determinable"
-        hex_filename = inject_hex_weights(parameters, Weights, int(_oc), int(_ic), int(_kw), weight_bits, f"weights_{layer}", custom_work_dir, dsp_count)
-        # Update the FileName parameter so the RTL can find the hex file
-        # Wrap filename in quotes for Verilator/Icarus string parameter passing
-        parameters[f"FileName_{layer}"] = f'"{hex_filename}"'
+        print(f"DEBUG: Injecting Weights for Layer {layer} with dimensions OC={_oc}, IC={_ic}, KW={_kw}, weight_bits={weight_bits}, weight_count={weight_count}, dsp_count={dsp_count}")
+        hex_filenames = inject_hex_weights(parameters, Weights, int(_oc), int(_ic), int(_kw), weight_bits, f"weights_{layer}", custom_work_dir, dsp_count)
+        print(len(hex_filenames), hex_filenames)
+        # Update parameters so the RTL can find the hex file(s)
+        # Use basenames since simulator runs in custom_work_dir where files are created
+        main_hex = os.path.basename(hex_filenames[0])
+        parameters[f"FileName_{layer}"] = f'"{main_hex}"'
         if layer == 0:
-            parameters["FileName"] = f'"{hex_filename}"' # Fallback for single-layer testbenches
+            parameters["FileName"] = f'"{main_hex}"' # Fallback for single-layer testbenches
+        
+        # If we have a second tile (high bits), pass it to FileName_hi
+        if len(hex_filenames) > 1:
+            hi_hex = os.path.basename(hex_filenames[1])
+            parameters[f"FileName_{layer}_hi"] = f'"{hi_hex}"'
+            if layer == 0:
+                parameters["FileName_hi"] = f'"{hi_hex}"'
+
         # Export to environment so the Python test can still access the raw weights for its reference model
-        os.environ[f"INJECTED_WEIGHTS_{layer}_INT"] = str(Weights)
+        os.environ[f"INJECTED_WEIGHTS_{layer}_INT"] = hex(Weights)
         
         # Also inject as header for testbench wrapper compatibility (e.g. tb_filter.sv)
         inject_params(parameters, Weights, f"weights_{layer}", weight_bits * weight_count, custom_work_dir)
         
-    # Biases currently stay as header parameters
-    if "Biases" in str(Biases): # Just a guard
-        print(f"DEBUG: Biases in inject_weights_and_biases: {Biases}")
+    # bias_bits is already the total width (per-channel bits × channel count), passed by all callers
     inject_params(parameters, Biases, f"biases_{layer}", bias_bits, custom_work_dir)
 
     return custom_work_dir

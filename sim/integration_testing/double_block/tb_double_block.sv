@@ -33,9 +33,12 @@ module tb_double_block #(
   
   ,parameter int unsigned P1_KernelWidth = 2
   ,parameter int unsigned P1_Mode        = 0
-  ,parameter int unsigned DSPCount      = 0
-  ,parameter [8*256-1:0]  FileName_0    = ""
-  ,parameter [8*256-1:0]  FileName_1    = ""
+  ,parameter int unsigned C0_DSPCount    = 0
+  ,parameter int unsigned C1_DSPCount    = 0
+  ,parameter              FileName_0    = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName_0_hi = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName_1    = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName_1_hi = "model/data/roms/hex/zeros.hex"
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -105,10 +108,11 @@ module tb_double_block #(
     ,.OutChannels (C0_OutChannels)
     ,.Stride      (C0_Stride)
     ,.Padding     (C0_Padding)
-    ,.DSPCount    (DSPCount)
+    ,.DSPCount    (C0_DSPCount)
     ,.Weights     (INJECTED_WEIGHTS_0)
     ,.Biases      (INJECTED_BIASES_0)
     ,.FileName    (FileName_0)
+    ,.FileName_hi (FileName_0_hi)
   ) conv_layer_inst_0 (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)
@@ -155,10 +159,11 @@ module tb_double_block #(
     ,.OutChannels (C1_OutChannels)
     ,.Stride      (C1_Stride)
     ,.Padding     (C1_Padding)
-    ,.DSPCount    (DSPCount)
+    ,.DSPCount    (C1_DSPCount)
     ,.Weights     (INJECTED_WEIGHTS_1)
     ,.Biases      (INJECTED_BIASES_1)
     ,.FileName    (FileName_1)
+    ,.FileName_hi (FileName_1_hi)
   ) conv_layer_inst_1 (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)

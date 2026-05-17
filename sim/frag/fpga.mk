@@ -10,6 +10,7 @@ NEXTPNR ?= nextpnr-ice40
 ICEPROG ?= iceprog
 ICEPACK ?= icepack
 ICETIME ?= icetime
+ICESTAT ?= python3 /usr/share/fpga-icestorm/python/icebox_stat
 
 # This is the default location for the icebreaker Pin Constraints File
 # (PCF) Each part may use a different pcf file, so check in the partX
@@ -40,7 +41,10 @@ util: ice40.asc
 gbuf: ice40.nplog
 	@grep -niE "global|gbuf|sb_gb|promot|glb" ice40.nplog
 
-.PHONY: util gbuf
+stat: ice40.asc
+	$(ICESTAT) $<
+
+.PHONY: util gbuf stat
 
 # Timing analysis
 ice40.rpt: ice40.asc
@@ -56,12 +60,14 @@ fpga-clean:
 fpga-help:
 	@echo "  bitstream: Build the FPGA program (bitstream)"
 	@echo "  prog: Flash the bistream to your FPGA (If running locally)"
+	@echo "  stat: Run icebox_stat on the bitstream"
 
 fpga-vars-help:
 	@echo "    NEXTPNR: Override this variable to set the location of your nextpnr executable."
 	@echo "    ICEPROG: Override this variable to set the location of your Icebreaker Programmer executable."
 	@echo "    ICEPACK: Override this variable to set the location of your icepack executable."
 	@echo "    ICETIME: Override this variable to set the location of your icetime executable."
+	@echo "    ICESTAT: Override this variable to set the location of your icebox_stat executable."
 
 clean: fpga-clean
 targets-help: fpga-help

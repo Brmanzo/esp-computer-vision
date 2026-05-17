@@ -2,6 +2,7 @@
 # Usage: python3 demo/python_demo.py <sample_idx> [ttyUSBx]
 # Run from project root.
 
+import os
 import sys
 import time
 import serial
@@ -11,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from model.sample    import get_sample
-from model.inference import get_inference
+from model.inference import get_inference, get_inference_from_pixels
 
 # ── Protocol constants (must match deframer.sv / class_framer.sv) ────────────
 HEADER    = bytes([0xA5, 0x5A])
@@ -84,18 +85,30 @@ if len(sys.argv) < 2:
 sample_idx  = int(sys.argv[1])
 serial_port = "/dev/" + sys.argv[2] if len(sys.argv) > 2 else "/dev/ttyUSB2"
 
+inject_env = os.environ.get("INJECT_PIXELS", "")
 # 1. Load sample from dataset
-print(f"Loading sample {sample_idx} from dataset...")
-pixels, label = get_sample(sample_idx)
-if pixels is None:
-    print("Failed to load sample.")
-    sys.exit(1)
-print(f"  Ground truth label : {label}")
+if inject_env == "zeros":
+    n_pixels = 320 * 240
+    pixels = [0] * n_pixels
+    label = None
+    print(f"  Smoke test (all zeros) : {label}")
+elif inject_env == "ones":
+    n_pixels = 320 * 240
+    pixels = [1] * n_pixels
+    label = None
+    print(f"  Smoke test (all ones) : {label}")
+else:
+    print(f"Loading sample {sample_idx} from dataset...")
+    pixels, label = get_sample(sample_idx)
+    if pixels is None:
+        print("Failed to load sample.")
+        sys.exit(1)
+    print(f"  Ground truth label : {label}")
 
 # 2. Hardware-accurate software inference
 print("Running software inference...")
-sw_pred = get_inference(sample_idx)
-print(f"  SW prediction      : {sw_pred}  {'✓' if sw_pred == label else '✗'}")
+sw_pred = get_inference_from_pixels(pixels)
+print(f"  SW prediction      : {sw_pred}  {'✓' if (label is not None and sw_pred == label) else ''}")
 
 # 3. Build the UART frame: [0xA5, 0x5A] + 9600 image bytes
 frame = HEADER + pack_pixels(pixels)
@@ -136,18 +149,27 @@ if hw_result[0] is None:
     sys.exit(1)
 
 hw_pred    = hw_result[0]
-hw_correct = hw_pred == label
-sw_correct = sw_pred == label
+sw_match   = (hw_pred == sw_pred)
 
 print()
-print(f"  Ground truth  : {label}")
-print(f"  SW prediction : {sw_pred}  {'✓' if sw_correct else '✗'}")
-print(f"  HW prediction : {hw_pred}  {'✓' if hw_correct else '✗'}")
-print()
+if label is not None:
+    hw_correct = hw_pred == label
+    sw_correct = sw_pred == label
+    print(f"  Ground truth  : {label}")
+    print(f"  SW prediction : {sw_pred}  {'✓' if sw_correct else '✗'}")
+    print(f"  HW prediction : {hw_pred}  {'✓' if hw_correct else '✗'}")
+else:
+    print(f"  Ground truth  : N/A (Smoke Test)")
+    print(f"  SW prediction : {sw_pred}")
+    print(f"  HW prediction : {hw_pred}")
 
-if hw_pred == sw_pred:
+print()
+if sw_match:
     print("\033[92m[MATCH]    HW and SW agree\033[0m", end="  ")
 else:
     print("\033[91m[MISMATCH] HW and SW disagree\033[0m", end="  ")
 
-print("\033[92m[CORRECT]\033[0m" if hw_correct else "\033[91m[WRONG]\033[0m")
+if label is not None:
+    print("\033[92m[CORRECT]\033[0m" if hw_pred == label else "\033[91m[WRONG]\033[0m")
+else:
+    print()

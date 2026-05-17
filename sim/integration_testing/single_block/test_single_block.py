@@ -50,7 +50,7 @@ def test_each(test_name, simulator,
     parameters = dict(locals())
     parameters.pop('C_Biases', None)
     parameters.pop('C_Weights', None)
-    param_str = f"InBits_{C_InBits}_WeightBits_{C_WeightBits}_OutBits_{C_OutBits}_test_{test_name}"
+    param_str = f"InBits_{C_InBits}_WeightBits_{C_WeightBits}_OutBits_{C_OutBits}_DSP_{C_DSPCount}_test_{test_name}"
 
     total_weight_bits = C_OutChannels * C_InChannels * (C_KernelWidth**2) * C_WeightBits
     total_bias_bits   = C_OutChannels * C_BiasBits
@@ -136,8 +136,8 @@ async def single_test(dut):
     P_S = P_K # Standard max pooling stride equals kernel size
 
     # 2. Setup configuration dictionaries
-    packed_weights = int(os.environ["INJECTED_WEIGHTS_0_INT"])
-    packed_biases  = int(os.environ["INJECTED_BIASES_0_INT"])
+    packed_weights = int(os.environ["INJECTED_WEIGHTS_0_INT"], 0)
+    packed_biases  = int(os.environ["INJECTED_BIASES_0_INT"], 0)
     kernels_4d = unpack_kernel_weights(packed_weights, C_WW, C_OC, C_IC, C_K)
     biases_1d  = unpack_biases(packed_biases, C_BW, C_OC)
 
@@ -238,9 +238,9 @@ async def rate_tests(dut, in_rate, out_rate):
     output_activation = [[[0 for _ in range(P_W_out)] for _ in range(P_H_out)] for _ in range(C_OC)]
 
     # 3. Setup configuration dictionaries
-    packed_weights = int(os.environ["INJECTED_WEIGHTS_0_INT"])
+    packed_weights = int(os.environ["INJECTED_WEIGHTS_0_INT"], 0)
     kernels_4d = unpack_kernel_weights(packed_weights, C_WW, C_OC, C_IC, C_K)
-    packed_biases  = int(os.environ["INJECTED_BIASES_0_INT"])
+    packed_biases  = int(os.environ["INJECTED_BIASES_0_INT"], 0)
     biases_1d  = unpack_biases(packed_biases, C_BW, C_OC)
 
     conv_params = {

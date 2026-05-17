@@ -17,13 +17,9 @@ module filter_seq #(
   ,parameter int unsigned Unsigned    = 0
 
   ,localparam int unsigned KernelArea = KernelWidth * KernelWidth
-  `ifdef VERILATOR
-    ,parameter string   FileName   = ""
-    ,parameter string   FileName_0 = ""
-  `else
-    ,parameter [8*256-1:0] FileName = ""
-    ,parameter [8*256-1:0] FileName_0 = ""
-  `endif
+  ,parameter FileName    = "model/data/roms/hex/zeros.hex"
+  // second 16-bit tile for ROMs wider than one SB_RAM40_4K
+  ,parameter FileName_hi = "model/data/roms/hex/zeros.hex"
   // Conditional loading of Weights from ROM or parameter
   ,parameter logic signed [OutChannels*BiasBits-1:0]                         Biases  = '0
   ,localparam int unsigned ChannelCountBits = (OutChannels > 1) ? $clog2(OutChannels) : 1
@@ -119,22 +115,52 @@ module filter_seq #(
   end
 
   /* ------------------------------------- ROM Dimensioning ------------------------------------- */
+  // SB_RAM40_4K is max 16-bit wide; split wider ROMs into lo/hi tiles.
+  // lo tile is always 16 bits (or ROMWidth if narrower).
+  // hi tile is exactly ROMWidth - TILE_WIDTH so {hi, lo} is ROMWidth bits.
+  localparam int unsigned TILE_WIDTH = (ROMWidth > 16) ? 16 : ROMWidth;
+  localparam int unsigned HI_WIDTH   = (ROMWidth > 16) ? (ROMWidth - TILE_WIDTH) : 0;
+
   wire [ROMWidth-1:0]    rom_weights;
   wire [ROMAddrBits-1:0] rom_addr; // Driven by DSP term_idx and channel_count_q
 
+  wire [TILE_WIDTH-1:0] rom_weights_lo;
+
   icestorm_rom #(
-     .Width    (ROMWidth)
+     .Width    (TILE_WIDTH)
     ,.Depth    (ROMDepth)
-    ,.FileName ((FileName_0 != "") ? FileName_0 : FileName)
+    ,.FileName (FileName)
   ) weight_rom_inst (
      .clk_i      (clk_i)
     ,.rst_i      (rst_i)
     ,.rd_addr_i  (rom_addr)
-    ,.rd_data_o  (rom_weights)
+    ,.rd_data_o  (rom_weights_lo)
     ,.wr_valid_i (1'b0)
     ,.wr_data_i  ('0)
     ,.wr_addr_i  ('0)
   );
+
+  generate
+    if (ROMWidth > 16) begin : gen_rom_hi
+      wire [HI_WIDTH-1:0] rom_weights_hi;
+      icestorm_rom #(
+         .Width    (HI_WIDTH)
+        ,.Depth    (ROMDepth)
+        ,.FileName (FileName_hi)
+      ) weight_rom_hi_inst (
+         .clk_i      (clk_i)
+        ,.rst_i      (rst_i)
+        ,.rd_addr_i  (rom_addr)
+        ,.rd_data_o  (rom_weights_hi)
+        ,.wr_valid_i (1'b0)
+        ,.wr_data_i  ('0)
+        ,.wr_addr_i  ('0)
+      );
+      assign rom_weights = {rom_weights_hi, rom_weights_lo};
+    end else begin : gen_rom_single
+      assign rom_weights = rom_weights_lo;
+    end
+  endgenerate
 
   /* ------------------------------------ DSP Capture Logic ------------------------------------ */
   logic signed [OutChannels-1:0][OutBits-1:0] filter_o;

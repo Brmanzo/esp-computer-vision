@@ -11,13 +11,8 @@ module neuron_seq #(
   ,parameter int unsigned BiasBits    = 8
   ,parameter int unsigned InChannels  = 1
   ,parameter int unsigned OutChannels = 1
-  `ifdef VERILATOR
-    ,parameter string      FileName   = ""
-    ,parameter string      FileName_0 = ""
-  `else
-    ,parameter [8*256-1:0] FileName   = ""
-    ,parameter [8*256-1:0] FileName_0 = ""
-  `endif
+    ,parameter FileName     = "model/data/roms/hex/zeros.hex"
+  ,parameter FileName_hi  = "model/data/roms/hex/zeros.hex"
   ,parameter logic signed [OutChannels*InChannels*WeightBits-1:0] Weights = '0
   ,parameter logic signed [OutChannels*BiasBits-1:0]              Biases  = '0
 
@@ -97,7 +92,7 @@ module neuron_seq #(
   assign data_o = neuron_q;
 
   /* ------------------------------------ Control FSM ------------------------------------ */
-  typedef enum logic [2:0] {Idle, Busy, Flush1, Flush2, Done} fsm_e;
+  typedef enum logic [2:0] {Idle, Busy, Flush1, Flush2, Flush3, Done} fsm_e;
   fsm_e state_q, state_d;
 
   assign valid_o = (state_q == Done);
@@ -126,31 +121,61 @@ module neuron_seq #(
     case (state_q)
       Idle:   if (in_fire) state_d = Busy;
       Busy:   if (last_in_ch && last_out_ch) state_d = Flush1;
-      Flush1: state_d = Flush2; // Wait for MAC pipeline
-      Flush2: state_d = Done;   // Wait for neuron_q capture (dsp_valid_q fires here)
+      Flush1: state_d = Flush2; // en_q is still 1 (registered from last Busy); last MAC term presented
+      Flush2: state_d = Flush3; // acc_r updates with last term at this edge; dsp_valid_q fires to capture neuron_q
+      Flush3: state_d = Done;   // neuron_q stable; valid_o asserted next cycle
       Done:   if (out_fire) state_d = Idle;
       default: state_d = Idle;
     endcase
   end
 
   /* ------------------------------------ Weight ROM ------------------------------------ */
+  // SB_RAM40_4K is max 16-bit wide; split wider ROMs into lo/hi tiles.
+  // lo tile is always 16 bits (or ROMWidth if narrower).
+  // hi tile is exactly ROMWidth - TILE_WIDTH so the concatenation {hi, lo} is ROMWidth bits.
+  localparam int unsigned TILE_WIDTH = (ROMWidth > 16) ? 16 : ROMWidth;
+  localparam int unsigned HI_WIDTH   = (ROMWidth > 16) ? (ROMWidth - TILE_WIDTH) : 0;
 
   wire [ROMWidth-1:0]    rom_weights;
   wire [ROMAddrBits-1:0] rom_addr = ROMAddrBits'(int'(out_ch_counter) * InChannels + int'(in_ch_counter));
 
+  wire [TILE_WIDTH-1:0] rom_weights_lo;
+
   icestorm_rom #(
-     .Width    (ROMWidth)
+     .Width    (TILE_WIDTH)
     ,.Depth    (ROMDepth)
     ,.FileName (FileName)
   ) weight_rom_inst (
      .clk_i      (clk_i)
     ,.rst_i      (rst_i)
     ,.rd_addr_i  (rom_addr)
-    ,.rd_data_o  (rom_weights)
+    ,.rd_data_o  (rom_weights_lo)
     ,.wr_valid_i (1'b0)
     ,.wr_data_i  ('0)
     ,.wr_addr_i  ('0)
   );
+
+  generate
+    if (ROMWidth > 16) begin : gen_rom_hi
+      wire [HI_WIDTH-1:0] rom_weights_hi;
+      icestorm_rom #(
+         .Width    (HI_WIDTH)
+        ,.Depth    (ROMDepth)
+        ,.FileName (FileName_hi)
+      ) weight_rom_hi_inst (
+         .clk_i      (clk_i)
+        ,.rst_i      (rst_i)
+        ,.rd_addr_i  (rom_addr)
+        ,.rd_data_o  (rom_weights_hi)
+        ,.wr_valid_i (1'b0)
+        ,.wr_data_i  ('0)
+        ,.wr_addr_i  ('0)
+      );
+      assign rom_weights = {rom_weights_hi, rom_weights_lo};
+    end else begin : gen_rom_single
+      assign rom_weights = rom_weights_lo;
+    end
+  endgenerate
 
   /* ------------------------------------ DSP Capture Logic ------------------------------------ */
   wire signed [EffectiveDSPs-1:0][OutBits-1:0] neuron_results;
@@ -166,6 +191,8 @@ module neuron_seq #(
   /* --------------------------------- DSP Instantiation --------------------------------- */
   generate
     // Delayed capture signals for synchronous DSP outputs
+    // 2-stage pipeline: d1 fires when last_in_ch seen (the overlap cycle accumulates the
+    // last term at this same edge); dsp_valid_q fires one edge later when acc_r is stable.
     logic dsp_valid_d1, dsp_valid_q;
     logic [OutChannelCountBits-1:0] workload_idx_d1, workload_idx;
 

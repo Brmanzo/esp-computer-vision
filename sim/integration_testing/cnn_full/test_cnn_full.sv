@@ -5,10 +5,11 @@
 
 module cnn_full #(
   parameter int unsigned BusBits = 8
-  ,parameter string FileName_0 = ""
-  ,parameter string FileName_1 = ""
-  ,parameter string FileName_2 = ""
-  ,parameter string FileName_3 = ""
+  ,parameter string FileName_0    = ""
+  ,parameter string FileName_1    = ""
+  ,parameter string FileName_2    = ""
+  ,parameter string FileName_2_hi = ""
+  ,parameter string FileName_3    = ""
 ) (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -25,10 +26,11 @@ module cnn_full #(
   // Instantiate the auto-generated CNN top-level
   cnn #(
      .BusBits(BusBits)
-    ,.FileName_0(FileName_0)
-    ,.FileName_1(FileName_1)
-    ,.FileName_2(FileName_2)
-    ,.FileName_3(FileName_3)
+    ,.FileName_0   (FileName_0)
+    ,.FileName_1   (FileName_1)
+    ,.FileName_2   (FileName_2)
+    ,.FileName_2_hi(FileName_2_hi)
+    ,.FileName_3   (FileName_3)
   ) dut (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)

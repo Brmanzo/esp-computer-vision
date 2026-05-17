@@ -36,18 +36,14 @@ module tb_single_block_with_classifier #(
   ,parameter int unsigned BusBits         = 8
   ,parameter int unsigned ClassWeightBits = 2
   ,parameter int unsigned ClassBiasBits   = 8
-  ,parameter int unsigned ClassDSPCount   = 0
-`ifdef VERILATOR
-  ,parameter string FileName_0 = "model/data/roms/hex/layer_0_weights.hex"
-  ,parameter string FileName_1 = "model/data/roms/hex/layer_1_weights.hex"
-  ,parameter string FileName_2 = "model/data/roms/hex/layer_2_weights.hex"
-  ,parameter string FileName_3 = "model/data/roms/hex/layer_3_weights.hex"
-`else
-  ,parameter [8*256-1:0] FileName_0 = "model/data/roms/hex/layer_0_weights.hex"
-  ,parameter [8*256-1:0] FileName_1 = "model/data/roms/hex/layer_1_weights.hex"
-  ,parameter [8*256-1:0] FileName_2 = "model/data/roms/hex/layer_2_weights.hex"
-  ,parameter [8*256-1:0] FileName_3 = "model/data/roms/hex/layer_3_weights.hex"
-`endif
+  ,parameter int unsigned C1_DSPCount    = 0
+  ,parameter int unsigned ClassDSPCount  = 0
+  ,parameter              FileName_0     = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName_0_hi  = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName_1     = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName_1_hi  = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName_2     = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName_2_hi  = "model/data/roms/hex/zeros.hex"
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
@@ -121,6 +117,7 @@ module tb_single_block_with_classifier #(
     ,.Weights     (INJECTED_WEIGHTS_0)
     ,.Biases      (INJECTED_BIASES_0)
     ,.FileName    (FileName_0)
+    ,.FileName_hi (FileName_0_hi)
     ,.Unsigned    (C0_Unsigned)
   ) conv_layer_inst_0 (
      .clk_i   (clk_i)
@@ -169,10 +166,11 @@ module tb_single_block_with_classifier #(
     ,.OutChannels (C1_OutChannels)
     ,.Stride      (C1_Stride)
     ,.Padding     (C1_Padding)
-    ,.DSPCount    (C0_DSPCount)
+    ,.DSPCount    (C1_DSPCount)
     ,.Weights     (INJECTED_WEIGHTS_1)
     ,.Biases      (INJECTED_BIASES_1)
     ,.FileName    (FileName_1)
+    ,.FileName_hi (FileName_1_hi)
     ,.Unsigned    (C0_ShiftBits > 0)
   ) conv_layer_inst_1 (
      .clk_i   (clk_i)
@@ -199,7 +197,8 @@ module tb_single_block_with_classifier #(
     ,.DSPCount   (ClassDSPCount)
     ,.Weights    (INJECTED_WEIGHTS_2)
     ,.Biases     (INJECTED_BIASES_2)
-    ,.FileName   (FileName_2)
+    ,.FileName    (FileName_2)
+    ,.FileName_hi (FileName_2_hi)
   ) classifier_layer_inst (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)
