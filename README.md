@@ -19,6 +19,7 @@ RTL designed and tested on icebreaker V1.1a FPGA for hardware acceleration.
   - [Hardware Installation](#hardware-installation)
     - [Synthesizing for Icebreaker Board](#synthesizing-for-icebreaker-board)
     - [Unit Testing](#unit-testing)
+    - [Model Testing](#model-testing)
   - [Model Design](#model-design)
   - [Model Training](#model-training)
   - [Credits](#credits)
@@ -165,9 +166,6 @@ iceprog ice40.bin
 # To verify ROM hexfiles written to FPGA
 python3 -m model.bram_decode
 
-# To demo the board using USB serial IO
-python3 demo/python_demo.py <SAMPLE_IDX> <ttyUSB1>
-
 # To clean the current repository
 make clean
 ```
@@ -194,6 +192,16 @@ make lint-all
 
 # To clean all unit tests from root
 make clean-all
+```
+
+### Model Testing
+```bash
+# To verify via simulation in python
+# within sim/integration/testing/cnn_uart/
+make test <SAMPLE_IDX=#> VERBOSE=1
+
+# To verify via FPGA with USB serial I/O
+python3 demo/python_demo.py <SAMPLE_IDX> <ttyUSB1>
 ```
 
 ## Model Design

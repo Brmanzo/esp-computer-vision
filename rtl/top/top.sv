@@ -1,7 +1,7 @@
 // top.sv
 // Bradley Manzo, 2026
 
-// `define ESP // Comment out this line to target USB-to-UART bridge instead of ESP32c3
+`define ESP // Comment out this line to target USB-to-UART bridge instead of ESP32c3
 module top #(
 )  (
    input [0:0] clk_12mhz_i
