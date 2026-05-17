@@ -89,8 +89,8 @@ module top #(
   SB_PLL40_2_PAD #(
      .FEEDBACK_PATH("SIMPLE")
     ,.DIVR        (4'b0000)
-    ,.DIVF        (7'd66)
-    ,.DIVQ        (3'd5)
+    ,.DIVF        (7'd63)   // Fout = 12 * 64 / 64 = 12 MHz  (VCO = 768 MHz)
+    ,.DIVQ        (3'd6)
     ,.FILTER_RANGE(3'b001)
   ) pll_inst (
      .PACKAGEPIN   (clk_12mhz_i)

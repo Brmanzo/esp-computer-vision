@@ -17,7 +17,7 @@ module uart_cnn #(
   ,localparam int unsigned PackedNum = BusBits / InBits
   ,localparam int unsigned BytesIn   = (WidthIn * HeightIn) / PackedNum
 )  (
-   input  [0:0] clk_i // 25 MHz Clock
+   input  [0:0] clk_i // 12 MHz Clock
   ,input  [0:0] rst_i
 
   ,input  [0:0] rx_serial_i

@@ -21,7 +21,7 @@ WAKEUP    = 0x99
 IMG_BYTES = (320 * 240) // 8   # 9600 — 8 binary pixels per byte, LSB-first
 
 # ── Serial config ─────────────────────────────────────────────────────────────
-BAUD = 115200  # 25 MHz / (prescale=27 * 8) ≈ 115741 baud
+BAUD = 115200  # 12 MHz / (prescale=13 * 8) ≈ 115385 baud (0.16% error)
 
 # ── Globals shared between threads ───────────────────────────────────────────
 hw_result: list = [None]   # hw_result[0] set by consumer thread
@@ -42,14 +42,10 @@ def producer(frame: bytes) -> None:
 
 
 def consumer() -> None:
-    """Read bytes from the FPGA, dump them all, then parse the frame."""
-    # Collect up to 16 bytes (enough to see any stale/extra bytes before the frame)
-    raw: list[int] = []
-    while len(raw) < 16:
-        b = ser.read(1)
-        if not b:
-            break
-        raw.append(b[0])
+    """Read bytes from the FPGA and parse the frame."""
+    # Worst-case frame: [0x99 wakeup] + [class_byte] + [0xA5] + [0x5A] = 4 bytes
+    buf = ser.read(4)
+    raw: list[int] = list(buf)
 
     print(f"  Raw bytes received : {' '.join(f'{x:02x}' for x in raw)}")
 

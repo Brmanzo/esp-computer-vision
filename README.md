@@ -151,14 +151,17 @@ make util
 # To generate a schematic of the hardware run
 make <MODULE>.pdf
 
-# within repo root run
+# Within repo root run
 make bitstream
 
 # To run interactive place and route
 LIBGL_ALWAYS_SOFTWARE=1 nextpnr-ice40 --up5k --package sg48 --pcf boards/icebreakerV1_1a/icebreaker.pcf --gui --json ice40.json
 
-# then flash the resulting ice40.bin using
+# Then flash the resulting ice40.bin using
 iceprog ice40.bin
+
+# To demo the board using USB serial IO
+python3 demo/python_demo.py <SAMPLE_IDX> <ttyUSB1>
 
 # To clean the current repository
 make clean
