@@ -51,14 +51,16 @@ module comparator_tree #(
               id[level+1][j]   = id[level][2*j+1];
             end
           end else begin
-            tree[level+1][j] = tree[level][2*j] >= tree[level][2*j+1] ? tree[level][2*j] : tree[level][2*j+1];
-            id[level+1][j]   = tree[level][2*j] >= tree[level][2*j+1] ? id[level][2*j] : id[level][2*j+1];
+            // Multi-bit signed: wrap part-selects in $signed() to prevent Yosys
+            // from synthesizing unsigned comparison due to flattening.
+            tree[level+1][j] = $signed(tree[level][2*j]) >= $signed(tree[level][2*j+1]) ? tree[level][2*j] : tree[level][2*j+1];
+            id[level+1][j]   = $signed(tree[level][2*j]) >= $signed(tree[level][2*j+1]) ? id[level][2*j] : id[level][2*j+1];
           end
         end
       end
     end
-    max_o    = tree[TreeLevels][0];
-    id_o = id[TreeLevels][0];
+    max_o = tree[TreeLevels][0];
+    id_o  = id[TreeLevels][0];
   end
 
 endmodule

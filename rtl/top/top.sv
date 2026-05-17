@@ -20,7 +20,7 @@ module top #(
 );
 
   wire [0:0] clk_12mhz_o;
-  wire [0:0] clk_25mhz_o;
+  wire [0:0] pll_lock;
 
   wire [0:0] reset_n_sync_q;
   wire [0:0] reset_sync_q;
@@ -95,7 +95,8 @@ module top #(
   ) pll_inst (
      .PACKAGEPIN   (clk_12mhz_i)
     ,.PLLOUTGLOBALA(clk_12mhz_o)
-    ,.PLLOUTGLOBALB(clk_25mhz_o)
+    ,.PLLOUTGLOBALB()
+    ,.LOCK         (pll_lock)
     ,.RESETB       (1'b1)
     ,.BYPASS       (1'b0)
   );
@@ -130,7 +131,7 @@ wire [0:0] uart_tx;
     ,.FileName_3    ("model/data/roms/hex/layer_3_weights.hex")
   ) uart_cnn_inst (
      .clk_i      (clk_12mhz_o)
-    ,.rst_i      (rst_sync)
+    ,.rst_i      (rst_sync | ~pll_lock)  // hold reset until PLL locks
 
     ,.rx_serial_i(uart_rx)
     ,.tx_serial_o(uart_tx)

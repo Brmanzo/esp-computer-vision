@@ -16,8 +16,8 @@ from cocotbext.uart import UartSource, UartSink
 from util.utilities  import runner, clock_start_sequence, reset_sequence, get_param_string, inject_weights_and_biases
 from util.weight_loader import load_weights_from_vh
 from functional_models.cnn_model import CNNModel
-from functional_models.cnn_framed_model import FramedPictureGenerator
 from model.globals import HAND_GESTURE_CFG
+from model.protocol import build_frame, parse_response
 
 # uart_cnn.sv has prescale=13 hardcoded.
 # At the 1 GHz simulation clock (1 ns/cycle):
@@ -99,6 +99,7 @@ async def full_cnn_test(dut) -> None:
         desc = f"dataset sample {sample_idx}"
 
     # 5. Compute SW prediction (before simulation)
+    assert pixels is not None, "Pixels must be loaded before computing SW prediction"
     if inject_env in ("zeros", "ones"):
         sw_id = get_inference_from_pixels(pixels, config)
     else:
@@ -106,8 +107,7 @@ async def full_cnn_test(dut) -> None:
 
     # 6. Build the framed byte sequence (header + packed pixels)
     assert pixels is not None
-    framed_gen = FramedPictureGenerator(pixels, bus_bits=8)
-    framed_bytes = bytearray(framed_gen.generate()[0] for _ in range(framed_gen.total_bytes()))
+    framed_bytes = build_frame(pixels)
 
     # 7. Attach cocotbext-uart source and sink
     #    UartSource drives rx_serial_i; UartSink monitors tx_serial_o.
@@ -125,7 +125,7 @@ async def full_cnn_test(dut) -> None:
         resp = bytearray()
         for _ in range(4):
             await with_timeout(uart_sink.wait(), RESPONSE_TIMEOUT_NS, "ns")
-            resp += uart_sink.read_nowait(1)
+            resp.extend(uart_sink.read_nowait(1))
         return resp
 
     rx_task = cocotb.start_soon(recv_4_bytes())
@@ -134,19 +134,9 @@ async def full_cnn_test(dut) -> None:
 
     resp = await rx_task
 
-    # 10. Parse response: skip any leading 0x99 wakeup bytes
+    # 10. Parse response using the same logic as python_demo.py
     dut._log.info(f"Raw response: {' '.join(f'0x{b:02X}' for b in resp)}")
-    i = 0
-    while i < len(resp) and resp[i] == 0x99:
-        dut._log.info(f"  (skipping wakeup 0x99 at offset {i})")
-        i += 1
-
-    assert i + 3 <= len(resp), f"Not enough bytes after wakeup: {list(resp)}"
-    got_id   = resp[i]
-    tail_got = bytes(resp[i+1:i+3])
-    assert tail_got == bytes([0xA5, 0x5A]), (
-        f"Tail mismatch: expected [0xA5 0x5A], got {tail_got.hex(' ')}"
-    )
+    got_id = parse_response(bytes(resp))
 
     # 11. Report and assert
     class_names = get_class_names()

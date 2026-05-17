@@ -13,12 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from model.sample    import get_sample
 from model.inference import get_inference, get_inference_from_pixels
-
-# ── Protocol constants (must match deframer.sv / class_framer.sv) ────────────
-HEADER    = bytes([0xA5, 0x5A])
-TAIL      = bytes([0xA5, 0x5A])
-WAKEUP    = 0x99
-IMG_BYTES = (320 * 240) // 8   # 9600 — 8 binary pixels per byte, LSB-first
+from model.protocol  import HEADER, TAIL, WAKEUP, IMG_BYTES, build_frame, parse_response
 
 # ── Serial config ─────────────────────────────────────────────────────────────
 BAUD = 115200  # 12 MHz / (prescale=13 * 8) ≈ 115385 baud (0.16% error)
@@ -28,48 +23,27 @@ hw_result: list = [None]   # hw_result[0] set by consumer thread
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def pack_pixels(pixels: list) -> bytes:
-    """Pack a flat list of binary {0,1} pixels into bytes, LSB-first."""
-    buf = bytearray(IMG_BYTES)
-    for i, px in enumerate(pixels):
-        if px:
-            buf[i // 8] |= 1 << (i % 8)
-    return bytes(buf)
-
-
 def producer(frame: bytes) -> None:
     ser.write(frame)
 
 
 def consumer() -> None:
     """Read bytes from the FPGA and parse the frame."""
-    # Worst-case frame: [0x99 wakeup] + [class_byte] + [0xA5] + [0x5A] = 4 bytes
-    buf = ser.read(4)
-    raw: list[int] = list(buf)
+    # Read up to 4 bytes with a short inter-byte timeout so we don't block
+    # for 30 s when the 0x99 wakeup was already flushed from the buffer.
+    # The normal response is either [0x99, class, 0xA5, 0x5A] (4 bytes) or
+    # [class, 0xA5, 0x5A] (3 bytes) when the wakeup was already consumed.
+    raw = ser.read(3)           # minimum useful payload
+    extra = ser.read(1)         # grab the 4th byte if it arrives within timeout
+    raw = bytes(raw) + bytes(extra)
 
     print(f"  Raw bytes received : {' '.join(f'{x:02x}' for x in raw)}")
 
-    # Scan for the response frame: skip leading 0x99 wakeup bytes, then
-    # expect [class_byte, 0xA5, 0x5A]
-    i = 0
-    while i < len(raw) and raw[i] == WAKEUP:
-        print(f"  (skipping wakeup 0x{WAKEUP:02x} at offset {i})")
-        i += 1
-
-    if i + 3 > len(raw):
-        print(f"  Not enough bytes after wakeup skip (need 3, have {len(raw) - i}).")
-        return
-
-    class_byte = raw[i]
-    tail_got   = bytes(raw[i+1:i+3])
-
-    print(f"  class_byte={class_byte:#04x}  tail={tail_got.hex(' ')}", end="  ")
-
-    if tail_got == TAIL:
-        print("✓")
-        hw_result[0] = class_byte
-    else:
-        print(f"✗ (expected {TAIL.hex(' ')})")
+    try:
+        hw_result[0] = parse_response(raw)
+        print(f"  class_byte={hw_result[0]:#04x}  tail=a5 5a  ✓")
+    except ValueError as e:
+        print(f"  ✗ {e}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -107,18 +81,19 @@ sw_pred = get_inference_from_pixels(pixels)
 print(f"  SW prediction      : {sw_pred}  {'✓' if (label is not None and sw_pred == label) else ''}")
 
 # 3. Build the UART frame: [0xA5, 0x5A] + 9600 image bytes
-frame = HEADER + pack_pixels(pixels)
+frame = build_frame(pixels)
 print(f"\nSending {len(frame)} bytes to {serial_port} @ {BAUD} baud...")
 
 # 4. Open serial port, start producer and consumer threads
 ser = serial.Serial(
-    port     = serial_port,
-    baudrate = BAUD,
-    parity   = serial.PARITY_NONE,
-    stopbits = serial.STOPBITS_ONE,
-    bytesize = serial.EIGHTBITS,
-    timeout  = 30,
-    rtscts   = False,  # FPGA rts_o=0 on reset → CTS=0 at host → deadlock if True
+    port          = serial_port,
+    baudrate      = BAUD,
+    parity        = serial.PARITY_NONE,
+    stopbits      = serial.STOPBITS_ONE,
+    bytesize      = serial.EIGHTBITS,
+    timeout       = 5,     # 5 s for first 3 bytes (CNN pipeline + UART TX)
+    inter_byte_timeout = 0.05,  # 50 ms gap ends the 4th-byte read immediately
+    rtscts        = False, # FPGA rts_o=0 on reset → CTS=0 at host → deadlock if True
 )
 
 producer_thread = threading.Thread(target=producer, args=(frame,), daemon=True)
