@@ -52,6 +52,8 @@ My goal for this project is to implement a dynamic system that captures live dat
 - Dynamic HTML viewing of image over ESP32 Wi-Fi
 
 ## Milestones
+- **2026-05-17** — Physically verified on FPGA via serial USB demo.
+- **2026-05-08** — Sequenced Conv and Classifier layers to target Icestorm ROM and DSPs.
 - **2026-05-03** — Verified Full CNN Integration in CocoTB using Pytorch
 - **2026-04-26** — Verified Classifier Layer with Pytorch amax-linear-argmax output
 - **2026-04-19** — Translate model specs into Pytorch Model, Verilog, and Testbench
@@ -160,6 +162,9 @@ LIBGL_ALWAYS_SOFTWARE=1 nextpnr-ice40 --up5k --package sg48 --pcf boards/icebrea
 # Then flash the resulting ice40.bin using
 iceprog ice40.bin
 
+# To verify ROM hexfiles written to FPGA
+python3 -m model.bram_decode
+
 # To demo the board using USB serial IO
 python3 demo/python_demo.py <SAMPLE_IDX> <ttyUSB1>
 
@@ -262,12 +267,12 @@ python3 -m model.render
 ```
 
 ## Credits
-| Author          | Source                                                                            |
-| --------------- | --------------------------------------------------------------------------------- |
-| Arducam         | [RPI Pico Cam Project](https://github.com/ArduCAM/RPI-Pico-Cam)                   |
-| Alex Forencich  | [Verilog-Uart Interface](https://github.com/alexforencichverilog-uart)            |
-| Dustin Richmond | [CSE 225 ASIC Design Course](https://courses.engineering.ucsc.edu/courses/cse225) |
-|Claire Wolf, Mathias Lasser | [Project IceStorm](https://prjicestorm.readthedocs.io/) |
+| Author                      | Source                                                                            |
+| --------------------------- | --------------------------------------------------------------------------------- |
+| Arducam                     | [RPI Pico Cam Project](https://github.com/ArduCAM/RPI-Pico-Cam)                   |
+| Alex Forencich              | [Verilog-Uart Interface](https://github.com/alexforencichverilog-uart)            |
+| Dustin Richmond             | [CSE 225 ASIC Design Course](https://courses.engineering.ucsc.edu/courses/cse225) |
+| Claire Wolf, Mathias Lasser | [Project IceStorm](https://prjicestorm.readthedocs.io/)                           |
 
 ## License
 
