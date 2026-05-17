@@ -1,7 +1,6 @@
 {
-    "top": "cnn_full",
+    "top": "cnn",
     "files": [
-        "sim/integration_testing/cnn_full/test_cnn_full.sv",
         "rtl/blocks/cnn.sv",
         "rtl/blocks/conv_layer.sv",
         "rtl/blocks/pool_layer.sv",

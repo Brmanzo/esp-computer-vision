@@ -219,13 +219,12 @@ def test_full(inject_pixels: str = "") -> None:
         timescale="1ps/1ps",
         tbpath=tbpath,
         params=params,
-        pymodule="test_cnn_full",
+        pymodule="test_cnn",
         testname=testname,
-        jsonname="cnn_full.json",
+        jsonname="cnn.json",
         work_dir=work_dir,
         sim_build=work_dir,
         includes=[work_dir],
-        toplevel_override="cnn_full",
     )
 
 if __name__ == "__main__":
