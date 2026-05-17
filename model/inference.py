@@ -162,12 +162,10 @@ def _hw_integer_forward(pixels: list, config) -> int:
 
     logits = w_cls @ act_gmax + b_cls
 
-    # Hardware classifier_layer has ShiftBits=0 (not passed in cnn.sv, default=0).
-    # output_encoder applies ReLU + saturation only — no shift.
-    # classifier_shift was already consumed by the last conv layer (layer 2).
-    quantized_logits = np.clip(np.maximum(logits, 0), 0, (1 << config.classifier_config._out_bits) - 1)
-    
-    return int(np.argmax(quantized_logits))
+    # Hardware classifier_layer passes raw signed 32-bit logits to comparator_tree.
+    # output_encoder takes the gen_full_out (identity) path because OutBits==LinearBits==32.
+    # No ReLU or saturation is applied before argmax.
+    return int(np.argmax(logits))
 
 
 def get_inference(sample_idx: int) -> int:

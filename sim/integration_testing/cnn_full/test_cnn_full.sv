@@ -5,11 +5,11 @@
 
 module cnn_full #(
   parameter int unsigned BusBits = 8
-  ,parameter string FileName_0    = ""
-  ,parameter string FileName_1    = ""
-  ,parameter string FileName_2    = ""
-  ,parameter string FileName_2_hi = ""
-  ,parameter string FileName_3    = ""
+  ,parameter              FileName_0    = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName_1    = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName_2    = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName_2_hi = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName_3    = "model/data/roms/hex/zeros.hex"
 ) (
    input  [0:0] clk_i
   ,input  [0:0] rst_i
