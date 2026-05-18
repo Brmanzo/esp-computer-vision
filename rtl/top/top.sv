@@ -1,7 +1,6 @@
 // top.sv
 // Bradley Manzo, 2026
 
-`define ESP // Comment out this line to target USB-to-UART bridge instead of ESP32c3
 module top #(
 )  (
    input [0:0] clk_12mhz_i
@@ -125,7 +124,8 @@ wire [0:0] uart_tx;
     ,.BusBits    (8)
     ,.InBits     (1)
     ,.FileName_0    ("model/data/roms/hex/layer_0_weights.hex")
-    ,.FileName_1    ("model/data/roms/hex/layer_1_weights.hex")
+    ,.FileName_1    ("model/data/roms/hex/layer_1_weights_lo.hex")
+    ,.FileName_1_hi ("model/data/roms/hex/layer_1_weights_hi.hex")
     ,.FileName_2    ("model/data/roms/hex/layer_2_weights_lo.hex")
     ,.FileName_2_hi ("model/data/roms/hex/layer_2_weights_hi.hex")
     ,.FileName_3    ("model/data/roms/hex/layer_3_weights.hex")

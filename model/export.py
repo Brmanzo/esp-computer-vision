@@ -215,6 +215,11 @@ def pack_hex_weights(hex_path: Path, weights_flat: list, weight_bits: int, dsp_c
         lo_mask    = (1 << TILE_BITS) - 1
         filename_lo = f"layer_{layer_idx}_weights_lo.hex"
         filename_hi = f"layer_{layer_idx}_weights_hi.hex"
+        # Remove stale single-file ROM if it exists (old format before split was needed)
+        stale_single = hex_path / filename
+        if stale_single.exists():
+            stale_single.unlink()
+            print(f"  Removed stale single-file ROM: {filename}")
         with open(hex_path / filename_lo, "w") as f_lo, \
              open(hex_path / filename_hi, "w") as f_hi:
             for local_neuron in range(neurons_per_dsp):
@@ -234,6 +239,13 @@ def pack_hex_weights(hex_path: Path, weights_flat: list, weight_bits: int, dsp_c
                 f_hi.write(zero_hi)
         print(f"  Generated ROM hex: {filename_lo} + {filename_hi} ({total_words} words + {pad_to - total_words} pad → {pad_to})")
         return
+
+    # Remove stale split-file ROMs if they exist (old format after switching back to single)
+    for stale in [hex_path / f"layer_{layer_idx}_weights_lo.hex",
+                  hex_path / f"layer_{layer_idx}_weights_hi.hex"]:
+        if stale.exists():
+            stale.unlink()
+            print(f"  Removed stale split-file ROM: {stale.name}")
 
     with open(hex_path / filename, "w") as f:
         for local_neuron in range(neurons_per_dsp):
@@ -340,3 +352,4 @@ if __name__ == "__main__":
 
     # 2. Generate the SystemVerilog header and hex files
     export_csv_to_hex(args.csv_out, args.sv_out, args.hex_out, config=HAND_GESTURE_CFG)
+    print("Run python3 -m model.render ?")

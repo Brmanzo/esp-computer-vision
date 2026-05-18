@@ -13,7 +13,7 @@ from model.export     import export_model_to_csv
 from model.model      import cnn_model, QuantConv2d
 from model.plot       import plot_training
 from model.preprocess import prepare_data, get_transforms
-from model.globals    import get_hand_gesture_cfg
+from model.globals    import get_hand_gesture_cfg, GESTURE_CLASSES
 from model.export     import export_csv_to_hex
 
 
@@ -169,8 +169,8 @@ def main():
     cfg = get_hand_gesture_cfg()
     num_classes = cfg.num_classes
 
-    # 3. Prepare Data (This constrained by num_classes)
-    train_loader, test_loader, num_classes = prepare_data(dataset_name, IMG_H, IMG_W, IN_BITS, DATA_SPLIT, BATCH_SIZE, max_classes=num_classes)
+    # 3. Prepare Data (filtered to the explicit gesture class list)
+    train_loader, test_loader, num_classes = prepare_data(dataset_name, IMG_H, IMG_W, IN_BITS, DATA_SPLIT, BATCH_SIZE, target_classes=GESTURE_CLASSES)
     _, train_aug = get_transforms(IMG_H, IMG_W, IN_BITS)
 
     # 4. Create Model
@@ -228,6 +228,9 @@ def main():
     print("\n--- EXPORTING HARDWARE WEIGHTS ---")
     export_model_to_csv(model_path, config=cfg, output_csv=csv_path)
     export_csv_to_hex(csv_path, sv_path, datapath / "roms" / "hex", config=cfg)
+    print("Run python3 -m model.inference hw-eval --trials 100 ?")
+    print("Run python3 -m model.export ?")
+    print("Run python3 -m model.render ?")
 
 if __name__ == "__main__":
     main()

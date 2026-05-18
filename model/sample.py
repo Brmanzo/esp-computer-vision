@@ -2,7 +2,7 @@ import torch
 import sys
 from pathlib import Path
 
-from model.globals    import HAND_GESTURE_CFG, DATAPATH
+from model.globals    import HAND_GESTURE_CFG, DATAPATH, GESTURE_CLASSES
 from model.preprocess import prepare_data, get_transforms
 
 def sample_to_hex(sample_idx:int=0, path:Path=DATAPATH):
@@ -19,7 +19,8 @@ def sample_to_hex(sample_idx:int=0, path:Path=DATAPATH):
         img_w      = HAND_GESTURE_CFG.in_dims.width,
         in_bits    = HAND_GESTURE_CFG._in_bits[0],
         data_split = 0.8,
-        batch_size = 1
+        batch_size = 1,
+        target_classes = GESTURE_CLASSES
     )
     
     # 2. Grab the sample from the test loader
@@ -67,7 +68,8 @@ def get_sample(sample_idx: int):
         img_w      = HAND_GESTURE_CFG.in_dims.width,
         in_bits    = HAND_GESTURE_CFG._in_bits[0],
         data_split = 0.8,
-        batch_size = 1
+        batch_size = 1,
+        target_classes = GESTURE_CLASSES
     )
     
     for i, (batch_img, batch_label) in enumerate(test_loader):

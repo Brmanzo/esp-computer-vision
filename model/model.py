@@ -147,11 +147,30 @@ class cnn_model(nn.Module):
 
     def ram_utilization(self) -> None:
         rams = BRAM_COUNT
+        # MultiBufferRAM Usage
         for layer_cfg in self.config.layers:
             rams -= self.rams_per_layer_feature(layer_cfg.ConvLayer)
             if layer_cfg.PoolLayer is not None:
                 rams -= self.rams_per_layer_feature(layer_cfg.PoolLayer)
-        
+
+        # Sequential Conv/Linear ROM Usage
+        # Each DSP bank cycles through out_ch/dsp_count neurons, so rom_depth divides by dsp_count
+        for layer_cfg in self.config.layers:
+            if layer_cfg.ConvLayer._dsp_count > 0:
+                addr_width = layer_cfg.ConvLayer._dsp_count * layer_cfg.ConvLayer._q_schedule.q_min_bits
+                rom_depth  = layer_cfg.ConvLayer._kernel_width**2 * layer_cfg.ConvLayer._in_ch * (layer_cfg.ConvLayer._out_ch // layer_cfg.ConvLayer._dsp_count)
+                roms_wide = (addr_width + 15) // 16
+                roms_deep = (rom_depth + 255) // 256
+                rams -= (roms_wide * roms_deep)
+
+        c_cfg = self.config.classifier_config
+        if c_cfg._dsp_count > 0:
+            addr_width = c_cfg._dsp_count * c_cfg._q_schedule.q_min_bits
+            rom_depth  = c_cfg._in_ch * (c_cfg._num_classes // c_cfg._dsp_count)
+            roms_wide  = (addr_width + 15) // 16
+            roms_deep  = (rom_depth + 255) // 256
+            rams -= (roms_wide * roms_deep)
+
         assert rams >= 0, f"Model exceeds BRAM budget! Remaining: {rams}"
         used = BRAM_COUNT - rams
         utilization = (used / BRAM_COUNT) * 100

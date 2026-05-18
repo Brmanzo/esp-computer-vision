@@ -59,20 +59,31 @@ def get_transforms(img_h: int, img_w: int, in_bits: int) -> Tuple[Callable, Call
 
     return tfm_base, train_aug
 
-def prepare_data(dataset_download: str, img_h: int, img_w: int, in_bits: int, data_split: float, batch_size: int, max_classes: Optional[int] = None) -> Tuple[DataLoader, DataLoader, int]:
+def prepare_data(dataset_download: str, img_h: int, img_w: int, in_bits: int, data_split: float, batch_size: int, max_classes: Optional[int] = None, target_classes: Optional[list] = None) -> Tuple[DataLoader, DataLoader, int]:
     '''Downloads the dataset and returns DataLoaders along with the number of classes.'''
     path = Path(kagglehub.dataset_download(dataset_download))
     dataset_root = path / "HandGesture" / "images"
-    
+
     tfm_base, _ = get_transforms(img_h, img_w, in_bits)
     dataset = datasets.ImageFolder(dataset_root, transform=tfm_base)
-    
-    # Constrain classes if requested
-    if max_classes is not None:
-        target_classes = sorted(dataset.classes)[:max_classes]
-        dataset.classes = target_classes
-        dataset.class_to_idx = {cls: i for i, cls in enumerate(target_classes)}
-        # Filter samples to only include the first max_classes
+
+    # Filter to an explicit class list (takes priority over max_classes)
+    if target_classes is not None:
+        new_classes = sorted(target_classes)
+        new_class_to_idx = {cls: i for i, cls in enumerate(new_classes)}
+        # Build remapping from original indices (before overwriting dataset.class_to_idx)
+        orig_to_new = {dataset.class_to_idx[name]: new_idx
+                       for name, new_idx in new_class_to_idx.items()
+                       if name in dataset.class_to_idx}
+        dataset.samples = [(fpath, orig_to_new[lbl]) for fpath, lbl in dataset.samples
+                           if lbl in orig_to_new]
+        dataset.targets = [s[1] for s in dataset.samples]
+        dataset.classes = new_classes
+        dataset.class_to_idx = new_class_to_idx
+    elif max_classes is not None:
+        selected = sorted(dataset.classes)[:max_classes]
+        dataset.classes = selected
+        dataset.class_to_idx = {cls: i for i, cls in enumerate(selected)}
         dataset.samples = [s for s in dataset.samples if s[1] < max_classes]
         dataset.targets = [s[1] for s in dataset.samples]
 

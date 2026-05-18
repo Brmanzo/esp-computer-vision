@@ -2,6 +2,7 @@
 # Bradley Manzo 2026
 from   datetime import datetime
 from   pathlib  import Path
+import re
 import sys
 
 from model.config  import ModelConfig, ConvConfig, PoolConfig, ClassifierConfig
@@ -240,6 +241,51 @@ def render_footer():
     ]
     return "\n".join(lines)
 
+def _build_filename_rows(cfg: ModelConfig):
+    '''Yields (layer_idx, needs_hi) for every layer including the classifier.'''
+    layer_cfgs = [l.ConvLayer for l in cfg.layers]
+    for i in range(len(layer_cfgs) + 1):
+        lcfg = layer_cfgs[i] if i < len(layer_cfgs) else cfg.classifier_config
+        yield i, _rom_needs_hi(lcfg)
+
+
+def patch_uart_cnn_sv(cfg: ModelConfig, path: Path) -> None:
+    '''Keep FileName parameter declarations and cnn forwarding in uart_cnn.sv in sync with cnn.sv.'''
+    decl_lines, fwd_lines = [], []
+    for i, needs_hi in _build_filename_rows(cfg):
+        if needs_hi:
+            decl_lines += [f'  ,parameter FileName_{i}    = "{_lo_hex(i)}"',
+                           f'  ,parameter FileName_{i}_hi = "{_hi_hex(i)}"']
+            fwd_lines  += [f'    ,.FileName_{i}    (FileName_{i})',
+                           f'    ,.FileName_{i}_hi (FileName_{i}_hi)']
+        else:
+            decl_lines.append(f'  ,parameter FileName_{i}    = "{_std_hex(i)}"')
+            fwd_lines.append( f'    ,.FileName_{i}    (FileName_{i})')
+
+    text = path.read_text(encoding="utf-8")
+    text = re.sub(r'(?:  ,parameter FileName_\S+ *= *"[^"]*"\n)+',
+                  '\n'.join(decl_lines) + '\n', text)
+    text = re.sub(r'(?:    ,\.FileName_\S+ *\(FileName_[A-Za-z0-9_]+\)\n)+',
+                  '\n'.join(fwd_lines) + '\n', text)
+    path.write_text(text, encoding="utf-8")
+
+
+def patch_top_sv(cfg: ModelConfig, path: Path) -> None:
+    '''Keep FileName arguments in the uart_cnn instantiation in top.sv in sync with cnn.sv.'''
+    arg_lines = []
+    for i, needs_hi in _build_filename_rows(cfg):
+        if needs_hi:
+            arg_lines += [f'    ,.FileName_{i}    ("{_lo_hex(i)}")',
+                          f'    ,.FileName_{i}_hi ("{_hi_hex(i)}")']
+        else:
+            arg_lines.append(f'    ,.FileName_{i}    ("{_std_hex(i)}")')
+
+    text = path.read_text(encoding="utf-8")
+    text = re.sub(r'(?:    ,\.FileName_\S+ *\("[^"]*"\)\n)+',
+                  '\n'.join(arg_lines) + '\n', text)
+    path.write_text(text, encoding="utf-8")
+
+
 def render_verilog(cfg: ModelConfig) -> None:
     '''Render the CNN architecture to a SystemVerilog file for hardware implementation.'''
     repo_root = Path(__file__).resolve().parents[1]
@@ -247,8 +293,7 @@ def render_verilog(cfg: ModelConfig) -> None:
 
     with open(out_file, "w", encoding="utf-8") as f:
         print(render_header(cfg, num_layers=len(cfg.layers) + 1), file=f)
-        # You might need to adjust render_wires to accept self.config.layers
-        print(render_wires(cfg), file=f) 
+        print(render_wires(cfg), file=f)
         print("", file=f)
 
         # Render Feature Layers
@@ -260,8 +305,12 @@ def render_verilog(cfg: ModelConfig) -> None:
 
         # Render Classifier
         print(render_classifier_layer(cfg.classifier_config), file=f)
-        
+
         print(render_footer(), file=f)
+
+    patch_uart_cnn_sv(cfg, repo_root / "rtl" / "top" / "uart_cnn.sv")
+    patch_top_sv(cfg, repo_root / "rtl" / "top" / "top.sv")
+    print("Run make bitstream ESP=1 ?")
 
 if __name__ == "__main__":
    render_verilog(HAND_GESTURE_CFG)

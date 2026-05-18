@@ -11,6 +11,7 @@ RSVG       ?= rsvg-convert
 FILELIST ?= $(REPO_ROOT)/filelists/top.json
 TOP_SV   ?= $(REPO_ROOT)/rtl/top/top.sv
 RTL_ROOT ?= $(REPO_ROOT)/rtl
+ESP      ?= 1
 
 SYNTH_SOURCES = $(shell python3 $(REPO_ROOT)/sim/util/get_filelist.py $(FILELIST))
 ABSTRACT_TOP  = $(shell python3 $(REPO_ROOT)/sim/util/get_top.py $(FILELIST))
@@ -29,7 +30,7 @@ HEX_FILES := $(wildcard $(REPO_ROOT)/model/data/roms/hex/*.hex)
 
 synth-ice40: ice40.json
 ice40.json: $(TOP_SV) $(FILELIST) $(SYNTH_SOURCES) $(HEX_FILES)
-	$(YOSYS) -ql ice40.yslog -p 'read_verilog -sv -DSYNTHESIS $(TOP_SV) $(SYNTH_SOURCES); hierarchy -top top; synth_ice40 -dsp -top top; delete t:$$scopeinfo; clean -purge; write_json $@'
+	$(YOSYS) -ql ice40.yslog -p 'read_verilog -sv -DSYNTHESIS $(if $(filter 1,$(ESP)),-DESP,) $(TOP_SV) $(SYNTH_SOURCES); hierarchy -top top; synth_ice40 -dsp -top top; delete t:$$scopeinfo; clean -purge; write_json $@'
 
 # These commands will always work.
 mapped.pdf: mapped.json

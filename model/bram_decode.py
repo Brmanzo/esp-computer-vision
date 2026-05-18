@@ -93,13 +93,17 @@ def decode_bram_words(
     else:
         raise ValueError(f"No SB_RAM40_4K cell matching '{cell_name_fragment}' found")
 
-    # memory[addr][bit] decoded from INIT strings
+    # memory[addr][bit] decoded from INIT strings.
+    # General formula: flat address a = (k<<8) | ((i>>4)<<4) | bit_reverse4(i&0xF)
+    # then word = a // width, bit = a % width.
+    # For width=16 this reduces to the familiar word=(k<<4)|(i>>4), bit=bit_reverse4(i&0xF).
     memory: list[list[int | None]] = [[None] * width for _ in range(depth)]
 
     for k, s in init_strings.items():
         for i in range(256):
-            word = (k << 4) | (i >> 4)
-            bit  = _bit_reverse4(i & 0xF)
+            a    = (k << 8) | ((i >> 4) << 4) | _bit_reverse4(i & 0xF)
+            word = a // width
+            bit  = a % width
             if word < depth and bit < width:
                 memory[word][bit] = int(s[255 - i])
 
@@ -135,6 +139,16 @@ def compare_to_hex(
     return matches, n
 
 
+def _hex_file_width(hex_file) -> int:
+    """Return BRAM data width in bits by reading the first hex line's character count."""
+    with open(hex_file) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                return len(line) * 4  # 4 bits per hex digit
+    return 16
+
+
 def get_bram_cell_for_hex(bram_cells: list[str], hex_name: str) -> str | None:
     """
     Map a given hex filename to its synthesized BRAM cell name based on layer keywords.
@@ -150,7 +164,7 @@ def get_bram_cell_for_hex(bram_cells: list[str], hex_name: str) -> str | None:
     if not layer_part:
         return None
         
-    is_hi = "hi" in hex_name
+    is_hi = hex_name.endswith("_hi.hex")
     
     for cell in bram_cells:
         if layer_part in cell:
@@ -180,7 +194,15 @@ def run_asc_verification(target_path: Path, hex_file_path: Path | None = None) -
         if not ROM_PATH.exists():
             print(f"ERROR: ROM directory '{ROM_PATH}' not found.")
             return False
-        hex_files_to_verify = sorted([ROM_PATH / f for f in os.listdir(ROM_PATH) if f.startswith("layer_") and f.endswith(".hex")])
+        all_hex = sorted(f for f in os.listdir(ROM_PATH) if f.startswith("layer_") and f.endswith(".hex"))
+        hex_files_to_verify = []
+        for f in all_hex:
+            if not f.endswith("_lo.hex") and not f.endswith("_hi.hex"):
+                lo_name = f.replace(".hex", "_lo.hex")
+                if (ROM_PATH / lo_name).exists():
+                    print(f"\033[93m⚠ WARNING:\033[0m Skipping stale '{f}' (split ROM '{lo_name}' takes precedence).")
+                    continue
+            hex_files_to_verify.append(ROM_PATH / f)
 
     print(f"Verifying weight hex files inside physical bitstream '{target_path.name}'...")
     all_ok = True
@@ -195,13 +217,19 @@ def run_asc_verification(target_path: Path, hex_file_path: Path | None = None) -
                 ["icebram", "-v", str(hex_path), str(hex_path)],
                 input=target_path.read_bytes(),
                 capture_output=True,
-                check=True
+                check=False
             )
             stdout = res.stdout.decode()
             stderr = res.stderr.decode()
             output = stdout + stderr
 
-            if "Found and replaced" in output:
+            if "Conflicting from pattern" in output:
+                print(f"  \033[93m⚠ {hex_path.name}:\033[0m icebram pattern conflict (non-unique bit-slice — JSON verification is authoritative).")
+            elif res.returncode != 0:
+                print(f"  \033[91m✗ {hex_path.name}:\033[0m icebram execution failed (exit code {res.returncode})")
+                print(stderr)
+                all_ok = False
+            elif "Found and replaced" in output:
                 for line in output.splitlines():
                     if "Found and replaced" in line:
                         msg = line.strip().replace("and replaced", "instances")
@@ -213,10 +241,6 @@ def run_asc_verification(target_path: Path, hex_file_path: Path | None = None) -
         except FileNotFoundError:
             print("ERROR: 'icebram' tool not found on this system. Please make sure fpga-icestorm is installed.")
             return False
-        except subprocess.CalledProcessError as e:
-            print(f"  \033[91m✗ {hex_path.name}:\033[0m icebram execution failed (exit code {e.returncode})")
-            print(e.stderr.decode())
-            all_ok = False
 
     return all_ok
 
@@ -261,6 +285,13 @@ def run_json_verification(json_path: Path, fragment: str | None = None, hex_path
         hex_files_to_verify = []
         for f in sorted(os.listdir(ROM_PATH)):
             if f.startswith("layer_") and f.endswith(".hex"):
+                # Skip a plain layer_N_weights.hex if the split _lo counterpart exists;
+                # the split files are authoritative and the plain file is stale.
+                if not f.endswith("_lo.hex") and not f.endswith("_hi.hex"):
+                    lo_name = f.replace(".hex", "_lo.hex")
+                    if (ROM_PATH / lo_name).exists():
+                        print(f"\033[93m⚠ WARNING:\033[0m Skipping stale '{f}' (split ROM '{lo_name}' takes precedence).")
+                        continue
                 hex_file = ROM_PATH / f
                 matched_cell = get_bram_cell_for_hex(bram_cells, f)
                 if matched_cell:
@@ -272,16 +303,20 @@ def run_json_verification(json_path: Path, fragment: str | None = None, hex_path
     all_ok = True
     for frag, hex_p in hex_files_to_verify:
         try:
-            words = decode_bram_words(json_path, frag)
-            cell_name_short = frag.split('.')[-1] if '.' in frag else frag
+            bram_width = _hex_file_width(hex_p) if hex_p else 16
+            words = decode_bram_words(json_path, frag, width=bram_width)
+            # Show the last two path components for unambiguous identification
+            parts = frag.split('.')
+            cell_label = '.'.join(parts[-3:]) if len(parts) >= 3 else frag
             layer_hint = ""
-            for part in frag.split('.'):
+            for part in parts:
                 if "layer_inst" in part:
                     layer_hint = f" ({part})"
                     break
-            
-            print(f"\nDecoded BRAM '{cell_name_short}'{layer_hint}:")
-            print("  " + "  ".join(f"{w:04x}" for w in words[:16]))
+
+            hex_w = (bram_width + 3) // 4
+            print(f"\nDecoded BRAM '{cell_label}'{layer_hint} [{bram_width}-bit]:")
+            print("  " + "  ".join(f"{w:0{hex_w}x}" for w in words[:16]))
             if len(words) > 16:
                 print(f"  ... ({len(words) - 16} more)")
 
@@ -290,7 +325,7 @@ def run_json_verification(json_path: Path, fragment: str | None = None, hex_path
                     print(f"  \033[91m✗ ERROR:\033[0m Hex file '{hex_p}' not found.")
                     all_ok = False
                     continue
-                matches, total = compare_to_hex(json_path, frag, hex_p)
+                matches, total = compare_to_hex(json_path, frag, hex_p, width=bram_width)
                 status = "✓ SUCCESS" if matches == total else "✗ MISMATCH"
                 color = "\033[92m" if matches == total else "\033[91m"
                 print(f"  {color}{status}:\033[0m compared against '{hex_p.name}': {matches}/{total} match")
@@ -359,7 +394,13 @@ if __name__ == "__main__":
             print("================================================================================")
             all_success &= run_asc_verification(default_asc)
             print()
-            
+        
+        if all_success:
+            print("Run make util ?")
+            print("Run make stat ?")
+            print("Run prog ice40.bin ?")
+        else:
+            print("Run make clean && python3 -m model.export && python3 -m model.render && make bitstream ESP=1 ?")
         sys.exit(0 if all_success else 1)
 
     # 2. Arguments provided: Manual run

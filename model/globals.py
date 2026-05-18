@@ -9,11 +9,13 @@ DATAPATH = Path("model") / "data"
 BRAM_COUNT = 30 - 1 # Subtract 1 for the Skid Buffer BRAM on deframer
 DSP_COUNT  = 8
 
-def get_hand_gesture_cfg(num_classes: int = 8, img_h: int = 240, img_w: int = 320) -> ModelConfig:
+GESTURE_CLASSES = ["okay", "paper", "peace"]  # 0, 1, 2, 3
+
+def get_hand_gesture_cfg(num_classes: int = 4, img_h: int = 240, img_w: int = 320) -> ModelConfig:
     '''Returns the standard hardware-aware ModelConfig for the hand-gesture recognition task.'''
     return ModelConfig(
         input_dimensions = InputDimensions(img_w, img_h),
-        in_channels      = [1, 4, 8, 12], # Input Channels per layer
+        in_channels      = [1, 4, 9, 12], # Input Channels per layer
         in_bits          = [1, 2, 2, 4], # Input Bits per layer
         kernels          = [[3,2], [3,2], [3,2], [1]], # [conv_kernel, pool_kernel]
         padding          = 1, # int or list
@@ -26,6 +28,6 @@ def get_hand_gesture_cfg(num_classes: int = 8, img_h: int = 240, img_w: int = 32
                       QSchedule( 90, [5, 5, 30], 10, 8),   # same
                       QSchedule(100, [50],        8, 8)],    # classifier unchanged
 
-        use_dsp          = [0, 2, 4, 2])
+        use_dsp          = [0, 3, 4, 1])
 
 HAND_GESTURE_CFG = get_hand_gesture_cfg()

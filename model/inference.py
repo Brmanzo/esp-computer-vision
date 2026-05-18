@@ -5,7 +5,7 @@ import kagglehub
 from pathlib import Path
 from PIL import Image
 
-from model.globals import HAND_GESTURE_CFG
+from model.globals import HAND_GESTURE_CFG, GESTURE_CLASSES
 from model.model import cnn_model
 from model.preprocess import get_transforms, prepare_data
 
@@ -20,14 +20,10 @@ def run_inference(sample_idx: int):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # 2. Load Data and Metadata
-    # We need the class names to interpret the prediction
-    # We'll get them directly from the directory structure for maximum robustness
-    path = Path(kagglehub.dataset_download(dataset_name))
-    dataset_root = path / "HandGesture" / "images"
-    class_names = sorted([d.name for d in dataset_root.iterdir() if d.is_dir()])
-    
+    class_names = sorted(GESTURE_CLASSES)  # okay=0, paper=1, peace=2, up=3
+
     # Still need the loader to get the images
-    _, test_loader, _ = prepare_data(dataset_name, IMG_H, IMG_W, IN_BITS, 0.8, 32)
+    _, test_loader, _ = prepare_data(dataset_name, IMG_H, IMG_W, IN_BITS, 0.8, 32, target_classes=GESTURE_CLASSES)
     
     # 3. Load Model
     model = cnn_model(config=HAND_GESTURE_CFG)
@@ -181,6 +177,68 @@ def get_inference_from_pixels(pixels: list, config=None) -> int:
     '''Hardware-accurate inference on an explicit flat list of binary {0,1} pixels.'''
     return _hw_integer_forward(pixels, config or HAND_GESTURE_CFG)
 
+
+def hw_eval(n_trials: int = 100) -> float:
+    '''Run hardware-accurate integer inference on n_trials test samples and report accuracy.'''
+    import numpy as np
+    from model.preprocess import get_transforms
+    from model.globals import GESTURE_CLASSES
+
+    dataset_name = "roobansappani/hand-gesture-recognition"
+    IMG_H, IMG_W = HAND_GESTURE_CFG.in_dims.height, HAND_GESTURE_CFG.in_dims.width
+    IN_BITS = HAND_GESTURE_CFG._in_bits[0]
+    assert IMG_H is not None and IMG_W is not None, "Input dimensions must be specified in config"
+    _, test_loader, _ = prepare_data(dataset_name, IMG_H, IMG_W, IN_BITS, 0.8, 1,
+                                     target_classes=GESTURE_CLASSES)
+
+    class_names = sorted(GESTURE_CLASSES)
+    correct = 0
+    total   = 0
+    per_class_correct = {name: 0 for name in class_names}
+    per_class_total   = {name: 0 for name in class_names}
+
+    for img_t, label_t in test_loader:
+        if total >= n_trials:
+            break
+        label  = int(label_t[0])
+        pixels = (img_t[0].flatten() > 0.5).int().tolist()
+        pred   = _hw_integer_forward(pixels, HAND_GESTURE_CFG)
+
+        name = class_names[label]
+        per_class_total[name]   += 1
+        per_class_correct[name] += int(pred == label)
+        correct += int(pred == label)
+        total   += 1
+
+        print(f"  [{total:>4}/{n_trials}]  gt={class_names[label]:<12} pred={class_names[pred]:<12} {'✓' if pred == label else '✗'}")
+
+    acc = correct / total if total else 0.0
+    print(f"\nHW accuracy over {total} trials: {acc:.1%}")
+    print("\nPer-class accuracy:")
+    for name in class_names:
+        n = per_class_total[name]
+        c = per_class_correct[name]
+        print(f"  {name:<12} {c}/{n}  ({c/n:.1%})" if n else f"  {name:<12} no samples")
+    return acc
+
+
 if __name__ == "__main__":
-    idx = int(sys.argv[1]) if len(sys.argv) > 1 else 10
-    run_inference(idx)
+    import argparse
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="cmd")
+
+    p_infer = sub.add_parser("infer", help="Single-sample float inference")
+    p_infer.add_argument("idx", type=int)
+
+    p_eval = sub.add_parser("hw-eval", help="Batch hardware-accurate accuracy eval")
+    p_eval.add_argument("--trials", type=int, default=100)
+
+    args = parser.parse_args()
+
+    if args.cmd == "hw-eval":
+        hw_eval(args.trials)
+        print("Run python3 -m model.export ?")
+        print("Run python3 -m model.render ?")
+    else:
+        idx = args.idx if args.cmd == "infer" else 10
+        run_inference(idx)
