@@ -1,10 +1,10 @@
-# model.config.py
+# nn.config.py
 # Bradley Manzo 2026
 
 import math
 from typing import List, Optional
 
-from model.quantize import QSchedule
+from nn.quantize import QSchedule
 
 class InputDimensions:
     '''Organizes spatial input dimensions, as well as term_count for the classifier.'''
@@ -143,7 +143,7 @@ class LayerConfig:
         self.ConvLayer = ConvLayer
         self.PoolLayer = PoolLayer
 
-class ModelConfig:
+class NNConfig:
     '''Accepts high-level model specs, and translates into detailed layer-by-layer configurations.'''
     def full_precision_acc_bits(self, in_channels, kernel_size, in_bits, weight_bits):
         '''Calculates full precision output width for convolution.'''

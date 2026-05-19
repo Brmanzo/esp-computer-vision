@@ -2,9 +2,9 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from typing import List
 
-from model.config import ModelConfig
+from nn.config import NNConfig
 
-def plot_training(cfg: ModelConfig, train_acc_history: List[float], test_acc_history: List[float], plot_path: Path):
+def plot_training(cfg: NNConfig, train_acc_history: List[float], test_acc_history: List[float], plot_path: Path):
     plt.figure(figsize=(10, 6))
     plt.plot(train_acc_history, label="Train Accuracy", linewidth=2)
     plt.plot(test_acc_history, label="Test Accuracy", linewidth=2)

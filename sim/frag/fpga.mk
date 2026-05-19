@@ -19,7 +19,7 @@ ICESTAT ?= python3 /usr/share/fpga-icestorm/python/icebox_stat
 PCF_PATH = $(REPO_ROOT)/boards/icebreakerV1_1a/icebreaker.pcf
 prog: ice40.bin
 	$(ICEPROG) $<
-	@echo "\n Run python3 demo/python_demo.py 11 ttyUSB2 ?"
+	@echo "\n Run cnn.py fpga --trials 100 ?"
 
 # Placement & Route. Depends on synth.mk
 ice40.asc: ice40.json $(PCF_PATH)
@@ -32,7 +32,7 @@ ice40.asc: ice40.json $(PCF_PATH)
 bitstream: ice40.bin
 ice40.bin: ice40.asc
 	$(ICEPACK) $< $@
-	@echo "Run python3 -m model.bram_decode ?"
+	@echo "Run cnn.py bram ?"
 	@echo "Run prog ice40.bin ?"
 	@echo "Run make util ?"
 	@echo "Run make stat ?"

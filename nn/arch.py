@@ -1,16 +1,16 @@
-# model.model.py
+# nn.architecture.py
 # Bradley Manzo 2026
 
 import torch
 import torch.nn as nn
 
-from model.config   import ModelConfig, ConvConfig, PoolConfig
-from model.quantize import QuantConv2d, QuantizeActivation, LearnedShiftQuantizer
-from model.globals  import get_hand_gesture_cfg, BRAM_COUNT, DSP_COUNT
+from nn.config   import NNConfig, ConvConfig, PoolConfig
+from nn.quantize import QuantConv2d, QuantizeActivation, LearnedShiftQuantizer
+from nn.globals  import get_hand_gesture_cfg, BRAM_COUNT, DSP_COUNT
 
-class cnn_model(nn.Module):
-    '''Construct the Pytorch CNN model based on provided Model Config.'''
-    def __init__(self, config: ModelConfig):
+class cnn(nn.Module):
+    '''Construct the Pytorch CNN based on provided NNConfig.'''
+    def __init__(self, config: NNConfig):
         super().__init__()
         self.config = config
         self._is_fine_tuning = False
@@ -19,7 +19,7 @@ class cnn_model(nn.Module):
         feature_layers: list[nn.Module] = []
         self.cls_input_shift_quantizer: LearnedShiftQuantizer  # set below
 
-        # Iterate naturally over all feature layers in model config
+        # Iterate naturally over all feature layers in network config
         num_feature_layers = len(self.config.layers)
         for i, layer_cfg in enumerate(self.config.layers):
             conv = layer_cfg.ConvLayer
@@ -87,7 +87,7 @@ class cnn_model(nn.Module):
         # 3. Utilities
         self.ram_utilization()
         # Update cnn.sv with current architecture
-        from model.render import render_verilog
+        from nn.render import render_verilog
         render_verilog(self.config)
 
     def forward(self, x):
@@ -171,7 +171,7 @@ class cnn_model(nn.Module):
             roms_deep  = (rom_depth + 255) // 256
             rams -= (roms_wide * roms_deep)
 
-        assert rams >= 0, f"Model exceeds BRAM budget! Remaining: {rams}"
+        assert rams >= 0, f"Network exceeds BRAM budget! Remaining: {rams}"
         used = BRAM_COUNT - rams
         utilization = (used / BRAM_COUNT) * 100
         print(f"BRAMs: {rams} remaining / {BRAM_COUNT} total ({utilization:.1f}% utilization)")
@@ -186,7 +186,7 @@ class cnn_model(nn.Module):
         if classifier._dsp_count > 0:
             dsp -= min(classifier._dsp_count, classifier._num_classes)
             
-        assert dsp >= 0, f"Model exceeds DSP budget! Remaining: {dsp}"
+        assert dsp >= 0, f"Network exceeds DSP budget! Remaining: {dsp}"
         used = DSP_COUNT - dsp
         utilization = (used / DSP_COUNT) * 100
         print(f"DSPs: {dsp} remaining / {DSP_COUNT} total ({utilization:.1f}% utilization)")
@@ -239,11 +239,11 @@ class cnn_model(nn.Module):
             print(f"Estimated Max Frame Rate: {fps:.2f} FPS")
 
 if __name__ == "__main__":
-    model = cnn_model(get_hand_gesture_cfg())
-    print("\n--- MODEL ARCHITECTURE ---")
-    print(model)
+    network = cnn(get_hand_gesture_cfg())
+    print("\n--- Network ARCHITECTURE ---")
+    print(network)
     print("\n--- RESOURCE UTILIZATION ---")
-    model.ram_utilization()
-    model.dsp_utilization()
-    model.cycle_count()
+    network.ram_utilization()
+    network.dsp_utilization()
+    network.cycle_count()
     print("")

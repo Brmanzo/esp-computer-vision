@@ -35,10 +35,10 @@ module tb_double_block #(
   ,parameter int unsigned P1_Mode        = 0
   ,parameter int unsigned C0_DSPCount    = 0
   ,parameter int unsigned C1_DSPCount    = 0
-  ,parameter              FileName_0    = "model/data/roms/hex/zeros.hex"
-  ,parameter              FileName_0_hi = "model/data/roms/hex/zeros.hex"
-  ,parameter              FileName_1    = "model/data/roms/hex/zeros.hex"
-  ,parameter              FileName_1_hi = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName_0    = "nn/data/roms/hex/zeros.hex"
+  ,parameter              FileName_0_hi = "nn/data/roms/hex/zeros.hex"
+  ,parameter              FileName_1    = "nn/data/roms/hex/zeros.hex"
+  ,parameter              FileName_1_hi = "nn/data/roms/hex/zeros.hex"
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i

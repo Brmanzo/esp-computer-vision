@@ -2,8 +2,8 @@ import torch
 import sys
 from pathlib import Path
 
-from model.globals    import HAND_GESTURE_CFG, DATAPATH, GESTURE_CLASSES
-from model.preprocess import prepare_data, get_transforms
+from nn.globals    import HAND_GESTURE_CFG, DATAPATH, GESTURE_CLASSES
+from nn.preprocess import prepare_data, get_transforms
 
 def sample_to_hex(sample_idx:int=0, path:Path=DATAPATH):
     '''Samples an image from the dataset, applies preprocessing, and returns a Verilog hex string.'''

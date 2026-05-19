@@ -18,9 +18,9 @@ module tb_single_block #(
   ,parameter int unsigned C_ShiftBits   = 0
   ,parameter int unsigned C_Unsigned    = 0
   ,parameter int unsigned P_Mode        = 0 // 0 for max pooling, 1 for average pooling
-  ,parameter              FileName      = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName      = "nn/data/roms/hex/zeros.hex"
   ,parameter              FileName_0    = ""
-  ,parameter              FileName_hi   = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName_hi   = "nn/data/roms/hex/zeros.hex"
   ,parameter              FileName_0_hi = ""
 )  (
    input  [0:0] clk_i

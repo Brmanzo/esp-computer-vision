@@ -1,19 +1,19 @@
 from pathlib import Path
 
-from model.config import ModelConfig, InputDimensions
-from model.quantize import QSchedule
+from nn.config import NNConfig, InputDimensions
+from nn.quantize import QSchedule
 
 # Default paths matching the training pipeline
-DATAPATH = Path("model") / "data"
+DATAPATH = Path("nn") / "data"
 
 BRAM_COUNT = 30 - 1 # Subtract 1 for the Skid Buffer BRAM on deframer
 DSP_COUNT  = 8
 
 GESTURE_CLASSES = ["okay", "paper", "peace"]  # 0, 1, 2, 3
 
-def get_hand_gesture_cfg(num_classes: int = 4, img_h: int = 240, img_w: int = 320) -> ModelConfig:
-    '''Returns the standard hardware-aware ModelConfig for the hand-gesture recognition task.'''
-    return ModelConfig(
+def get_hand_gesture_cfg(num_classes: int = 4, img_h: int = 240, img_w: int = 320) -> NNConfig:
+    '''Returns the standard hardware-aware NNConfig for the hand-gesture recognition task.'''
+    return NNConfig(
         input_dimensions = InputDimensions(img_w, img_h),
         in_channels      = [1, 4, 9, 12], # Input Channels per layer
         in_bits          = [1, 2, 2, 4], # Input Bits per layer

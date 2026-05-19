@@ -1,4 +1,4 @@
-# cnn_model.py
+# cnn.py
 # Functional model for the top-level CNN hardware
 
 from typing import List, Optional, Dict, Any
@@ -8,7 +8,7 @@ import os
 from functional_models.conv_layer import ConvLayerModel
 from functional_models.pool_layer import PoolLayerModel
 from functional_models.classifier_layer import ClassifierLayerModel
-from model.config import ModelConfig
+from nn.config import NNConfig
 from util.bitwise import pack_terms
 
 class PictureGenerator:
@@ -34,7 +34,7 @@ class PictureGenerator:
             self._label = None
         else:
             self._sample_idx = int(os.environ.get("SAMPLE_IDX", 0))
-            from model.sample import get_sample
+            from nn.sample import get_sample
             pixels, label = get_sample(self._sample_idx)
             if pixels is None or label is None:
                 raise ValueError(f"Could not load sample {self._sample_idx}")
@@ -56,13 +56,13 @@ class PictureGenerator:
         return (packed_din, raw_din)
 
 class CNNModel:
-    def __init__(self, dut, config: ModelConfig, weights_dict: Optional[Dict] = None):
+    def __init__(self, dut, config: NNConfig, weights_dict: Optional[Dict] = None):
         """
-        Instantiates a full functional pipeline based on a ModelConfig.
+        Instantiates a full functional pipeline based on a NNConfig.
         
         Args:
             dut: The cocotb DUT handle (can be None for standalone use).
-            config: The ModelConfig instance defining the architecture.
+            config: The NNConfig instance defining the architecture.
             weights_dict: Optional dictionary containing 'LAYER_N_WEIGHTS' and 'LAYER_N_BIASES'.
                          If None, weights must be provided manually or handled by injection.
         """
@@ -203,7 +203,7 @@ class CNNModel:
         # Check against PyTorch Inference if requested
         if os.environ.get("CHECK_INFERENCE") == "1":
             sample_idx = int(os.environ.get("SAMPLE_IDX", 0))
-            from model.inference import get_inference
+            from nn.inference import get_inference
             torch_pred = get_inference(sample_idx)
             if got_id != torch_pred:
                  print(f"\033[93mWARNING: Hardware output ({got_id}) differs from PyTorch prediction ({torch_pred}) for sample {sample_idx}!\033[0m")

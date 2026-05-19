@@ -10,7 +10,7 @@ module icestorm_rom #(
   ,parameter  int unsigned Depth     = 8
   ,localparam int unsigned DepthBits = (Depth <= 1) ? 1 : $clog2(Depth)
   ,parameter  int unsigned Init      = 1
-  ,parameter               FileName  = "model/data/roms/hex/zeros.hex"
+  ,parameter               FileName  = "nn/data/roms/hex/zeros.hex"
 )  (
    input [0:0] clk_i
   ,input [0:0] rst_i
@@ -40,7 +40,7 @@ module icestorm_rom #(
 `else
    initial begin
       /* verilator lint_off WIDTHEXPAND */
-      if (Init != 0 && FileName != "none" && FileName != "model/data/roms/hex/zeros.hex") begin
+      if (Init != 0 && FileName != "none" && FileName != "nn/data/roms/hex/zeros.hex") begin
       /* verilator lint_on WIDTHEXPAND */
          $readmemh(FileName, rom, 0, Depth-1);
       end

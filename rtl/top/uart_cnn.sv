@@ -8,12 +8,12 @@ module uart_cnn #(
   ,parameter  int unsigned HeightIn  = 240
   ,parameter  int unsigned BusBits  = 8
   ,parameter  int unsigned InBits    = 1
-  ,parameter FileName_0    = "model/data/roms/hex/layer_0_weights.hex"
-  ,parameter FileName_1    = "model/data/roms/hex/layer_1_weights_lo.hex"
-  ,parameter FileName_1_hi = "model/data/roms/hex/layer_1_weights_hi.hex"
-  ,parameter FileName_2    = "model/data/roms/hex/layer_2_weights_lo.hex"
-  ,parameter FileName_2_hi = "model/data/roms/hex/layer_2_weights_hi.hex"
-  ,parameter FileName_3    = "model/data/roms/hex/layer_3_weights.hex"
+  ,parameter FileName_0    = "nn/data/roms/hex/layer_0_weights.hex"
+  ,parameter FileName_1    = "nn/data/roms/hex/layer_1_weights_lo.hex"
+  ,parameter FileName_1_hi = "nn/data/roms/hex/layer_1_weights_hi.hex"
+  ,parameter FileName_2    = "nn/data/roms/hex/layer_2_weights_lo.hex"
+  ,parameter FileName_2_hi = "nn/data/roms/hex/layer_2_weights_hi.hex"
+  ,parameter FileName_3    = "nn/data/roms/hex/layer_3_weights.hex"
 
   ,localparam int unsigned PackedNum = BusBits / InBits
   ,localparam int unsigned BytesIn   = (WidthIn * HeightIn) / PackedNum

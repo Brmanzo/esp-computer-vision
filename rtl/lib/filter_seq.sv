@@ -17,9 +17,9 @@ module filter_seq #(
   ,parameter int unsigned Unsigned    = 0
 
   ,localparam int unsigned KernelArea = KernelWidth * KernelWidth
-  ,parameter FileName    = "model/data/roms/hex/zeros.hex"
+  ,parameter FileName    = "nn/data/roms/hex/zeros.hex"
   // second 16-bit tile for ROMs wider than one SB_RAM40_4K
-  ,parameter FileName_hi = "model/data/roms/hex/zeros.hex"
+  ,parameter FileName_hi = "nn/data/roms/hex/zeros.hex"
   // Conditional loading of Weights from ROM or parameter
   ,parameter logic signed [OutChannels*BiasBits-1:0]                         Biases  = '0
   ,localparam int unsigned ChannelCountBits = (OutChannels > 1) ? $clog2(OutChannels) : 1

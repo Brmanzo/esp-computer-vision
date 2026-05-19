@@ -2,10 +2,10 @@
 import re
 import os
 from typing import Dict, Any, Tuple
-from model.config import ModelConfig
+from nn.config import NNConfig
 from util.bitwise import unpack_kernel_weights, unpack_weights, unpack_biases
 
-def load_weights_from_vh(vh_path: str, config: ModelConfig) -> Tuple[Dict[str, Any], Dict[str, int]]:
+def load_weights_from_vh(vh_path: str, config: NNConfig) -> Tuple[Dict[str, Any], Dict[str, int]]:
     """
     Parses a .vh file and returns both unpacked arrays and raw integers.
     

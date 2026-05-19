@@ -38,12 +38,12 @@ module tb_single_block_with_classifier #(
   ,parameter int unsigned ClassBiasBits   = 8
   ,parameter int unsigned C1_DSPCount    = 0
   ,parameter int unsigned ClassDSPCount  = 0
-  ,parameter              FileName_0     = "model/data/roms/hex/zeros.hex"
-  ,parameter              FileName_0_hi  = "model/data/roms/hex/zeros.hex"
-  ,parameter              FileName_1     = "model/data/roms/hex/zeros.hex"
-  ,parameter              FileName_1_hi  = "model/data/roms/hex/zeros.hex"
-  ,parameter              FileName_2     = "model/data/roms/hex/zeros.hex"
-  ,parameter              FileName_2_hi  = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName_0     = "nn/data/roms/hex/zeros.hex"
+  ,parameter              FileName_0_hi  = "nn/data/roms/hex/zeros.hex"
+  ,parameter              FileName_1     = "nn/data/roms/hex/zeros.hex"
+  ,parameter              FileName_1_hi  = "nn/data/roms/hex/zeros.hex"
+  ,parameter              FileName_2     = "nn/data/roms/hex/zeros.hex"
+  ,parameter              FileName_2_hi  = "nn/data/roms/hex/zeros.hex"
 )  (
    input  [0:0] clk_i
   ,input  [0:0] rst_i

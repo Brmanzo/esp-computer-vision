@@ -56,8 +56,8 @@ module conv_layer #(
    ,localparam int unsigned WeightIndex = InChannels * KernelArea * WeightBits
    ,parameter logic signed [OutChannels*WeightIndex-1:0] Weights = '0
    ,parameter logic signed [OutChannels*BiasBits-1:0] Biases = '0
-   ,parameter FileName    = "model/data/roms/hex/zeros.hex"
-   ,parameter FileName_hi = "model/data/roms/hex/zeros.hex"
+   ,parameter FileName    = "nn/data/roms/hex/zeros.hex"
+   ,parameter FileName_hi = "nn/data/roms/hex/zeros.hex"
 ) (
     input  [0:0] clk_i
    ,input  [0:0] rst_i

@@ -13,12 +13,12 @@ from util.utilities  import runner, clock_start_sequence, reset_sequence, get_pa
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from functional_models.cnn_model import CNNModel, PictureGenerator
 from util.weight_loader import load_weights_from_vh
-from model.globals import HAND_GESTURE_CFG
+from nn.globals import HAND_GESTURE_CFG
 
 @cocotb.test
 async def full_cnn_test(dut) -> None:
     """
-    Full CNN Integration Test using ModelConfig and Hardware Weights.
+    Full CNN Integration Test using NNConfig and Hardware Weights.
 
     Controlled by env vars:
       INJECT_PIXELS : "zeros" | "ones" | "<comma-separated ints>" | "" (dataset)
@@ -76,9 +76,9 @@ async def full_cnn_test(dut) -> None:
     await om.wait(timeout_ns)
 
     # 5. Report Results
-    from model.preprocess import get_class_names
-    from model.inference import get_inference, get_inference_from_pixels
-    from model.sample import get_sample
+    from nn.preprocess import get_class_names
+    from nn.inference import get_inference, get_inference_from_pixels
+    from nn.sample import get_sample
 
     class_names = get_class_names()
 

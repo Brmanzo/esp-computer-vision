@@ -10,10 +10,10 @@ sys.set_int_max_str_digits(0)
 
 from util.utilities  import runner, clock_start_sequence, reset_sequence, get_param_string, inject_weights_and_biases
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
-from functional_models.cnn_model import CNNModel
+from functional_models.cnn import CNNModel
 from functional_models.cnn_framed_model import CnnFramedModel, FramedPictureGenerator
 from util.weight_loader import load_weights_from_vh
-from model.globals import HAND_GESTURE_CFG
+from nn.globals import HAND_GESTURE_CFG
 
 @cocotb.test
 async def full_cnn_test(dut) -> None:
@@ -33,9 +33,9 @@ async def full_cnn_test(dut) -> None:
       SAMPLE_IDX    : dataset index when INJECT_PIXELS is not set (default 10)
     """
     from util.bitwise import unpack_kernel_weights, unpack_weights, unpack_biases
-    from model.sample import get_sample
-    from model.preprocess import get_class_names
-    from model.inference import get_inference, get_inference_from_pixels
+    from nn.sample import get_sample
+    from nn.preprocess import get_class_names
+    from nn.inference import get_inference, get_inference_from_pixels
 
     # 1. Architecture config + learned shift
     config = HAND_GESTURE_CFG
@@ -64,7 +64,7 @@ async def full_cnn_test(dut) -> None:
     weights_dict[f"LAYER_{c_idx}_BIASES"] = unpack_biases(CB_int, c_cfg._bias_bits, c_cfg._num_classes)
 
     # 3. Standalone CNN functional model (not bound to dut ports)
-    cnn_model = CNNModel(None, config, weights_dict)
+    cnn = CNNModel(None, config, weights_dict)
 
     # 4. Load pixels
     assert config.in_dims.height is not None and config.in_dims.width is not None, "Input dimensions must be specified in config"
@@ -87,9 +87,9 @@ async def full_cnn_test(dut) -> None:
         pixels, label = get_sample(sample_idx)
         desc = f"dataset sample {sample_idx}"
 
-    # 5. Framed functional model wraps dut + cnn_model
+    # 5. Framed functional model wraps dut + cnn
     packet_len_bytes = (width * height) // 8
-    framed_model = CnnFramedModel(dut, cnn_model, packet_len_bytes=packet_len_bytes)
+    framed_model = CnnFramedModel(dut, cnn, packet_len_bytes=packet_len_bytes)
 
     # 6. Framed byte-level input generator
     assert pixels is not None, "Pixels must be loaded before creating FramedPictureGenerator"

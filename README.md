@@ -19,15 +19,15 @@ RTL designed and tested on icebreaker V1.1a FPGA for hardware acceleration.
   - [Hardware Installation](#hardware-installation)
     - [Synthesizing for Icebreaker Board](#synthesizing-for-icebreaker-board)
     - [Unit Testing](#unit-testing)
-    - [Model Testing](#model-testing)
-  - [Model Design](#model-design)
-  - [Model Training](#model-training)
+    - [Integration Testing](#integration-testing)
+  - [Neural Network Design](#neural-network-design)
+  - [Neural Network Training](#neural-network-training)
   - [Credits](#credits)
   - [License](#license)
 
 ## Overview
 
-Computer vision is the process through which a machine learning model analyzes novel data and extracts meaningful information from its environment. Training these models incurs a large initial cost, then once complete can be deployed in a static configuration. When these models are mapped to Application-Specific Integrated Circuits (ASICs) they can perform inference much faster than in software due to specialized architecture and faster clock speed.
+Computer vision is the process through which a neural network analyzes novel data and extracts meaningful information from its environment. Training these networks incurs a large initial cost, then once complete can be deployed in a static configuration. When these networks are mapped to Application-Specific Integrated Circuits (ASICs) they can perform inference much faster than in software due to specialized architecture and faster clock speed.
 <br><br>
 My goal for this project is to implement a dynamic system that captures live data and can interpret meaningful data from the real world. My current system bridges the gap between software and hardware, effectively utilizing the strengths of each domain. The ESP32c3 captures image data on its Arducam 2MP Camera, compresses each frame to one pixel per bit and transmits to the Icebreaker FPGA. Here the data image flows through the pretrained Convolutional Neural Network (CNN) resulting in a classification of the image subject. The ESP receives the result and publishes to local WiFi.
 
@@ -43,12 +43,14 @@ My goal for this project is to implement a dynamic system that captures live dat
   - Packet framing for proper data alignment
   - UART RTS line to ensure data integrity
   - Kernel-stationary sliding-window convolution architecture
-  - Parameterized kernel size, stride, input and weight widths for model flexibility
+  - Parameterized kernel size, stride, input and weight widths for network flexibility
   - Fully-Connected conv2d, linear, pool, and classifier modules verified with Pytorch
-- Pytorch model quantization
+  - Layer Sequencing to allocate dynamic workloads to DSPs over time
+- Pytorch Neural Network quantization
   - Weights quantized via progressive QAT and batchnorm folding
-  - Binary activations quantized and encoded as {-1,1}
-  - Pytorch model automatically translated into system verilog hardware description.
+  - Binary activations quantized and encoded as {-1,1} via PACT
+  - Wider activations 
+  - Pytorch neural network automatically translated into system verilog hardware description.
 - Unit and Integration Testing of all hardware components using CocoTB
 - Dynamic HTML viewing of image over ESP32 Wi-Fi
 
@@ -57,9 +59,9 @@ My goal for this project is to implement a dynamic system that captures live dat
 - **2026-05-08** — Sequenced Conv and Classifier layers to target Icestorm ROM and DSPs.
 - **2026-05-03** — Verified Full CNN Integration in CocoTB using Pytorch
 - **2026-04-26** — Verified Classifier Layer with Pytorch amax-linear-argmax output
-- **2026-04-19** — Translate model specs into Pytorch Model, Verilog, and Testbench
+- **2026-04-19** — Translate network specs into Pytorch Neural Network, Verilog, and Testbench
 - **2026-04-06** — Mapped delay buffers to Icestorm BRAM, (8 channels/BRAM)
-- **2026-03-08** — Quantized Weights and Activations in Pytorch Model
+- **2026-03-08** — Quantized Weights and Activations in Pytorch Neural Network
 - **2026-02-25** — Verified Linear Layer with PyTorch.Linear() output
 - **2026-02-19** — Verified Pooling Layer with PyTorch.MaxPool() output
 - **2026-02-17** — Verified Convolution Layer with PyTorch.Conv2d() output
@@ -164,7 +166,7 @@ LIBGL_ALWAYS_SOFTWARE=1 nextpnr-ice40 --up5k --package sg48 --pcf boards/icebrea
 iceprog ice40.bin
 
 # To verify ROM hexfiles written to FPGA
-python3 -m model.bram_decode
+cnn.py bram
 
 # To clean the current repository
 make clean
@@ -194,11 +196,8 @@ make lint-all
 make clean-all
 ```
 
-### Model Testing
+### Integration Testing
 ```bash
-# To setup the cnn.py environment run
-bash install.sh
-source ~/.bashrc
 
 # To verify via simulation in python
 # within sim/integration/testing/cnn_uart/
@@ -208,7 +207,13 @@ make test <SAMPLE_IDX=#> VERBOSE=1
 python3 demo/python_demo.py <SAMPLE_IDX> <ttyUSB1>
 ```
 
-## Model Design
+## Neural Network Design
+
+```bash
+# To setup the cnn.py environment run
+bash install.sh
+source ~/.bashrc
+```
 ```python
 # Schedule the weight quantization per layer using QSchedule
   QSchedule(
@@ -224,11 +229,11 @@ python3 demo/python_demo.py <SAMPLE_IDX> <ttyUSB1>
 ```
 
 ```python
-# In globals.py, customize the model architecture using ModelConfig
-# Specifies Pytorch model, cnn.sv, and functional verification model
-  ModelConfig(
+# In globals.py, customize the network architecture using NNConfig
+# Specifies Pytorch neural network, cnn.sv, and functional verification model
+  NNConfig(
     input_dimensions = InputDimensions(img_w, img_h),
-    # Input Channels per layer, length determines model size
+    # Input Channels per layer, length determines network size
     in_channels      = [1, 4, 5, 7],
     # Input Activation width per layer, clamped and rounded to signed int
     in_bits          = [1, 1, 1, 5],
@@ -256,26 +261,26 @@ python3 demo/python_demo.py <SAMPLE_IDX> <ttyUSB1>
 ```
 
 ```bash
-# To report BRAM and DSP Usage along with model architecture
-python3 -m model.model
+# To report BRAM and DSP Usage along with network architecture
+cnn.py model
 ```
 
-## Model Training
+## Neural Network Training
 ```bash
 # To sample a preprocessed dataset item
-python3 -m model.sample <INDEX>
+cnn.py sample <INDEX>
 
-# To train the model using the specs in globals.py
-python3 -m model.train
+# To train the neural network using the specs in globals.py
+cnn.py train
 
-# To fine tune the model post-training
-python3 -m model.train --finetune
+# To fine tune the neural network post-training
+cnn.py train --finetune
 
-# To export model weights to verilog header file
-python3 -m model.export
+# To export neural network weights to verilog header file
+cnn.py export
 
 # To render the cnn.sv from the specs in globals.py
-python3 -m model.render
+cnn.py render
 ```
 
 ## Credits

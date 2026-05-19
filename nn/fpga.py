@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Usage: python3 demo/python_demo.py <sample_idx> [ttyUSBx] [--trials N]
+# Usage: python3 nn/fpga.py <sample_idx> [ttyUSBx] [--trials N]
 # Run from project root.
 
 import os
@@ -13,10 +13,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from model.inference  import get_inference_from_pixels
-from model.protocol   import build_frame, parse_response
-from model.preprocess import prepare_data
-from model.globals    import HAND_GESTURE_CFG, GESTURE_CLASSES
+from nn.inference  import get_inference_from_pixels
+from nn.protocol   import build_frame, parse_response
+from nn.preprocess import prepare_data
+from nn.globals    import HAND_GESTURE_CFG, GESTURE_CLASSES
 
 # ── Serial config ─────────────────────────────────────────────────────────────
 BAUD = 115200  # 12 MHz / (prescale=13 * 8) ≈ 115385 baud (0.16% error)

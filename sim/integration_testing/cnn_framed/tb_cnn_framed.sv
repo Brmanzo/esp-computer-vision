@@ -5,11 +5,11 @@
 
 module cnn_framed #(
   parameter int unsigned BusBits = 8
-  ,parameter              FileName_0    = "model/data/roms/hex/zeros.hex"
-  ,parameter              FileName_1    = "model/data/roms/hex/zeros.hex"
-  ,parameter              FileName_2    = "model/data/roms/hex/zeros.hex"
-  ,parameter              FileName_2_hi = "model/data/roms/hex/zeros.hex"
-  ,parameter              FileName_3    = "model/data/roms/hex/zeros.hex"
+  ,parameter              FileName_0    = "nn/data/roms/hex/zeros.hex"
+  ,parameter              FileName_1    = "nn/data/roms/hex/zeros.hex"
+  ,parameter              FileName_2    = "nn/data/roms/hex/zeros.hex"
+  ,parameter              FileName_2_hi = "nn/data/roms/hex/zeros.hex"
+  ,parameter              FileName_3    = "nn/data/roms/hex/zeros.hex"
 
   ,localparam int unsigned WidthIn   = 320
   ,localparam int unsigned HeightIn  = 240

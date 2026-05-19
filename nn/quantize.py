@@ -1,4 +1,4 @@
-# model.quantize.py
+# nn.quantize.py
 
 import math
 from   typing import cast, Optional

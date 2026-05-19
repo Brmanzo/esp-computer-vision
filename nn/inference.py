@@ -1,20 +1,20 @@
-# model.inference.py
+# nn.inference.py
 import torch
 import sys
 import kagglehub
 from pathlib import Path
 from PIL import Image
 
-from model.globals import HAND_GESTURE_CFG, GESTURE_CLASSES
-from model.model import cnn_model
-from model.preprocess import get_transforms, prepare_data
+from nn.globals import HAND_GESTURE_CFG, GESTURE_CLASSES
+from nn.arch import cnn
+from nn.preprocess import get_transforms, prepare_data
 
 def run_inference(sample_idx: int):
     # 1. Setup Constants
     IMG_H, IMG_W = 240, 320
     IN_BITS = 1
     DATAPATH = Path(__file__).parent / "data"
-    MODEL_PATH = DATAPATH / "gesture_net_quantized.pth"
+    NN_PATH = DATAPATH / "gesture_net_quantized.pth"
     dataset_name = "roobansappani/hand-gesture-recognition"
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -25,20 +25,20 @@ def run_inference(sample_idx: int):
     # Still need the loader to get the images
     _, test_loader, _ = prepare_data(dataset_name, IMG_H, IMG_W, IN_BITS, 0.8, 32, target_classes=GESTURE_CLASSES)
     
-    # 3. Load Model
-    model = cnn_model(config=HAND_GESTURE_CFG)
+    # 3. Load network
+    network = cnn(config=HAND_GESTURE_CFG)
     
-    if not MODEL_PATH.exists():
-        print(f"Error: Model weights not found at {MODEL_PATH}. Run training first.")
+    if not NN_PATH.exists():
+        print(f"Error: network weights not found at {NN_PATH}. Run training first.")
         return
 
-    print(f"Loading weights from {MODEL_PATH}...")
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
-    model.to(device)
-    model.eval()
+    print(f"Loading weights from {NN_PATH}...")
+    network.load_state_dict(torch.load(NN_PATH, map_location=device))
+    network.to(device)
+    network.eval()
 
     # 4. Get the exact same sample from the dataset
-    # (Matches model.sample logic)
+    # (Matches nn.sample logic)
     dataset = test_loader.dataset
     
     # Cast to Sized for type checker (Subsets always have __len__)
@@ -53,12 +53,12 @@ def run_inference(sample_idx: int):
     label: int = int(label_raw)
     
     # img_pil is already preprocessed by dataset transforms (including our grounding/centering)
-    # But we need to add the batch dimension for the model
+    # But we need to add the batch dimension for the network
     input_tensor = img_pil.unsqueeze(0).to(device)
 
     # 5. Inference
     with torch.no_grad():
-        logits = model(input_tensor)
+        logits = network(input_tensor)
         probs = torch.softmax(logits, dim=1)
         pred_idx: int = int(torch.argmax(probs, dim=1).item())
         confidence: float = float(probs[0][pred_idx].item())
@@ -70,9 +70,9 @@ def run_inference(sample_idx: int):
     print(f"Confidence:   {confidence:.2%}")
     
     if pred_idx == label:
-        print("\033[92mSUCCESS: Model correctly identified the gesture!\033[0m")
+        print("\033[92mSUCCESS: Network correctly identified the gesture!\033[0m")
     else:
-        print("\033[91mFAILURE: Model misidentified the gesture.\033[0m")
+        print("\033[91mFAILURE: Network misidentified the gesture.\033[0m")
 
 def _hw_integer_forward(pixels: list, config) -> int:
     '''Core hardware-accurate integer forward pass shared by get_inference() and
@@ -166,7 +166,7 @@ def _hw_integer_forward(pixels: list, config) -> int:
 
 def get_inference(sample_idx: int) -> int:
     '''Hardware-accurate inference on a dataset sample (index into test set).'''
-    from model.sample import get_sample
+    from nn.sample import get_sample
     pixels, _ = get_sample(sample_idx)
     if pixels is None:
         raise ValueError(f"Could not load sample {sample_idx}")
@@ -181,8 +181,8 @@ def get_inference_from_pixels(pixels: list, config=None) -> int:
 def hw_eval(n_trials: int = 100) -> float:
     '''Run hardware-accurate integer inference on n_trials test samples and report accuracy.'''
     import numpy as np
-    from model.preprocess import get_transforms
-    from model.globals import GESTURE_CLASSES
+    from nn.preprocess import get_transforms
+    from nn.globals import GESTURE_CLASSES
 
     dataset_name = "roobansappani/hand-gesture-recognition"
     IMG_H, IMG_W = HAND_GESTURE_CFG.in_dims.height, HAND_GESTURE_CFG.in_dims.width
@@ -237,8 +237,8 @@ if __name__ == "__main__":
 
     if args.cmd == "hw-eval":
         hw_eval(args.trials)
-        print("Run python3 -m model.export ?")
-        print("Run python3 -m model.render ?")
+        print("Run cnn.py export ?")
+        print("Run cnn.py render ?")
     else:
         idx = args.idx if args.cmd == "infer" else 10
         run_inference(idx)

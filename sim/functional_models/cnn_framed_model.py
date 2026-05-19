@@ -42,7 +42,7 @@ class CnnFramedModel:
 
     consume() — called on each input byte handshake (valid_i & ready_o).
       Runs a deframer state machine: skips header bytes, unpacks 8 pixels per
-      image byte and feeds them through cnn_model.step(). When the last image
+      image byte and feeds them through cnn.step(). When the last image
       byte produces a CNN result it returns [class_id, tail0, tail1].
 
     produce() — called on each output byte handshake (valid_o & ready_i).
@@ -61,7 +61,7 @@ class CnnFramedModel:
     def __init__(
         self,
         dut,
-        cnn_model,
+        cnn,
         header0: int = 0xA5,
         header1: int = 0x5A,
         tail0: int = 0xA5,
@@ -70,7 +70,7 @@ class CnnFramedModel:
         packet_len_bytes: int = 9600,
     ):
         self._dut = dut
-        self._cnn = cnn_model
+        self._cnn = cnn
         self._header0 = header0
         self._header1 = header1
         self._tail0 = tail0

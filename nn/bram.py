@@ -1,5 +1,5 @@
 """
-bram_decode.py  —  Decode SB_RAM40_4K INIT fields from Yosys ice40.json or ice40.asc.
+bram.py  —  Decode SB_RAM40_4K INIT fields from Yosys ice40.json or ice40.asc.
 
 Background
 ----------
@@ -27,16 +27,16 @@ straightforward dump of the hex file — two layers of scrambling apply:
 Usage
 -----
     Auto-detect and run both:
-        python3 -m model.bram_decode                  (runs on ice40.json and/or ice40.asc if they exist)
+        cnn.py bram                  (runs on ice40.json and/or ice40.asc if they exist)
 
     Verify Yosys JSON netlist:
-        python3 -m model.bram_decode ice40.json       (loops all hex ROMs automatically)
-        python3 -m model.bram_decode ice40.json <fragment>
-        python3 -m model.bram_decode ice40.json <fragment> <hex_file>
+        cnn.py bram ice40.json       (loops all hex ROMs automatically)
+        cnn.py bram ice40.json <fragment>
+        cnn.py bram ice40.json <fragment> <hex_file>
 
     Verify post-PNR physical ASC bitstream:
-        python3 -m model.bram_decode ice40.asc        (loops all hex ROMs automatically)
-        python3 -m model.bram_decode ice40.asc <hex_file>
+        cnn.py bram ice40.asc        (loops all hex ROMs automatically)
+        cnn.py bram ice40.asc <hex_file>
 """
 
 from __future__ import annotations
@@ -351,18 +351,18 @@ if __name__ == "__main__":
         print("==================================")
         print("Usage:")
         print("  1. Batch verify default files in current directory (ice40.json / ice40.asc):")
-        print("     python3 -m model.bram_decode")
+        print("     cnn.py bram")
         print("\n  2. Verify Yosys JSON netlist cells:")
-        print("     python3 -m model.bram_decode <netlist.json>                   (loops all hex ROMs)")
-        print("     python3 -m model.bram_decode <netlist.json> <cell_fragment>   (decodes one cell)")
-        print("     python3 -m model.bram_decode <netlist.json> <fragment> <hex>  (compares one cell)")
+        print("     cnn.py bram <netlist.json>                   (loops all hex ROMs)")
+        print("     cnn.py bram <netlist.json> <cell_fragment>   (decodes one cell)")
+        print("     cnn.py bram <netlist.json> <fragment> <hex>  (compares one cell)")
         print("\n  3. Verify physical post-route ASC bitstreams:")
-        print("     python3 -m model.bram_decode <bitstream.asc>                  (loops all hex ROMs)")
-        print("     python3 -m model.bram_decode <bitstream.asc> <hex_file>       (compares one file)")
+        print("     cnn.py bram <bitstream.asc>                  (loops all hex ROMs)")
+        print("     cnn.py bram <bitstream.asc> <hex_file>       (compares one file)")
         print("\nExamples:")
-        print("  python3 -m model.bram_decode")
-        print("  python3 -m model.bram_decode ice40.json")
-        print("  python3 -m model.bram_decode ice40.asc")
+        print("  cnn.py bram")
+        print("  cnn.py bram ice40.json")
+        print("  cnn.py bram ice40.asc")
         sys.exit(0)
 
     # 1. No arguments provided: Auto-detect and run
@@ -377,7 +377,7 @@ if __name__ == "__main__":
             print("\033[93m⚠ Automatic Verification:\033[0m Neither 'ice40.json' nor 'ice40.asc' found in the current directory.")
             print("Please run synthesis/P&R first or provide a file path.\n")
             # Print help menu
-            subprocess.run([sys.executable, "-m", "model.bram_decode", "--help"])
+            subprocess.run([sys.executable, "-m", "nn.bram", "--help"])
             sys.exit(0)
             
         all_success = True
@@ -398,9 +398,9 @@ if __name__ == "__main__":
         if all_success:
             print("Run make util ?")
             print("Run make stat ?")
-            print("Run prog ice40.bin ?")
+            print("Run make prog ice40.bin ?")
         else:
-            print("Run make clean && python3 -m model.export && python3 -m model.render && make bitstream ESP=1 ?")
+            print("Run make clean && cnn.py export && cnn.py render && make bitstream ESP=1 ?")
         sys.exit(0 if all_success else 1)
 
     # 2. Arguments provided: Manual run

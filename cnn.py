@@ -2,18 +2,18 @@
 """Dispatcher: cnn.py <tool> [args...]
 
 Tools:
-  bram_decode   Verify BRAM contents against hex ROMs
+  bram   Verify BRAM contents against hex ROMs
   export        Quantize and export weights to hex files
   render        Render CNN architecture to SystemVerilog
-  train         Train the model
+  train         Train the neural network
   inference     Run inference
   sample        Sample/collect data
-  model         Model utilities
+  arch          Architecture Report
 """
 import sys
 import runpy
 
-TOOLS = {"bram_decode", "export", "render", "train", "inference", "sample", "model"}
+TOOLS = {"bram", "export", "render", "train", "inference", "sample", "arch", "fpga"}
 
 if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
     print(__doc__)
@@ -25,5 +25,5 @@ if tool not in TOOLS:
     sys.exit(1)
 
 sys.argv = sys.argv[1:]  # shift so the tool sees its own argv[0]
-sys.argv[0] = f"model.{tool}"
-runpy.run_module(f"model.{tool}", run_name="__main__", alter_sys=True)
+sys.argv[0] = f"nn.{tool}"
+runpy.run_module(f"nn.{tool}", run_name="__main__", alter_sys=True)
