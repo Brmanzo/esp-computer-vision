@@ -209,7 +209,7 @@ class ClassifierLayerModel:
         try:
             ll = self._dut.dut.linear_layer_inst
             raw = int(ll.data_o.value)
-            bits = 32  # LinearBits
+            bits = len(ll.data_o) // self._class_count
             hw_logits = []
             for ch in range(self._class_count):
                 val = (raw >> (ch * bits)) & ((1 << bits) - 1)

@@ -83,7 +83,7 @@ def run_conv_test(test_name, simulator, parameters, Weights, Biases, test_class)
         weight_bits=weight_bits, bias_bits=bias_bits, weight_count=weight_count,
         layer=0, dsp_count=DSPCount)
 
-    filelist = "filelists/conv_layer.json"
+    filelist = "sim/unit_testing/conv_layer/conv_layer.json"
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=clean_params, 
         testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],
@@ -151,7 +151,7 @@ def test_out_act(test_name, simulator,
 def test_lint(simulator, LineWidthPx, InBits, OutBits, DSPCount):
     parameters = dict(locals())
     del parameters['simulator']
-    filelist = "filelists/conv_layer.json"
+    filelist = "sim/unit_testing/conv_layer/conv_layer.json"
     lint(simulator, timescale, tbpath, parameters, filelist=filelist)
 
 @cocotb.test
@@ -324,7 +324,7 @@ async def rate_tests(dut, in_rate, out_rate):
             input_activation, kernels_4d, S,
             in_bits=int(dut.InBits.value), out_bits=int(dut.OutBits.value),
             padding=int(dut.Padding.value), biases=biases_2d,
-            shift_bits=shift_bits, acc_bits=acc_bits, unsigned=Unsigned
+            shift_bits=shift_bits, acc_bits=acc_bits, unsigned=bool(Unsigned)
         )
         
         if sim_verbose():

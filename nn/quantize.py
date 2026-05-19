@@ -1,11 +1,12 @@
+#!/usr/bin/env python3
 # nn.quantize.py
+# Bradley Manzo 2026
 
 import math
 from   typing import cast, Optional
 import torch
 from   torch import nn
 import torch.nn.functional as F
-
 
 class QSchedule:
     '''Defines the initial and final quantizations widths, as well as the cycle count to transition between each bit-width during training.'''
@@ -83,7 +84,7 @@ class QuantizeWeight(torch.autograd.Function):
 
 class QuantConv2d(nn.Conv2d):
     '''Folds batchnorm into the convolutional weights and biases, then applies quantization to the folded weights. 
-    This allows us to train a quantized model with batchnorm effects without needing separate BN layers in hardware.'''
+    This allows us to train a quantized network with batchnorm effects without needing separate BN layers in hardware.'''
     running_mean: torch.Tensor
     running_var: torch.Tensor
 
@@ -300,8 +301,8 @@ class LearnedShiftQuantizer(nn.Module):
     def hardware_shift(self) -> int:
         '''Integer barrel-shift for RTL: acc >> hardware_shift.
 
-        A smaller clip_val means the model is using a tighter (higher) range
-        of the accumulator -> larger shift.  A larger clip_val means the model
+        A smaller clip_val means the network is using a tighter (higher) range
+        of the accumulator -> larger shift.  A larger clip_val means the network
         is using a wider (lower) range -> smaller shift.
 
             shift = acc_bits - out_bits - round(log2(clip_val / 3.0))

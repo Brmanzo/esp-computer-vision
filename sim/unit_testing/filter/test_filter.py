@@ -137,11 +137,11 @@ def test_each(test_name, simulator, use_dsp,
             layer=0, dsp_count=0
         )
 
-    filelist = "filelists/filter_dsp.json" if use_dsp else "filelists/filter.json"
+    filelist = "filter_dsp.json" if use_dsp else "filter.json"
     wrapper_path = os.path.join(tbpath, "tb_filter.sv")
     
     runner(simulator, timescale, tbpath, parameters, 
-           testname=test_name, pymodule="test_filter", filelist=filelist,
+           testname=test_name, pymodule="test_filter", jsonname=filelist,
            toplevel_override="tb_filter", extra_sources=[wrapper_path],
            work_dir=custom_work_dir, includes=[custom_work_dir])
 
@@ -161,8 +161,8 @@ def test_lint(simulator, use_dsp, InBits, WeightBits, BiasBits, KernelWidth, InC
         "Unsigned": Unsigned,
         "ShiftBits": ShiftBits
     }
-    filelist = "filelists/filter_dsp.json" if use_dsp else "filelists/filter.json"
-    lint(simulator, timescale, tbpath, parameters, filelist=filelist)
+    filelist = "filter_dsp.json" if use_dsp else "filter.json"
+    lint(simulator, timescale, tbpath, parameters, jsonname=filelist)
 
 @pytest.mark.parametrize("simulator", ["verilator"])
 @pytest.mark.parametrize("InBits, WeightBits, BiasBits, KernelWidth, InChannels, AccBits, OutBits, Unsigned, ShiftBits", 
@@ -180,8 +180,8 @@ def test_style(simulator, use_dsp, InBits, WeightBits, BiasBits, KernelWidth, In
         "Unsigned": Unsigned,
         "ShiftBits": ShiftBits
     }
-    filelist = "filelists/filter_dsp.json" if use_dsp else "filelists/filter.json"
-    lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"], filelist=filelist)
+    filelist = "filter_dsp.json" if use_dsp else "filter.json"
+    lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"], jsonname=filelist)
 
 class FilterModel:
     def __init__(self, dut):

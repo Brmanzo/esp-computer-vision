@@ -33,7 +33,7 @@ bitstream: ice40.bin
 ice40.bin: ice40.asc
 	$(ICEPACK) $< $@
 	@echo "Run cnn.py bram ?"
-	@echo "Run prog ice40.bin ?"
+	@echo "Run make prog ice40.bin ?"
 	@echo "Run make util ?"
 	@echo "Run make stat ?"
 

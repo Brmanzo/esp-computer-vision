@@ -8,7 +8,7 @@ YOSYS      ?= yosys
 NETLISTSVG ?= netlistsvg
 RSVG       ?= rsvg-convert
 
-FILELIST ?= $(REPO_ROOT)/filelists/top.json
+FILELIST ?= $(REPO_ROOT)/rtl/top/top.json
 TOP_SV   ?= $(REPO_ROOT)/rtl/top/top.sv
 RTL_ROOT ?= $(REPO_ROOT)/rtl
 ESP      ?= 1
@@ -26,7 +26,7 @@ ice40.pdf: ice40.json
 	$(NETLISTSVG) $< -o $(subst pdf,svg,$@)
 	$(RSVG) -f pdf $(subst pdf,svg,$@) -o $@
 
-HEX_FILES := $(wildcard $(REPO_ROOT)/model/data/roms/hex/*.hex)
+HEX_FILES := $(wildcard $(REPO_ROOT)/nn/data/roms/hex/*.hex)
 
 synth-ice40: ice40.json
 ice40.json: $(TOP_SV) $(FILELIST) $(SYNTH_SOURCES) $(HEX_FILES)
@@ -59,26 +59,36 @@ abstract.json: $(FILELIST) $(SYNTH_SOURCES)
 	$(YOSYS) -ql abstract.yslog -p 'read_verilog -sv -DSYNTHESIS $(SYNTH_SOURCES); hierarchy -top $(ABSTRACT_TOP); proc; opt; flatten; delete t:$$scopeinfo; clean -purge; write_json $@'
 
 %.json:
-	@sv="$(call find_sv,$*)"; \
+	@sv="$(strip $(call find_sv,$*))"; \
 	if [ -z "$$sv" ]; then \
 	  echo "ERROR: Could not find SV file for module '$*' under $(RTL_ROOT)/**/$*.sv"; \
 	  exit 1; \
 	fi; \
 	echo "[Yosys] $$sv -> $@ (top=$*)"; \
-	$(YOSYS) -ql $*.yslog -p "read_verilog -sv -DSYNTHESIS $$sv $(SYNTH_SOURCES); hierarchy -top $*; proc; opt; delete t:\$$scopeinfo; clean -purge; write_json $@"
+	deps=""; \
+	for f in $(SYNTH_SOURCES); do \
+	  abs="$(REPO_ROOT)/$$f"; \
+	  [ "$$abs" != "$$sv" ] && deps="$$deps $$abs"; \
+	done; \
+	$(YOSYS) -ql $*.yslog -p "read_verilog -sv -DSYNTHESIS $$sv $$deps; hierarchy -top $*; proc; opt; delete t:\$$scopeinfo; clean -purge; write_json $@"
 
 %.pdf: %.json
 	$(NETLISTSVG) $< -o $(subst pdf,svg,$@)
 	$(RSVG) -f pdf $(subst pdf,svg,$@) -o $@
 
 %.mapped.json:
-	@sv="$(call find_sv,$*)"; \
+	@sv="$(strip $(call find_sv,$*))"; \
 	if [ -z "$$sv" ]; then \
 	  echo "ERROR: Could not find SV file for module '$*' under $(RTL_ROOT)/**/$*.sv"; \
 	  exit 1; \
 	fi; \
 	echo "[Yosys] $$sv -> $@ (synth_ice40 top=$*)"; \
-	$(YOSYS) -ql $*.mapped.yslog -p "read_verilog -sv -DSYNTHESIS $$sv $(SYNTH_SOURCES); hierarchy -top $*; synth_ice40 -dsp -top $*; delete t:\$$scopeinfo; clean -purge; write_json $@"
+	deps=""; \
+	for f in $(SYNTH_SOURCES); do \
+	  abs="$(REPO_ROOT)/$$f"; \
+	  [ "$$abs" != "$$sv" ] && deps="$$deps $$abs"; \
+	done; \
+	$(YOSYS) -ql $*.mapped.yslog -p "read_verilog -sv -DSYNTHESIS $$sv $$deps; hierarchy -top $*; synth_ice40 -dsp -top $*; delete t:\$$scopeinfo; clean -purge; write_json $@"
 
 %.mapped.pdf: %.mapped.json
 	$(NETLISTSVG) $< -o $(subst .pdf,.svg,$@)

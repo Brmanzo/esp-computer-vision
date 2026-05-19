@@ -1,6 +1,10 @@
-import torch
+#!/usr/bin/env python3
+# nn.sample.py
+# Bradley Manzo 2026
+
+from   pathlib import Path
 import sys
-from pathlib import Path
+from   torchvision.utils import save_image
 
 from nn.globals    import HAND_GESTURE_CFG, DATAPATH, GESTURE_CLASSES
 from nn.preprocess import prepare_data, get_transforms
@@ -37,7 +41,6 @@ def sample_to_hex(sample_idx:int=0, path:Path=DATAPATH):
         return None, None
     
     # 3. Save Visual Confirmation
-    from torchvision.utils import save_image
     path.mkdir(parents=True, exist_ok=True) # Ensure data directory exists
     img_path = path / f"sample_{sample_idx}.png"
     save_image(img_t, img_path)

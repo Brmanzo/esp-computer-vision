@@ -1,13 +1,17 @@
 # nn.inference.py
+import argparse
+import ast
+import numpy as np
+import pandas as pd
+from   pathlib import Path
+import re
 import torch
-import sys
-import kagglehub
-from pathlib import Path
-from PIL import Image
+from   typing import Sized, cast
 
-from nn.globals import HAND_GESTURE_CFG, GESTURE_CLASSES
-from nn.arch import cnn
-from nn.preprocess import get_transforms, prepare_data
+from nn.globals    import HAND_GESTURE_CFG, GESTURE_CLASSES
+from nn.arch       import cnn
+from nn.preprocess import prepare_data
+from nn.sample     import get_sample
 
 def run_inference(sample_idx: int):
     # 1. Setup Constants
@@ -42,7 +46,6 @@ def run_inference(sample_idx: int):
     dataset = test_loader.dataset
     
     # Cast to Sized for type checker (Subsets always have __len__)
-    from typing import Sized, cast
     dataset_len = len(cast(Sized, dataset))
     
     if sample_idx >= dataset_len:
@@ -77,10 +80,6 @@ def run_inference(sample_idx: int):
 def _hw_integer_forward(pixels: list, config) -> int:
     '''Core hardware-accurate integer forward pass shared by get_inference() and
     get_inference_from_pixels().  pixels is a flat list of binary {0,1} values.'''
-    import re
-    import ast
-    import numpy as np
-    import pandas as pd
 
     DATAPATH = Path(__file__).parent / "data"
     CSV_PATH = DATAPATH / "hardware_weights.csv"
@@ -166,7 +165,6 @@ def _hw_integer_forward(pixels: list, config) -> int:
 
 def get_inference(sample_idx: int) -> int:
     '''Hardware-accurate inference on a dataset sample (index into test set).'''
-    from nn.sample import get_sample
     pixels, _ = get_sample(sample_idx)
     if pixels is None:
         raise ValueError(f"Could not load sample {sample_idx}")
@@ -180,9 +178,6 @@ def get_inference_from_pixels(pixels: list, config=None) -> int:
 
 def hw_eval(n_trials: int = 100) -> float:
     '''Run hardware-accurate integer inference on n_trials test samples and report accuracy.'''
-    import numpy as np
-    from nn.preprocess import get_transforms
-    from nn.globals import GESTURE_CLASSES
 
     dataset_name = "roobansappani/hand-gesture-recognition"
     IMG_H, IMG_W = HAND_GESTURE_CFG.in_dims.height, HAND_GESTURE_CFG.in_dims.width
@@ -223,7 +218,6 @@ def hw_eval(n_trials: int = 100) -> float:
 
 
 if __name__ == "__main__":
-    import argparse
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd")
 

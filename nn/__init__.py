@@ -1,4 +1,4 @@
 try:
-    from .architecture import cnn, QuantConv2d
+    from .arch import cnn, QuantConv2d
 except ImportError:
     pass

@@ -1,16 +1,16 @@
+# !/usr/bin/env python3
 # nn.render.py
 # Bradley Manzo 2026
+
 from   datetime import datetime
 from   pathlib  import Path
 import re
-import sys
 
 from nn.config  import NNConfig, ConvConfig, PoolConfig, ClassifierConfig
 from nn.globals import HAND_GESTURE_CFG
 
 def _rom_needs_hi(cfg) -> bool:
     '''True when a layer's ROM exceeds one SB_RAM40_4K tile (16 bits wide).'''
-    from nn.config import ConvConfig, ClassifierConfig
     if isinstance(cfg, ConvConfig):
         if cfg._dsp_count <= 0:
             return False
@@ -34,7 +34,6 @@ def _std_hex(i: int) -> str:
 
 def render_header(cfg, num_layers: int = 1):
     '''Renders the header of the CNN SystemVerilog file.'''
-    from nn.config import NNConfig
     if isinstance(cfg, NNConfig):
         BusBits = cfg._bus_width
         layer_cfgs = [l.ConvLayer for l in cfg.layers]

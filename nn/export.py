@@ -1,16 +1,23 @@
+#!/usr/bin/env python3
+# nn.export.py
+# Usage: cnn.py export [network_in.pth] [hardware_weights.csv] [hardware_weights.vh] [hex_output_dir] [--random]
+
+import argparse
+import ast
 import os
 import math
-import torch
 import pandas as pd
-import ast
-from   pathlib import Path
+import sys
+import torch
+from   pathlib  import Path
 from   datetime import datetime
-from   typing import Any, Optional
+from   typing   import Any, Optional
 
-from nn.config  import NNConfig, ConvConfig, ClassifierConfig
-from nn.globals import DATAPATH, HAND_GESTURE_CFG
-from nn.arch   import cnn, QuantConv2d
-from nn.quantize import LearnedShiftQuantizer
+from nn.arch     import cnn, QuantConv2d
+from nn.config   import NNConfig, ConvConfig, ClassifierConfig
+from nn.globals  import DATAPATH, ROMPATH, HAND_GESTURE_CFG
+from nn.quantize import LearnedShiftQuantizer, QuantizeActivation, \
+                        generate_random_quantized_weights
 
 def get_hardware_weights(fused_layer: QuantConv2d, previous_act_scale: float = 1.0):
     '''Extracts the folded integer weights and biases directly from the QAT layer.
@@ -59,7 +66,6 @@ def export_nn_to_csv(nn_path: Path, config: NNConfig, output_csv: Path, random_w
     each layer, and saves them to a CSV file for hardware implementation.
     If random_weights is True, it instead generates random hardware weights
     constrained by the network config's quantization schedule.'''
-    from nn.quantize import QuantizeActivation, generate_random_quantized_weights
     device = "cpu"
 
     network = cnn(config=config).to(device)
@@ -331,14 +337,12 @@ def export_csv_to_hex(csv_path: Path, sv_path: Path, hex_path: Path, config: NNC
     print(f"SystemVerilog export complete! Saved to {sv_path}")
 
 if __name__ == "__main__":
-    import sys
-    import argparse
     
     parser = argparse.ArgumentParser(description="Export QAT Network to Hardware files")
     parser.add_argument("network_in", nargs="?", default=DATAPATH / "gesture_net_quantized.pth", type=Path)
     parser.add_argument("csv_out", nargs="?", default=DATAPATH / "hardware_weights.csv", type=Path)
     parser.add_argument("sv_out", nargs="?", default=DATAPATH / "hardware_weights.vh", type=Path)
-    parser.add_argument("hex_out", nargs="?", default=DATAPATH / "roms" / "hex", type=Path)
+    parser.add_argument("hex_out", nargs="?", default=ROMPATH / "hex", type=Path)
     parser.add_argument("--random", action="store_true", help="Generate random weights using q_min_bits instead of loading a network")
     
     args = parser.parse_args()

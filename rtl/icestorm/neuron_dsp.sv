@@ -1,4 +1,4 @@
-// rtl/lib/neuron_dsp.sv
+// neuron_dsp.sv
 // Bradley Manzo 2026
 
 // Targetting IceStorm's 8 SB_MAC16 DSPs

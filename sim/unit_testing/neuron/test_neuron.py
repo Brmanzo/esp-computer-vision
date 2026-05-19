@@ -88,7 +88,7 @@ def test_width(test_name, simulator, use_dsp,
     wrapper_path = os.path.join(tbpath, "tb_neuron.sv")
     # Repo root is 3 levels up from sim/unit_testing/neuron
     repo_root = Path(__file__).parent.parent.parent.parent
-    jsonname = str(repo_root / "filelists" / ("neuron_dsp.json" if use_dsp else "neuron.json"))
+    jsonname = "neuron_dsp.json" if use_dsp else "neuron.json"
     
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters,
@@ -139,7 +139,7 @@ def test_channels(test_name, simulator, use_dsp,
     wrapper_path = os.path.join(tbpath, "tb_neuron.sv")
     # Repo root is 3 levels up from sim/unit_testing/neuron
     repo_root = Path(__file__).parent.parent.parent.parent
-    jsonname = str(repo_root / "filelists" / ("neuron_dsp.json" if use_dsp else "neuron.json"))
+    jsonname = "neuron_dsp.json" if use_dsp else "neuron.json"
 
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=parameters,
@@ -155,16 +155,16 @@ def test_lint(simulator, InBits, WeightBits, InChannels, OutBits):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
-    lint(simulator, timescale, tbpath, parameters)
+    lint(simulator, timescale, tbpath, parameters, jsonname="neuron.json")
 
 @pytest.mark.parametrize("simulator", ["verilator"])
-@pytest.mark.parametrize("InBits, WeightBits, InChannels, OutBits, Weights, BiasBits, Bias", 
+@pytest.mark.parametrize("InBits, WeightBits, InChannels, OutBits, Weights, BiasBits, Bias",
                          [(1, 2, 1, output_width(1, 2, 1), gen_weights(2, 1, seed=1234), 2, gen_biases(2))])
 def test_style(simulator, InBits, WeightBits, InChannels, OutBits, Weights, BiasBits, Bias):
     # This line must be first
     parameters = dict(locals())
     del parameters['simulator']
-    lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"])
+    lint(simulator, timescale, tbpath, parameters, compile_args=["--lint-only", "-Wwarn-style", "-Wno-lint"], jsonname="neuron.json")
 
 class NeuronModel():
     def __init__(self, dut, weights: List[int], bias: int):
@@ -216,66 +216,75 @@ class NeuronModel():
             sig = self._data_o
 
         assert_resolvable(sig)
-        got = sign_extend(int(sig.value.integer), 32 if sig == getattr(self._dut, "acc_full", None) else self._OutBits)
-        exp = int(expected)
+        
+        gen_dsp = hasattr(self._dut, "GEN_DSP") and int(self._dut.GEN_DSP.value) == 1
+        
+        if gen_dsp:
+            # In sequential DSP mode, accumulation happens in OutBits width
+            got = sign_extend(int(sig.value.integer), self._OutBits)
+            exp = sign_extend(int(expected) & ((1 << self._OutBits) - 1), self._OutBits)
+        else:
+            got = sign_extend(int(sig.value.integer), 32 if sig == getattr(self._dut, "acc_full", None) else self._OutBits)
+            exp = int(expected)
 
         assert got == exp, (
             f"Mismatch. Expected {exp}, got {got}, Weights: {self.w}, Bias: {self.b}"
         )
+        
+        actual_ref = ref if ref is not None else getattr(self, "ref", None)
+        
+        if gen_dsp and actual_ref is not None:
+            ref_int = int(round(actual_ref))
+            actual_ref = float(sign_extend(ref_int & ((1 << self._OutBits) - 1), self._OutBits))
+            
         if sim_verbose():
-            print(f"got: {got}, expected: {exp}, Pytorch Ref: {ref}")
-        assert ref is None or math.isclose(got, ref, rel_tol=1e-5), (
-            f"Mismatch with Pytorch. Expected {ref}, got {got}, Weights: {self.w}, Bias: {self.b}"
+            print(f"got: {got}, expected: {exp}, Pytorch Ref: {actual_ref}")
+        assert actual_ref is None or math.isclose(got, actual_ref, rel_tol=1e-5), (
+            f"Mismatch with Pytorch. Expected {actual_ref}, got {got}, Weights: {self.w}, Bias: {self.b}"
         )
     
 async def comb_step(dut, model, din_list, ref):
-    # If we are using the clocked DSP implementation, we need to perform sequential accumulation
     if hasattr(dut, "GEN_DSP") and int(dut.GEN_DSP.value) == 1:
-        IC = int(dut.InChannels.value)
-        WW = int(dut.WeightBits.value)
+        from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
+        
+        model.ref = ref
+        m = ModelRunner(dut, model)
 
-        # Drive en_i and load_bias_i over IC cycles
-        for ch in range(IC):
-            await FallingEdge(dut.clk_i)
-            dut.en_i.value = 1
-            dut.load_bias_i.value = 1 if ch == 0 else 0
-            
-            # tb_neuron now accepts the full input vector and muxes it internally
-            dut.data_i.value = pack_terms(din_list, int(dut.InBits.value))
-            
-            # Drive the specific weight for this channel
-            weight = int(model.w[ch])
-            dut.weight_i.value = weight & ((1 << WW) - 1)
-            
-            if sim_verbose():
-                print(f"DEBUG: ch={ch}, data={int(din_list[ch])}, weight={weight}, load_bias={int(dut.load_bias_i.value)}")
-            
-            await RisingEdge(dut.clk_i)
-        
-        # Disable after accumulation
-        await FallingEdge(dut.clk_i)
-        dut.en_i.value = 0
-        
-        # Calculate expected result manually from din_list using model's parameters
-        expected = model.b
-        for ic in range(IC):
-            if int(dut.InBits.value) == 1:
-                val = 1 if din_list[ic] == 1 else -1
-            else:
-                val = int(din_list[ic])
-            expected += int(model.w[ic]) * val
-        
-        # No activation functions for raw output
-        expected = expected
+        class SingleDataGenerator:
+            def __init__(self, packed, raw):
+                self.packed = packed
+                self.raw = raw
+            def generate(self):
+                return self.packed, self.raw
+
+        packed = pack_terms(din_list, int(dut.InBits.value))
+        im = InputModel(dut, SingleDataGenerator(packed, din_list), RateGenerator(dut, 1.0), 1)
+        om = OutputModel(dut, RateGenerator(dut, 1.0), 1)
+
+        m.start()
+        im.start()
+        om.start()
+
+        # Calculate appropriate sequential timeout based on InChannels
+        IC = int(dut.InChannels.value)
+        cycles_per_vec = IC + 10
+        timeout_ns = int(cycles_per_vec * 10 + 2000)
+
+        from cocotb.result import SimTimeoutError
+        try:
+            await om.wait(timeout_ns)
+        except SimTimeoutError:
+            assert False, f"Timed out waiting for sequential neuron handshake"
+
+        m.stop()
+        im.stop()
+        om.stop()
     else:
-        # Combinatorial logic: just drive packed input and wait a tiny bit
-        w = int(dut.InBits.value)
-        dut.data_i.value = pack_terms(din_list, w)
+        # Combinatorial: drive packed input and check after a delta
+        dut.data_i.value = pack_terms(din_list, int(dut.InBits.value))
         await Timer(Decimal(1), units="step")
         expected = model.consume()
-
-    # Check output using your existing produce()
-    model.produce(expected, ref)
+        model.produce(expected, ref)
 
 @cocotb.test
 async def single_test(dut):
@@ -286,6 +295,8 @@ async def single_test(dut):
     # Start clock and reset if using DSP sequential module
     gen_dsp = hasattr(dut, "GEN_DSP") and int(dut.GEN_DSP.value) == 1
     if gen_dsp:
+        dut.valid_i.value = 0
+        dut.ready_i.value = 0
         await clock_start_sequence(dut.clk_i, period=10, unit="ns")
         await reset_sequence(dut.clk_i, dut.rst_i, cycles=2)
 
@@ -295,10 +306,10 @@ async def single_test(dut):
     weights_2d = unpack_weights(
         packed_val=int(os.environ["INJECTED_WEIGHTS_0_INT"], 0),
         WW=WW,
-        OC=1, 
+        OC=1,
         IC=IC
     )
-    weights_1d = weights_2d[0] 
+    weights_1d = weights_2d[0]
 
     bias_raw = int(os.environ["INJECTED_BIASES_0_INT"], 0)
     bias = sign_extend(bias_raw, int(dut.BiasBits.value))
@@ -331,6 +342,8 @@ async def full_bw_test(dut):
     # Start clock and reset if using DSP sequential module
     gen_dsp = hasattr(dut, "GEN_DSP") and int(dut.GEN_DSP.value) == 1
     if gen_dsp:
+        dut.valid_i.value = 0
+        dut.ready_i.value = 0
         await clock_start_sequence(dut.clk_i, period=10, unit="ns")
         await reset_sequence(dut.clk_i, dut.rst_i, cycles=2)
 

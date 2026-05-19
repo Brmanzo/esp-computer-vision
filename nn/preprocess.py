@@ -1,13 +1,16 @@
-from typing import Callable, Tuple, Optional
-import numpy as np
-from PIL import Image
-import torch
+#!/usr/bin/env python3
+# nn.preprocess.py
+# Bradley Manzo 2026
+
 import kagglehub
+import numpy as np
+from   pathlib import Path
+from   PIL import Image
+import torch
+from   typing import Callable, Tuple, Optional
 
-from pathlib import Path
-
-from torch.utils.data import DataLoader, random_split
-from torchvision import datasets, transforms
+from torch.utils.data       import DataLoader, random_split
+from torchvision            import datasets, transforms
 from torchvision.transforms import functional as TF
 
 def get_transforms(img_h: int, img_w: int, in_bits: int) -> Tuple[Callable, Callable]:
@@ -101,8 +104,7 @@ def prepare_data(dataset_download: str, img_h: int, img_w: int, in_bits: int, da
     return train_loader, test_loader, len(dataset.classes)
 def get_class_names(dataset_name: str = "roobansappani/hand-gesture-recognition") -> list[str]:
     '''Returns the sorted list of class names from the dataset directory.'''
-    from pathlib import Path
-    import kagglehub
+
     path = Path(kagglehub.dataset_download(dataset_name))
     dataset_root = path / "HandGesture" / "images"
     return sorted([d.name for d in dataset_root.iterdir() if d.is_dir()])

@@ -1,4 +1,4 @@
-// multi_delay_buffer
+// multi_delay_buffer.sv
 // Bradley Manzo, 2026
 
 `timescale 1ns / 1ps

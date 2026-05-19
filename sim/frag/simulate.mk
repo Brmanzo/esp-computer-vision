@@ -27,7 +27,7 @@ VERIBLE_SOURCES := $(filter-out $(VERIBLE_EXCLUDES),$(LINT_SOURCES))
 # Ensure user-local bins are visible when running under make
 export PATH := $(HOME)/.local/bin:$(PATH)
 
-FILELIST ?= $(REPO_ROOT)/filelists/top.json
+FILELIST ?= $(REPO_ROOT)/rtl/top/top.json
 SIM_SOURCES = $(shell $(PYTHON3) $(REPO_ROOT)/sim/util/get_filelist.py $(FILELIST))
 SIM_SOURCES := $(foreach f,$(SIM_SOURCES),$(if $(filter /%,$(f)),$(f),$(REPO_ROOT)/$(f)))
 SIM_TOP     = $(shell $(PYTHON3) $(REPO_ROOT)/sim/util/get_top.py $(FILELIST))

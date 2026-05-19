@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# nn.globals.py
+
 from pathlib import Path
 
 from nn.config import NNConfig, InputDimensions
@@ -5,7 +8,9 @@ from nn.quantize import QSchedule
 
 # Default paths matching the training pipeline
 DATAPATH = Path("nn") / "data"
+ROMPATH = DATAPATH / "roms" / "hex"
 
+BAUD = 115200  # 12 MHz / (prescale=13 * 8) ≈ 115385 baud (0.16% error)
 BRAM_COUNT = 30 - 1 # Subtract 1 for the Skid Buffer BRAM on deframer
 DSP_COUNT  = 8
 

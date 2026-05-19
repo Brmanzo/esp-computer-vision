@@ -1,4 +1,7 @@
-# protocol.py
+#!/usr/bin/env python3
+# nn.protocol.py
+# Bradley Manzo 2026
+
 # Shared UART framing constants and helpers used by python_demo.py and
 # the cnn_uart cocotb integration test. Both must stay in sync with
 # deframer.sv and class_framer.sv.

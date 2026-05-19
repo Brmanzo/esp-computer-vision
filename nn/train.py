@@ -1,19 +1,19 @@
+# !/usr/bin/env python3
 # nn.train.py
 # Bradley Manzo 2026
-import torch
+
 import argparse
-from torch.utils.data import DataLoader
+from   pathlib import Path
+import torch
+from   torch.utils.data import DataLoader
+from   typing  import List, Tuple, Callable
 
-from pathlib import Path
-from typing import List, Tuple, Callable
-
+from nn.arch       import cnn, QuantConv2d
 from nn.config     import NNConfig
-from nn.export     import export_nn_to_csv
-from nn.arch      import cnn, QuantConv2d
+from nn.export     import export_nn_to_csv, export_csv_to_hex
+from nn.globals    import get_hand_gesture_cfg, GESTURE_CLASSES
 from nn.plot       import plot_training
 from nn.preprocess import prepare_data, get_transforms
-from nn.globals    import get_hand_gesture_cfg, GESTURE_CLASSES
-from nn.export     import export_csv_to_hex
 
 
 def train_network(network: torch.nn.Module, train_loader: DataLoader, test_loader: DataLoader, train_aug: Callable, cfg: NNConfig, device: str, global_max:float,

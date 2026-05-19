@@ -1,3 +1,6 @@
+// adder_tree.sv
+// Bradley Manzo, 2026
+
 `timescale 1ns / 1ps
 module adder_tree #(
    parameter  int unsigned InBits      = 8,

@@ -65,7 +65,7 @@ def run_classifier_test(test_name, simulator, parameters, Weights, Biases, test_
         layer=0, dsp_count=int(parameters.get('DSPCount', 0)))
         
     wrapper_path = os.path.join(tbpath, "tb_classifier_layer.sv")
-    filelist = "filelists/classifier_layer.json"
+    filelist = "sim/unit_testing/classifier_layer/classifier_layer.json"
     runner(
         simulator=simulator, timescale=timescale, tbpath=tbpath, params=clean_params,
         testname=test_name, work_dir=custom_work_dir, includes=[custom_work_dir],

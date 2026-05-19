@@ -14,26 +14,28 @@ module tb_filter #(
   ,parameter int unsigned Unsigned    = 0
   ,parameter int unsigned ShiftBits   = 0
   ,parameter int unsigned GEN_DSP     = 0
-  ,parameter string       FileName    = "injected_weights_0.hex"
-  ,parameter string       FileName_0  = ""
+  ,parameter               FileName    = "injected_weights_0.hex"
+  ,parameter               FileName_0  = ""
+  ,parameter               FileName_hi = "nn/data/roms/hex/zeros.hex"
+  ,parameter               FileName_0_hi = ""
 )  (
    input [0:0] clk_i
   ,input [0:0] rst_i
-
+ 
   ,output [0:0] ready_o
   ,input  [0:0] valid_i
   ,input  logic signed [InChannels-1:0][KernelWidth*KernelWidth-1:0][InBits-1:0] windows_i
-
+ 
   ,input  [0:0] ready_i
   ,output [0:0] valid_o
   ,output logic signed [OutChannels-1:0][OutBits-1:0] data_o
 );
   localparam int unsigned KernelArea = KernelWidth * KernelWidth;
-
+ 
   // Include injected weights/biases if needed (for parallel version)
   `include "injected_weights_0.vh"
   `include "injected_biases_0.vh"
-
+ 
   if (GEN_DSP == 0) begin : gen_parallel
     filter #(
        .InBits      (InBits)
@@ -69,8 +71,8 @@ module tb_filter #(
       ,.AccBits     (AccBits)
       ,.Unsigned    (Unsigned)
       ,.ShiftBits   (ShiftBits)
-      ,.FileName    (FileName)
-      ,.FileName_0  (FileName_0)
+      ,.FileName    ((FileName_0 != "") ? FileName_0 : FileName)
+      ,.FileName_hi ((FileName_0_hi != "") ? FileName_0_hi : FileName_hi)
       ,.Biases      (INJECTED_BIASES_0)
     ) dut (
        .clk_i     (clk_i)

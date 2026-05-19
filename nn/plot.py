@@ -1,6 +1,11 @@
+#!/usr/bin/env python3
+# nn.plot.py
+# Bradley Manzo 2026
+
 import matplotlib.pyplot as plt
-from pathlib import Path
-from typing import List
+import numpy as np
+from   pathlib import Path
+from   typing  import List
 
 from nn.config import NNConfig
 
@@ -11,7 +16,6 @@ def plot_training(cfg: NNConfig, train_acc_history: List[float], test_acc_histor
 
     colors = ['red', 'orange', 'green', 'blue', 'purple']
     if len(cfg.q_schedule) > len(colors):
-        import numpy as np
         cmap = plt.get_cmap('rainbow')
         colors = cmap(np.linspace(0, 1, len(cfg.q_schedule)))
 

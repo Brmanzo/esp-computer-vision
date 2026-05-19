@@ -5,8 +5,9 @@ import torch
 import torch.nn as nn
 
 from nn.config   import NNConfig, ConvConfig, PoolConfig
-from nn.quantize import QuantConv2d, QuantizeActivation, LearnedShiftQuantizer
 from nn.globals  import get_hand_gesture_cfg, BRAM_COUNT, DSP_COUNT
+from nn.quantize import QuantConv2d, QuantizeActivation, LearnedShiftQuantizer
+from nn.render   import render_verilog
 
 class cnn(nn.Module):
     '''Construct the Pytorch CNN based on provided NNConfig.'''
@@ -87,7 +88,6 @@ class cnn(nn.Module):
         # 3. Utilities
         self.ram_utilization()
         # Update cnn.sv with current architecture
-        from nn.render import render_verilog
         render_verilog(self.config)
 
     def forward(self, x):

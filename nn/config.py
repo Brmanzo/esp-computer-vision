@@ -2,7 +2,7 @@
 # Bradley Manzo 2026
 
 import math
-from typing import List, Optional
+from   typing import List, Optional
 
 from nn.quantize import QSchedule
 
@@ -144,7 +144,7 @@ class LayerConfig:
         self.PoolLayer = PoolLayer
 
 class NNConfig:
-    '''Accepts high-level model specs, and translates into detailed layer-by-layer configurations.'''
+    '''Accepts high-level network specs, and translates into detailed layer-by-layer configurations.'''
     def full_precision_acc_bits(self, in_channels, kernel_size, in_bits, weight_bits):
         '''Calculates full precision output width for convolution.'''
         term_count = in_channels * (kernel_size ** 2)
@@ -229,7 +229,7 @@ class NNConfig:
                     line_count_px=current_h,
                     shift=c_shift
                 )
-                break # Classifier always concludes the model construction
+                break # Classifier always concludes the nn construction
 
             # 3. Otherwise, determine Out Bits for standard Conv layer
             acc_bits = self.full_precision_acc_bits(c_in_ch, c_kernel, c_in_bits, c_max_weight_bits)

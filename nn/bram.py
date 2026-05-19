@@ -1,3 +1,6 @@
+# 
+# Bradley Manzo 2026
+
 """
 bram.py  —  Decode SB_RAM40_4K INIT fields from Yosys ice40.json or ice40.asc.
 
@@ -41,12 +44,12 @@ Usage
 
 from __future__ import annotations
 import json
+from   pathlib import Path
 import os
 import subprocess
-from pathlib import Path
+import sys
 
-DATAPATH = Path(__file__).resolve().parent / "data"
-ROM_PATH = DATAPATH / "roms" / "hex"
+from nn.globals import ROMPATH
 
 # ---------------------------------------------------------------------------
 # Core helpers
@@ -191,18 +194,18 @@ def run_asc_verification(target_path: Path, hex_file_path: Path | None = None) -
     if hex_file_path:
         hex_files_to_verify = [hex_file_path]
     else:
-        if not ROM_PATH.exists():
-            print(f"ERROR: ROM directory '{ROM_PATH}' not found.")
+        if not ROMPATH.exists():
+            print(f"ERROR: ROM directory '{ROMPATH}' not found.")
             return False
-        all_hex = sorted(f for f in os.listdir(ROM_PATH) if f.startswith("layer_") and f.endswith(".hex"))
+        all_hex = sorted(f for f in os.listdir(ROMPATH) if f.startswith("layer_") and f.endswith(".hex"))
         hex_files_to_verify = []
         for f in all_hex:
             if not f.endswith("_lo.hex") and not f.endswith("_hi.hex"):
                 lo_name = f.replace(".hex", "_lo.hex")
-                if (ROM_PATH / lo_name).exists():
+                if (ROMPATH / lo_name).exists():
                     print(f"\033[93m⚠ WARNING:\033[0m Skipping stale '{f}' (split ROM '{lo_name}' takes precedence).")
                     continue
-            hex_files_to_verify.append(ROM_PATH / f)
+            hex_files_to_verify.append(ROMPATH / f)
 
     print(f"Verifying weight hex files inside physical bitstream '{target_path.name}'...")
     all_ok = True
@@ -267,8 +270,8 @@ def run_json_verification(json_path: Path, fragment: str | None = None, hex_path
         hex_files_to_verify = [(fragment, hex_path)]
     elif fragment:
         # Check if fragment is actually a hex file path
-        if Path(fragment).exists() or (ROM_PATH / fragment).exists():
-            hex_file = Path(fragment) if Path(fragment).exists() else ROM_PATH / fragment
+        if Path(fragment).exists() or (ROMPATH / fragment).exists():
+            hex_file = Path(fragment) if Path(fragment).exists() else ROMPATH / fragment
             matched_cell = get_bram_cell_for_hex(bram_cells, hex_file.name)
             if not matched_cell:
                 print(f"ERROR: Could not automatically map hex file '{hex_file.name}' to a synthesized BRAM cell.")
@@ -279,20 +282,20 @@ def run_json_verification(json_path: Path, fragment: str | None = None, hex_path
             hex_files_to_verify = [(fragment, None)]
     else:
         # Batch mode
-        if not ROM_PATH.exists():
-            print(f"ERROR: ROM directory '{ROM_PATH}' not found.")
+        if not ROMPATH.exists():
+            print(f"ERROR: ROM directory '{ROMPATH}' not found.")
             return False
         hex_files_to_verify = []
-        for f in sorted(os.listdir(ROM_PATH)):
+        for f in sorted(os.listdir(ROMPATH)):
             if f.startswith("layer_") and f.endswith(".hex"):
                 # Skip a plain layer_N_weights.hex if the split _lo counterpart exists;
                 # the split files are authoritative and the plain file is stale.
                 if not f.endswith("_lo.hex") and not f.endswith("_hi.hex"):
                     lo_name = f.replace(".hex", "_lo.hex")
-                    if (ROM_PATH / lo_name).exists():
+                    if (ROMPATH / lo_name).exists():
                         print(f"\033[93m⚠ WARNING:\033[0m Skipping stale '{f}' (split ROM '{lo_name}' takes precedence).")
                         continue
-                hex_file = ROM_PATH / f
+                hex_file = ROMPATH / f
                 matched_cell = get_bram_cell_for_hex(bram_cells, f)
                 if matched_cell:
                     hex_files_to_verify.append((matched_cell, hex_file))
@@ -343,7 +346,6 @@ def run_json_verification(json_path: Path, fragment: str | None = None, hex_path
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    import sys
 
     # If help menu is requested explicitly
     if len(sys.argv) >= 2 and sys.argv[1] in ("-h", "--help"):
@@ -368,10 +370,10 @@ if __name__ == "__main__":
     # 1. No arguments provided: Auto-detect and run
     if len(sys.argv) < 2:
         default_json = Path("ice40.json")
-        default_asc = Path("ice40.asc")
+        default_asc  = Path("ice40.asc")
         
         run_json = default_json.exists()
-        run_asc = default_asc.exists()
+        run_asc  = default_asc.exists()
         
         if not run_json and not run_asc:
             print("\033[93m⚠ Automatic Verification:\033[0m Neither 'ice40.json' nor 'ice40.asc' found in the current directory.")

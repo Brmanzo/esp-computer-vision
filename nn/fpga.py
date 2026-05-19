@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Usage: python3 nn/fpga.py <sample_idx> [ttyUSBx] [--trials N]
-# Run from project root.
+# nn.fpga.py
+# Usage: cnn.py fpga <sample_idx> [ttyUSBx] [--trials N]
 
 import os
 import sys
@@ -16,10 +16,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from nn.inference  import get_inference_from_pixels
 from nn.protocol   import build_frame, parse_response
 from nn.preprocess import prepare_data
-from nn.globals    import HAND_GESTURE_CFG, GESTURE_CLASSES
+from nn.globals    import HAND_GESTURE_CFG, GESTURE_CLASSES, BAUD
 
 # ── Serial config ─────────────────────────────────────────────────────────────
-BAUD = 115200  # 12 MHz / (prescale=13 * 8) ≈ 115385 baud (0.16% error)
 
 def _find_icebreaker_port() -> str | None:
     """Return the ttyUSBN name for the iCEBreaker UART via /dev/serial/by-id symlinks."""
@@ -69,7 +68,7 @@ def run_trial(ser: serial.Serial, pixels: list) -> int | None:
 
 def main():
     parser = argparse.ArgumentParser(
-        usage="python3 demo/python_demo.py <sample_idx> [ttyUSBx] [--trials N]"
+        usage="cnn.py fpga <sample_idx> [ttyUSBx] [--trials N]"
     )
     parser.add_argument("sample_idx", type=int, nargs="?", default=0,
                         help="Dataset index for single-shot or seed trial")

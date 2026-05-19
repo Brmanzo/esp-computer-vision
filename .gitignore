@@ -21,8 +21,8 @@ __pycache__/
 
 # FPGA / EDA outputs
 *.json
-!filelists/*.json
-!sim/integration_testing/*/*.json
+!sim/*/*/*.json
+!rtl/top/top.json
 *.yslog
 *.nplog
 *.asc

@@ -121,8 +121,8 @@ module neuron_seq #(
     case (state_q)
       Idle:   if (in_fire) state_d = Busy;
       Busy:   if (last_in_ch && last_out_ch) state_d = Flush1;
-      Flush1: state_d = Flush2; // en_q is still 1 (registered from last Busy); last MAC term presented
-      Flush2: state_d = Flush3; // acc_r updates with last term at this edge; dsp_valid_q fires to capture neuron_q
+      Flush1: state_d = Flush2; // en_q still 1 (from last Busy); acc_r captures final sum at this edge
+      Flush2: state_d = Flush3; // acc_r stable; dsp_valid_q fires here to capture neuron_q
       Flush3: state_d = Done;   // neuron_q stable; valid_o asserted next cycle
       Done:   if (out_fire) state_d = Idle;
       default: state_d = Idle;
@@ -181,9 +181,9 @@ module neuron_seq #(
   wire signed [EffectiveDSPs-1:0][OutBits-1:0] neuron_results;
 
   always_ff @(posedge clk_i) begin
-    if (dsp_valid_q) begin
+    if (dsp_valid_d2) begin
       for (int i = 0; i < EffectiveDSPs; i++) begin
-        neuron_q[i * OutChannelsPerDSP + int'(workload_idx)] <= neuron_results[i];
+        neuron_q[i * OutChannelsPerDSP + int'(workload_idx_d2)] <= neuron_results[i];
       end
     end
   end
@@ -191,24 +191,29 @@ module neuron_seq #(
   /* --------------------------------- DSP Instantiation --------------------------------- */
   generate
     // Delayed capture signals for synchronous DSP outputs
-    // 2-stage pipeline: d1 fires when last_in_ch seen (the overlap cycle accumulates the
-    // last term at this same edge); dsp_valid_q fires one edge later when acc_r is stable.
-    logic dsp_valid_d1, dsp_valid_q;
-    logic [OutChannelCountBits-1:0] workload_idx_d1, workload_idx;
+    // 2-stage pipeline (capture on d2, not d3):
+    //   d1 fires when last_in_ch seen during Busy
+    //   d2 fires one cycle later: ROM has delivered the last weight, acc_r accumulates
+    //      the final term at THIS edge — capture reads the just-written acc_r next cycle.
+    // Capturing on d2 is required for intermediate workloads (OutChannelsPerDSP > 1):
+    // the DSP loads the bias for the next workload at d2+1, overwriting acc_r before
+    // a 3-stage pipeline would fire.
+    logic dsp_valid_d1, dsp_valid_d2;
+    logic [OutChannelCountBits-1:0] workload_idx_d1, workload_idx_d2;
 
     always_ff @(posedge clk_i) begin
       if (rst_i) begin
         dsp_valid_d1    <= 1'b0;
         workload_idx_d1 <= '0;
 
-        dsp_valid_q  <= 1'b0;
-        workload_idx <= '0;
+        dsp_valid_d2    <= 1'b0;
+        workload_idx_d2 <= '0;
       end else begin
         dsp_valid_d1    <= (busy && last_in_ch);
         workload_idx_d1 <= out_ch_counter;
 
-        dsp_valid_q  <= dsp_valid_d1;
-        workload_idx <= workload_idx_d1;
+        dsp_valid_d2    <= dsp_valid_d1;
+        workload_idx_d2 <= workload_idx_d1;
       end
     end
 
