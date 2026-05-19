@@ -196,6 +196,10 @@ make clean-all
 
 ### Model Testing
 ```bash
+# To setup the cnn.py environment run
+bash install.sh
+source ~/.bashrc
+
 # To verify via simulation in python
 # within sim/integration/testing/cnn_uart/
 make test <SAMPLE_IDX=#> VERBOSE=1

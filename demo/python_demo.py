@@ -1,146 +1,181 @@
 #!/usr/bin/env python3
-# Usage: python3 demo/python_demo.py <sample_idx> [ttyUSBx]
+# Usage: python3 demo/python_demo.py <sample_idx> [ttyUSBx] [--trials N]
 # Run from project root.
 
 import os
 import sys
 import time
+import random
 import serial
 import threading
+import argparse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from model.sample    import get_sample
-from model.inference import get_inference, get_inference_from_pixels
-from model.protocol  import HEADER, TAIL, WAKEUP, IMG_BYTES, build_frame, parse_response
+from model.inference  import get_inference_from_pixels
+from model.protocol   import build_frame, parse_response
+from model.preprocess import prepare_data
+from model.globals    import HAND_GESTURE_CFG, GESTURE_CLASSES
 
 # ── Serial config ─────────────────────────────────────────────────────────────
 BAUD = 115200  # 12 MHz / (prescale=13 * 8) ≈ 115385 baud (0.16% error)
 
-# ── Globals shared between threads ───────────────────────────────────────────
-hw_result: list = [None]   # hw_result[0] set by consumer thread
+def _find_icebreaker_port() -> str | None:
+    """Return the ttyUSBN name for the iCEBreaker UART via /dev/serial/by-id symlinks."""
+    by_id = Path("/dev/serial/by-id")
+    if not by_id.exists():
+        return None
+    candidates = [l for l in sorted(by_id.iterdir()) if "ice" in l.name.lower()]
+    # FT2232H: if01 = UART, if00 = JTAG — prefer UART
+    for suffix in ("if01", "if00"):
+        for link in candidates:
+            if suffix in link.name:
+                return link.resolve().name
+    return candidates[0].resolve().name if candidates else None
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Per-trial send/receive ─────────────────────────────────────────────────────
 
-def producer(frame: bytes) -> None:
-    ser.write(frame)
+def run_trial(ser: serial.Serial, pixels: list) -> int | None:
+    """Send one frame over UART and return the decoded HW class byte, or None."""
+    hw_result: list[int | None] = [None]
 
+    def producer():
+        ser.write(build_frame(pixels))
 
-def consumer() -> None:
-    """Read bytes from the FPGA and parse the frame."""
-    # Read up to 4 bytes with a short inter-byte timeout so we don't block
-    # for 30 s when the 0x99 wakeup was already flushed from the buffer.
-    # The normal response is either [0x99, class, 0xA5, 0x5A] (4 bytes) or
-    # [class, 0xA5, 0x5A] (3 bytes) when the wakeup was already consumed.
-    raw = ser.read(3)           # minimum useful payload
-    extra = ser.read(1)         # grab the 4th byte if it arrives within timeout
-    raw = bytes(raw) + bytes(extra)
+    def consumer():
+        raw = bytes(ser.read(3)) + bytes(ser.read(1))
+        print(f"  Raw bytes: {' '.join(f'{x:02x}' for x in raw)}")
+        try:
+            hw_result[0] = parse_response(raw)
+            print(f"  class_byte={hw_result[0]:#04x}  tail=a5 5a  ✓")
+        except ValueError as e:
+            print(f"  ✗ {e}")
 
-    print(f"  Raw bytes received : {' '.join(f'{x:02x}' for x in raw)}")
+    ser.reset_input_buffer()
+    ser.reset_output_buffer()
+    time.sleep(0.05)
 
-    try:
-        hw_result[0] = parse_response(raw)
-        print(f"  class_byte={hw_result[0]:#04x}  tail=a5 5a  ✓")
-    except ValueError as e:
-        print(f"  ✗ {e}")
+    t0 = time.monotonic()
+    pt = threading.Thread(target=producer, daemon=True)
+    ct = threading.Thread(target=consumer, daemon=True)
+    pt.start(); ct.start()
+    pt.join(); ct.join()
+    print(f"  Done in {time.monotonic() - t0:.2f} s")
+    return hw_result[0]
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-if len(sys.argv) < 2:
-    print("Usage: python3 demo/python_demo.py <sample_idx> [ttyUSBx]")
-    sys.exit(1)
+def main():
+    parser = argparse.ArgumentParser(
+        usage="python3 demo/python_demo.py <sample_idx> [ttyUSBx] [--trials N]"
+    )
+    parser.add_argument("sample_idx", type=int, nargs="?", default=0,
+                        help="Dataset index for single-shot or seed trial")
+    parser.add_argument("port",       nargs="?", default=None,
+                        help="Serial device name (e.g. ttyUSB2); auto-detected if omitted")
+    parser.add_argument("--trials",   type=int,  default=1,
+                        help="Run N trials over random indices; break on SW/HW mismatch")
+    args = parser.parse_args()
 
-sample_idx  = int(sys.argv[1])
-serial_port = "/dev/" + sys.argv[2] if len(sys.argv) > 2 else "/dev/ttyUSB2"
+    port = args.port or _find_icebreaker_port() or "ttyUSB2"
+    if args.port is None:
+        print(f"Auto-detected port: {port}")
+    serial_port = "/dev/" + port
+    ser = serial.Serial(
+        port               = serial_port,
+        baudrate           = BAUD,
+        parity             = serial.PARITY_NONE,
+        stopbits           = serial.STOPBITS_ONE,
+        bytesize           = serial.EIGHTBITS,
+        timeout            = 5,
+        inter_byte_timeout = 0.05,
+        rtscts             = False,
+    )
 
-inject_env = os.environ.get("INJECT_PIXELS", "")
-# 1. Load sample from dataset
-if inject_env == "zeros":
-    n_pixels = 320 * 240
-    pixels = [0] * n_pixels
-    label = None
-    print(f"  Smoke test (all zeros) : {label}")
-elif inject_env == "ones":
-    n_pixels = 320 * 240
-    pixels = [1] * n_pixels
-    label = None
-    print(f"  Smoke test (all ones) : {label}")
-else:
-    print(f"Loading sample {sample_idx} from dataset...")
-    pixels, label = get_sample(sample_idx)
-    if pixels is None:
-        print("Failed to load sample.")
-        sys.exit(1)
-    print(f"  Ground truth label : {label}")
+    inject_env = os.environ.get("INJECT_PIXELS", "")
 
-# 2. Hardware-accurate software inference
-print("Running software inference...")
-sw_pred = get_inference_from_pixels(pixels)
-print(f"  SW prediction      : {sw_pred}  {'✓' if (label is not None and sw_pred == label) else ''}")
+    # Load dataset once upfront (skipped for smoke-test modes).
+    samples: list[tuple[list, int]] = []
+    if not inject_env:
+        print("Loading dataset...")
+        cfg = HAND_GESTURE_CFG
+        assert cfg.in_dims.height is not None and cfg.in_dims.width is not None
+        _, test_loader, _ = prepare_data(
+            "roobansappani/hand-gesture-recognition",
+            img_h          = cfg.in_dims.height,
+            img_w          = cfg.in_dims.width,
+            in_bits        = cfg._in_bits[0],
+            data_split     = 0.8,
+            batch_size     = 1,
+            target_classes = GESTURE_CLASSES,
+        )
+        for batch_img, batch_label in test_loader:
+            pixels = (batch_img[0].flatten() > 0.5).int().tolist()
+            samples.append((pixels, int(batch_label[0])))
+        print(f"  {len(samples)} test samples loaded.\n")
 
-# 3. Build the UART frame: [0xA5, 0x5A] + 9600 image bytes
-frame = build_frame(pixels)
-print(f"\nSending {len(frame)} bytes to {serial_port} @ {BAUD} baud...")
+    # For multi-trial mode pick random indices; single-shot uses sample_idx directly.
+    if args.trials == 1:
+        indices = [args.sample_idx]
+    else:
+        indices = random.sample(range(len(samples)), min(args.trials, len(samples)))
 
-# 4. Open serial port, start producer and consumer threads
-ser = serial.Serial(
-    port          = serial_port,
-    baudrate      = BAUD,
-    parity        = serial.PARITY_NONE,
-    stopbits      = serial.STOPBITS_ONE,
-    bytesize      = serial.EIGHTBITS,
-    timeout       = 5,     # 5 s for first 3 bytes (CNN pipeline + UART TX)
-    inter_byte_timeout = 0.05,  # 50 ms gap ends the 4th-byte read immediately
-    rtscts        = False, # FPGA rts_o=0 on reset → CTS=0 at host → deadlock if True
-)
+    matches = mismatches = 0
 
-producer_thread = threading.Thread(target=producer, args=(frame,), daemon=True)
-consumer_thread = threading.Thread(target=consumer, daemon=True)
+    for trial_num, idx in enumerate(indices, 1):
+        if args.trials > 1:
+            print(f"\n{'='*60}")
+            print(f"Trial {trial_num}/{args.trials}  sample_idx={idx}")
+            print(f"{'='*60}")
 
-ser.reset_input_buffer()
-ser.reset_output_buffer()
-time.sleep(0.05)
+        # 1. Load sample
+        if inject_env == "zeros":
+            pixels, label = [0] * (320 * 240), None
+            print("  Smoke test (all zeros)")
+        elif inject_env == "ones":
+            pixels, label = [1] * (320 * 240), None
+            print("  Smoke test (all ones)")
+        else:
+            pixels, label = samples[idx]
+            print(f"  Ground truth : {label}")
 
-t0 = time.monotonic()
-producer_thread.start()
-consumer_thread.start()
+        # 2. Software inference
+        sw_pred = get_inference_from_pixels(pixels)
+        print(f"  SW prediction: {sw_pred}  {'✓' if label is not None and sw_pred == label else ''}")
 
-producer_thread.join()
-consumer_thread.join()
-ser.close()
+        # 3. Hardware inference
+        print(f"Sending frame to {serial_port} @ {BAUD} baud...")
+        hw_pred = run_trial(ser, pixels)
 
-tx_s = time.monotonic() - t0
-print(f"  Done in {tx_s:.2f} s")
+        if hw_pred is None:
+            print("  No valid response from FPGA. Stopping.")
+            break
 
-# 5. Report
-if hw_result[0] is None:
-    print("No valid response received from FPGA.")
-    sys.exit(1)
+        # 4. Report
+        sw_match = hw_pred == sw_pred
+        print()
+        if label is not None:
+            print(f"  Ground truth : {label}")
+            print(f"  SW           : {sw_pred}  {'✓' if sw_pred == label else '✗'}")
+            print(f"  HW           : {hw_pred}  {'✓' if hw_pred == label else '✗'}")
 
-hw_pred    = hw_result[0]
-sw_match   = (hw_pred == sw_pred)
+        if sw_match:
+            matches += 1
+            print("\033[92m[MATCH]    HW and SW agree\033[0m")
+        else:
+            mismatches += 1
+            print("\033[91m[MISMATCH] HW and SW disagree\033[0m")
+            break
 
-print()
-if label is not None:
-    hw_correct = hw_pred == label
-    sw_correct = sw_pred == label
-    print(f"  Ground truth  : {label}")
-    print(f"  SW prediction : {sw_pred}  {'✓' if sw_correct else '✗'}")
-    print(f"  HW prediction : {hw_pred}  {'✓' if hw_correct else '✗'}")
-else:
-    print(f"  Ground truth  : N/A (Smoke Test)")
-    print(f"  SW prediction : {sw_pred}")
-    print(f"  HW prediction : {hw_pred}")
+    ser.close()
 
-print()
-if sw_match:
-    print("\033[92m[MATCH]    HW and SW agree\033[0m", end="  ")
-else:
-    print("\033[91m[MISMATCH] HW and SW disagree\033[0m", end="  ")
+    if args.trials > 1:
+        total = matches + mismatches
+        print(f"\n{'='*60}")
+        print(f"Trials: {total}  Match: {matches}  Mismatch: {mismatches}")
 
-if label is not None:
-    print("\033[92m[CORRECT]\033[0m" if hw_pred == label else "\033[91m[WRONG]\033[0m")
-else:
-    print()
+
+if __name__ == "__main__":
+    main()
