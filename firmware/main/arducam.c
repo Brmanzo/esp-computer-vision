@@ -6,6 +6,8 @@
 #include "includes/ov2640.h"
 #include "includes/spi.h"
 
+#define INVERT_POLARITY 1
+
 /* -------------------------------------- Device Init -------------------------------------- */
 /* Initialization sequence for the ArduCAM-M-2MP device. */
 void arducam_power_up_sensor(void) {
@@ -281,7 +283,12 @@ esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint8_t* ad
             remaining -= n;
         }
         if (bitpos != 0 && out_i < total_len) out[out_i++] = acc;
-    } 
+
+#if INVERT_POLARITY
+        for (size_t i = HEADER_SIZE; i < out_i; i++)
+            out[i] ^= 0xFF;
+#endif
+    }
     // MODE B: CALIBRATION (No changes needed, logic remains same)
     else {
         // ... (Keep your existing calibration code here) ...

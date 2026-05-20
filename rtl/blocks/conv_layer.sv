@@ -10,21 +10,27 @@ function automatic int unsigned conv_acc_bits(
     input int unsigned weight_bits, 
     input int unsigned in_channels, 
     input int unsigned bias_bits,
-    input int unsigned unsigned_mode
+    input int unsigned unsigned_mode,
+    input int unsigned shift_bits,
+    input int unsigned out_bits,
+    input int unsigned truncate_guard
 );
   longint unsigned max_input, max_weight, worst_case_sum;
   int unsigned wc_bits;
   begin
-    if (input_bits == 1)                        max_input = 64'd1;
+    if (input_bits == 1)                            max_input = 64'd1;
     else if (input_bits == 2 && unsigned_mode == 0) max_input = 64'd1; // Ternary
     else if (unsigned_mode != 0)                    max_input = (64'd1 << input_bits) - 1;
-    else                                        max_input = (64'd1 << (input_bits - 1));
+    else                                            max_input = (64'd1 << (input_bits - 1));
 
     max_weight = (weight_bits <= 2) ? 64'd1 : (64'd1 << (weight_bits - 1));
     worst_case_sum = longint'(kernel_area) * max_input * max_weight * longint'(in_channels);
     wc_bits = $clog2(worst_case_sum + 1) + 1;
     wc_bits = ((wc_bits > bias_bits) ? wc_bits : bias_bits) + 1;
     conv_acc_bits = (wc_bits > 32) ? 32 : wc_bits;
+    conv_acc_bits = (truncate_guard != 0 && (shift_bits + out_bits + truncate_guard) < conv_acc_bits)
+                    ? (shift_bits + out_bits + truncate_guard)
+                    : conv_acc_bits;
   end
 endfunction
 
@@ -36,10 +42,11 @@ module conv_layer #(
    ,parameter  int unsigned KernelWidth = 3
    ,parameter  int unsigned WeightBits  = 2
    ,parameter  int unsigned BiasBits    = 8
-   ,parameter  int unsigned ShiftBits   = 0
    ,parameter  int unsigned InChannels  = 1
    ,parameter  int unsigned OutChannels = 1
    ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
+   ,parameter  int unsigned ShiftBits   = 0
+   ,parameter  int unsigned TruncGuard  = 3
 
    ,parameter  int unsigned Stride     = 1
    ,localparam int unsigned StrideBits = (Stride <= 1) ? 1 : $clog2(Stride)
@@ -55,7 +62,7 @@ module conv_layer #(
 
    ,localparam int unsigned WeightIndex = InChannels * KernelArea * WeightBits
    ,parameter logic signed [OutChannels*WeightIndex-1:0] Weights = '0
-   ,parameter logic signed [OutChannels*BiasBits-1:0] Biases = '0
+   ,parameter logic signed [OutChannels*BiasBits-1:0]    Biases = '0
    ,parameter FileName    = "nn/data/roms/hex/zeros.hex"
    ,parameter FileName_hi = "nn/data/roms/hex/zeros.hex"
 ) (
@@ -71,7 +78,7 @@ module conv_layer #(
    ,output logic signed [OutChannels-1:0][OutBits-1:0] data_o
 );
 
-  localparam AccBits = conv_acc_bits(KernelArea, InBits, WeightBits, InChannels, BiasBits, Unsigned);
+  localparam AccBits = conv_acc_bits(KernelArea, InBits, WeightBits, InChannels, BiasBits, Unsigned, ShiftBits, OutBits, TruncGuard);
 
   /* ---------------------------------------- Kernel Validation ---------------------------------------- */
   logic [XBits-1:0] x_pos;

@@ -42,12 +42,16 @@ buildflash: ice40.bin
 
 util: ice40.asc
 	@awk '/Device utilisation:/{flag=1} flag{print} /ICESTORM_SPRAM/{exit}' ice40.nplog
+	@echo "Run make stat ?"
+	@echo "Run make prog ice40.bin ?"
 
 gbuf: ice40.nplog
 	@grep -niE "global|gbuf|sb_gb|promot|glb" ice40.nplog
 
 stat: ice40.asc
 	$(ICESTAT) $<
+	@echo "Run make util ?"
+	@echo "Run make prog ice40.bin ?"
 
 .PHONY: util gbuf stat
 

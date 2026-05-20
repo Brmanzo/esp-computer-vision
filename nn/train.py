@@ -123,6 +123,8 @@ def train_network(network: torch.nn.Module, train_loader: DataLoader, test_loade
             if test_acc >= global_max:
                 global_max = test_acc
                 print(f"\033[32m  --> New best network saved! (Acc: {best_test_acc:.3f})\033[0m")
+            elif test_acc < global_max and test_acc > 0.9:
+                print(f"\033[92m  --> New best network saved! (Acc: {best_test_acc:.3f} but not global max)\033[0m")
             else:
                 print(f"\033[93m  --> New best network saved! (Acc: {best_test_acc:.3f} but not global max)\033[0m")
         else:
