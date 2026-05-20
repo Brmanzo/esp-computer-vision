@@ -70,11 +70,40 @@ abstract.json: $(FILELIST) $(SYNTH_SOURCES)
 	  abs="$(REPO_ROOT)/$$f"; \
 	  [ "$$abs" != "$$sv" ] && deps="$$deps $$abs"; \
 	done; \
-	$(YOSYS) -ql $*.yslog -p "read_verilog -sv -DSYNTHESIS $$sv $$deps; hierarchy -top $*; proc; opt; delete t:\$$scopeinfo; clean -purge; write_json $@"
+	$(YOSYS) -ql $*.yslog -p "read_verilog -sv -DSYNTHESIS $$sv $$deps; hierarchy -top $*; uniquify; proc; opt; delete t:\$$scopeinfo; clean -purge; write_json $@"
 
 %.pdf: %.json
 	$(NETLISTSVG) $< -o $(subst pdf,svg,$@)
 	$(RSVG) -f pdf $(subst pdf,svg,$@) -o $@
+
+RECURSE ?= 1
+
+%.expanded.json:
+	@sv="$(strip $(call find_sv,$*))"; \
+	if [ -z "$$sv" ]; then \
+	  echo "ERROR: Could not find SV file for module '$*' under $(RTL_ROOT)/**/$*.sv"; \
+	  exit 1; \
+	fi; \
+	echo "[Yosys] $$sv -> $@ (top=$*, recurse=$(RECURSE))"; \
+	deps=""; \
+	for f in $(SYNTH_SOURCES); do \
+	  abs="$(REPO_ROOT)/$$f"; \
+	  [ "$$abs" != "$$sv" ] && deps="$$deps $$abs"; \
+	done; \
+	flatten_cmds=""; \
+	n=$(RECURSE); \
+	while [ $$n -gt 0 ]; do \
+	  flatten_cmds="$$flatten_cmds select -module $*; flatten; select -clear;"; \
+	  n=$$((n - 1)); \
+	done; \
+	$(YOSYS) -ql $*.expanded.yslog -p "read_verilog -sv -DSYNTHESIS $$sv $$deps; hierarchy -top $*; uniquify; proc; opt; $$flatten_cmds delete t:\$$scopeinfo; clean -purge; write_json $@"
+
+NETLISTSVG_STACK ?= 65536
+NETLISTSVG_JS    ?= $(shell readlink -f $(shell which netlistsvg 2>/dev/null) 2>/dev/null)
+
+%.expanded.pdf: %.expanded.json
+	node --stack-size=$(NETLISTSVG_STACK) $(NETLISTSVG_JS) $< -o $(subst .pdf,.svg,$@)
+	$(RSVG) -f pdf $(subst .pdf,.svg,$@) -o $@
 
 %.mapped.json:
 	@sv="$(strip $(call find_sv,$*))"; \
