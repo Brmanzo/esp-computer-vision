@@ -142,27 +142,27 @@ def export_nn_to_csv(nn_path: Path, config: NNConfig, output_csv: Path, random_w
                     print(f"  Detected Activation Scaling: {current_act_scale:.6f} (Fixed Shift {module.shift})")
 
         elif isinstance(module, LearnedShiftQuantizer):
-            # Use act_scale (clip_val / qmax) for weight-compensation propagation,
-            # mirroring the QuantizeActivation learnable path above.
+            # Use act_scale (clip_val / qmax) for weight-compensation propagation.
             current_act_scale = module.act_scale
             # Correct shift formula: shift = log2(clip_val / (qmax_out * w_scale))
-            # module.hardware_shift uses acc_bits from q_max_bits, which overestimates the
-            # integer accumulator range for ternary inputs and lower-precision export weights.
-            # Using the actual w_scale of the preceding conv gives the true integer-to-float ratio.
             qmax_out  = (2 ** module._out_bits) - 1
             clip_abs  = float(module.clip_val.abs().clamp(min=1e-4).item())
             raw_shift = math.log2(clip_abs / (qmax_out * last_w_scale))
-            # Do NOT clamp with module._min_shift / _max_shift — those bounds were derived
-            # from init_shift which used q_max_bits instead of q_min_bits, so they are
-            # systematically too high and would prevent the corrected value from being applied.
-            classifier_shift = max(0, round(raw_shift))
-            print(f"  Learned Classifier Shift: {classifier_shift} (formula gave {raw_shift:.2f}, module.hardware_shift={module.hardware_shift})  act_scale={current_act_scale:.6f}  clip_val={clip_abs:.4f}")
-            # Back-propagate into config so RTL render and downstream code always
-            # sees the trained value rather than the analytical default.
-            config.classifier_config._shift = classifier_shift
-            # Stamp onto the last feature-conv hardware data row.
+            shift_val = max(0, round(raw_shift))
+
             if all_hardware_data:
-                all_hardware_data[-1]["classifier_shift"] = classifier_shift
+                conv_idx = len(all_hardware_data) - 1
+                is_last_feature = (conv_idx == len(config.layers) - 1)
+                # Always stamp as layer_shift so LAYER_i_SHIFT is emitted to the vh file
+                all_hardware_data[-1]["layer_shift"] = shift_val
+                if is_last_feature:
+                    # Back-propagate into config so RTL render sees the trained value.
+                    classifier_shift = shift_val
+                    config.classifier_config._shift = classifier_shift
+                    all_hardware_data[-1]["classifier_shift"] = classifier_shift
+                    print(f"  Learned Classifier Shift: {classifier_shift} (formula gave {raw_shift:.2f}, module.hardware_shift={module.hardware_shift})  act_scale={current_act_scale:.6f}  clip_val={clip_abs:.4f}")
+                else:
+                    print(f"  Layer {conv_idx} Shift: {shift_val} (formula gave {raw_shift:.2f})  act_scale={current_act_scale:.6f}  clip_val={clip_abs:.4f}")
 
     # If no LearnedShiftQuantizer was encountered (e.g. random_weights path),
     # fall back to the analytically-derived shift on the last feature conv row
@@ -317,7 +317,13 @@ def export_csv_to_hex(csv_path: Path, sv_path: Path, hex_path: Path, config: NNC
         sv_lines.append(f"localparam logic signed [{b_total_bits-1:>{max_digits}}:0] LAYER_{i}_BIASES  = {b_total_bits}'h{packed_b:x};")
         sv_lines.append("")
 
-        # 3. Emit CLASSIFIER_SHIFT for the final layer (carries the learned shift)
+        # 3. Emit per-layer shift for intermediate 4-bit+ layers (gen_learned_shift path)
+        if hasattr(row, 'layer_shift') and str(row.layer_shift) not in ("", "nan", "None"):
+            ls = int(float(str(row.layer_shift)))
+            sv_lines.append(f"localparam int LAYER_{i}_SHIFT = {ls};  // Per-layer output shift for acc >> LAYER_{i}_SHIFT")
+            sv_lines.append("")
+
+        # 4. Emit CLASSIFIER_SHIFT for the final feature layer (carries the learned shift)
         if hasattr(row, 'classifier_shift') and str(row.classifier_shift) not in ("", "nan", "None"):
             learned_shift = int(float(str(row.classifier_shift)))
             sv_lines.append(f"localparam int CLASSIFIER_SHIFT = {learned_shift};  // Learned right-shift for acc >> CLASSIFIER_SHIFT")
@@ -342,7 +348,7 @@ if __name__ == "__main__":
     parser.add_argument("network_in", nargs="?", default=DATAPATH / "gesture_net_quantized.pth", type=Path)
     parser.add_argument("csv_out", nargs="?", default=DATAPATH / "hardware_weights.csv", type=Path)
     parser.add_argument("sv_out", nargs="?", default=DATAPATH / "hardware_weights.vh", type=Path)
-    parser.add_argument("hex_out", nargs="?", default=ROMPATH / "hex", type=Path)
+    parser.add_argument("hex_out", nargs="?", default=ROMPATH, type=Path)
     parser.add_argument("--random", action="store_true", help="Generate random weights using q_min_bits instead of loading a network")
     
     args = parser.parse_args()

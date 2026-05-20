@@ -148,9 +148,12 @@ def render_conv_layer(cfg: ConvConfig, is_last_feature: bool = False):
         f"    ,.Biases      (LAYER_{cfg._layer_num}_BIASES)",
         f"    ,.Padding     ({cfg._padding})",
         f"    ,.DSPCount    ({cfg._dsp_count})",
+        f"    ,.Unsigned    ({1 if cfg._in_bits > 2 else 0})",
     ]
     if is_last_feature:
         lines.append("    ,.ShiftBits   (CLASSIFIER_SHIFT)")
+    elif cfg._out_bits > 2:
+        lines.append(f"    ,.ShiftBits   (LAYER_{cfg._layer_num}_SHIFT)")
     lines.append(f"    ,.FileName    (FileName_{cfg._layer_num})")
     if _rom_needs_hi(cfg):
         lines.append(f"    ,.FileName_hi (FileName_{cfg._layer_num}_hi)")

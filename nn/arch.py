@@ -2,14 +2,12 @@
 # Bradley Manzo 2026
 
 import torch
-import torch.nn as nn
 
 from nn.config   import NNConfig, ConvConfig, PoolConfig
 from nn.globals  import get_hand_gesture_cfg, BRAM_COUNT, DSP_COUNT
 from nn.quantize import QuantConv2d, QuantizeActivation, LearnedShiftQuantizer
-from nn.render   import render_verilog
 
-class cnn(nn.Module):
+class cnn(torch.nn.Module):
     '''Construct the Pytorch CNN based on provided NNConfig.'''
     def __init__(self, config: NNConfig):
         super().__init__()
@@ -17,7 +15,7 @@ class cnn(nn.Module):
         self._is_fine_tuning = False
 
         # 1. Dynamically Build the Feature Extractor
-        feature_layers: list[nn.Module] = []
+        feature_layers: list[torch.nn.Module] = []
         self.cls_input_shift_quantizer: LearnedShiftQuantizer  # set below
 
         # Iterate naturally over all feature layers in network config
@@ -36,32 +34,35 @@ class cnn(nn.Module):
                 bias=False
             ))
 
-            # Last feature conv output is the classifier input activation.
-            # Use a LearnedShiftQuantizer here so training discovers the optimal
-            # bit-window in the accumulator (hardware: barrel-shift, zero DSP cost).
-            if i == num_feature_layers - 1:
+            # For layers whose hardware output uses the gen_learned_shift path (OutBits > 2),
+            # use LearnedShiftQuantizer so training sees the same unsigned ReLU clamp [0, clip_val]
+            # that the hardware applies.  Binary (1-bit) and ternary (2-bit) layers use signed
+            # QuantizeActivation because their hardware paths (gen_binary_out / gen_ternary_out)
+            # preserve sign information.
+            if conv._out_bits > 2:
                 learned_q = LearnedShiftQuantizer(
                     init_shift = conv._shift,
                     out_bits   = conv._out_bits,
                     min_shift  = max(0, conv._shift - 4),
                     max_shift  = conv._shift + 4,
                 )
-                self.cls_input_shift_quantizer = learned_q
+                if i == num_feature_layers - 1:
+                    self.cls_input_shift_quantizer = learned_q
                 feature_layers.append(learned_q)
             else:
                 feature_layers.append(QuantizeActivation(
                     bits=conv._out_bits,
-                    learnable=(conv._out_bits <= 2),
+                    learnable=(conv._out_bits > 1),
                     shift=conv._shift
                 ))
 
             if pool is not None:
                 if pool._mode == 0:
-                    feature_layers.append(nn.MaxPool2d(pool._kernel_width))
+                    feature_layers.append(torch.nn.MaxPool2d(pool._kernel_width))
                 else:
-                    feature_layers.append(nn.AvgPool2d(pool._kernel_width))
+                    feature_layers.append(torch.nn.AvgPool2d(pool._kernel_width))
 
-        self.features = nn.Sequential(*feature_layers)
+        self.features = torch.nn.Sequential(*feature_layers)
 
         # 2. Build the Classifier Block
         cls_cfg = config.classifier_config
@@ -69,8 +70,8 @@ class cnn(nn.Module):
         # Classifier outputs raw logits — argmax selects the class.
         # No output quantizer needed here; the activation quantizer on the
         # last feature conv (cls_input_shift_quantizer) handles the precision.
-        self.classifier = nn.Sequential(
-            nn.Dropout2d(p=0.1),
+        self.classifier = torch.nn.Sequential(
+            torch.nn.Dropout2d(p=0.1),
             # 1x1 kernel for fully convolutional classifiers
             QuantConv2d(
                 in_channels=cls_cfg._in_ch,
@@ -88,6 +89,7 @@ class cnn(nn.Module):
         # 3. Utilities
         self.ram_utilization()
         # Update cnn.sv with current architecture
+        from nn.render   import render_verilog
         render_verilog(self.config)
 
     def forward(self, x):
@@ -114,18 +116,18 @@ class cnn(nn.Module):
         return self.cls_input_shift_quantizer.hardware_shift
 
     def _init_weights(self, m):
-        if isinstance(m, nn.Conv2d) or isinstance(m, QuantConv2d):
+        if isinstance(m, torch.nn.Conv2d) or isinstance(m, QuantConv2d):
             # Check if it's a low-bit layer to use more conservative initialization
             bits = getattr(m, '_weight_bits', 8)
             actual_bits = bits if isinstance(bits, int) else getattr(bits, '_q_min_bits', 8)
             
             if actual_bits <= 2:
-                nn.init.normal_(m.weight, mean=0, std=0.01)
+                torch.nn.init.normal_(m.weight, mean=0, std=0.01)
             else:
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                torch.nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
             
             if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
+                torch.nn.init.constant_(m.bias, 0)
 
 
     def rams_per_layer_feature(self, layer_cfg: ConvConfig | PoolConfig) -> int:
@@ -225,7 +227,8 @@ class cnn(nn.Module):
         dsp = cls._dsp_count
         classes = cls._num_classes
         dsps_used = min(dsp, classes) if dsp > 0 else 0
-        print(f"Classifier  : {cls_cycles:>3} cycles ({eff_cls:>5.1f} eff) DSPs Used: {dsps_used}")
+        linear_cycles = cls._cycle_count - cls._term_count
+        print(f"Classifier  : {cls_cycles:>5} cycles ({eff_cls:>5.1f} eff) DSPs Used: {dsps_used}  [GlobalMax: {cls._term_count}, Linear: {linear_cycles}]")
         
         total_latency += cls_cycles
         max_effective_cycles = max(max_effective_cycles, eff_cls)

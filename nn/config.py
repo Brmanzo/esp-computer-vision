@@ -113,12 +113,13 @@ class ClassifierConfig:
 
         self._term_count = InputDimensions(line_width_px, line_count_px).term_count  # Classifier doesn't have spatial dimensions
         
-        self._cycle_count = 1
+        linear_cycles = 1
         if dsp_count > 0:
             assert num_classes % dsp_count == 0, f"Classifier: DSPCount ({dsp_count}) must divide num_classes ({num_classes}) evenly!"
             effective_dsps = min(dsp_count, num_classes)
             neurons_per_dsp = (num_classes + effective_dsps - 1) // effective_dsps
-            self._cycle_count = neurons_per_dsp * self._in_ch + 1
+            linear_cycles = neurons_per_dsp * self._in_ch + 1
+        self._cycle_count = self._term_count + linear_cycles
 
         # Classifier layers are connected to the last feature block (either conv or pool)
         if len(kernels[self._layer_num - 1]) > 1:

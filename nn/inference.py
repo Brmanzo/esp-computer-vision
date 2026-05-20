@@ -94,8 +94,12 @@ def _hw_integer_forward(pixels: list, config) -> int:
     df = pd.read_csv(CSV_PATH)
 
     with open(VH_PATH, 'r') as f:
-        m = re.search(r"localparam\s+int\s+CLASSIFIER_SHIFT\s*=\s*(\d+)\s*;", f.read())
+        vh_content = f.read()
+    m = re.search(r"localparam\s+int\s+CLASSIFIER_SHIFT\s*=\s*(\d+)\s*;", vh_content)
     classifier_shift = int(m.group(1)) if m else config.classifier_config._shift
+    layer_shifts: dict[int, int] = {}
+    for ms in re.finditer(r"localparam\s+int\s+LAYER_(\d+)_SHIFT\s*=\s*(\d+)\s*;", vh_content):
+        layer_shifts[int(ms.group(1))] = int(ms.group(2))
 
     def _conv(x: np.ndarray, w: np.ndarray, b: np.ndarray, pad: int, pad_value: int = 0) -> np.ndarray:
         if pad > 0:
@@ -129,8 +133,13 @@ def _hw_integer_forward(pixels: list, config) -> int:
             # Last feature layer: ReLU + logical right-shift + unsigned saturation
             shifted = np.maximum(acc, 0) >> classifier_shift
             act = np.clip(shifted, 0, (1 << conv._out_bits) - 1)
+        elif conv._out_bits > 2:
+            # Intermediate 4-bit+ layer: same gen_learned_shift hardware path as last feature
+            ls = layer_shifts.get(i, config.layers[i].ConvLayer._shift)
+            shifted = np.maximum(acc, 0) >> ls
+            act = np.clip(shifted, 0, (1 << conv._out_bits) - 1)
         else:
-            # Ternary activation matching hardware output_encoder: sign(acc) → {-1, 0, +1}
+            # Ternary (2-bit) / binary (1-bit): sign → {-1, 0, +1}
             act = np.sign(acc)
 
         pool = layer_cfg.PoolLayer
