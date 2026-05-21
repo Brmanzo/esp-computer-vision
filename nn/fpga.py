@@ -15,8 +15,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from nn.inference  import get_inference_from_pixels
 from nn.protocol   import build_frame, parse_response
-from nn.preprocess import prepare_data
-from nn.globals    import HAND_GESTURE_CFG, GESTURE_CLASSES, BAUD
+from nn.preprocess import prepare_mnist_data
+from nn.globals    import MNIST_CFG, MNIST_CLASSES, BAUD
 
 # ── Serial config ─────────────────────────────────────────────────────────────
 
@@ -99,16 +99,16 @@ def main():
     samples: list[tuple[list, int]] = []
     if not inject_env:
         print("Loading dataset...")
-        cfg = HAND_GESTURE_CFG
+        cfg = MNIST_CFG
         assert cfg.in_dims.height is not None and cfg.in_dims.width is not None
-        _, test_loader, _ = prepare_data(
+        _, test_loader, _ = prepare_mnist_data(
             "roobansappani/hand-gesture-recognition",
             img_h          = cfg.in_dims.height,
             img_w          = cfg.in_dims.width,
             in_bits        = cfg._in_bits[0],
             data_split     = 0.8,
             batch_size     = 1,
-            target_classes = GESTURE_CLASSES,
+            target_classes = MNIST_CLASSES,
         )
         for batch_img, batch_label in test_loader:
             pixels = (batch_img[0].flatten() > 0.5).int().tolist()

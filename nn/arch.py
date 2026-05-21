@@ -4,7 +4,7 @@
 import torch
 
 from nn.config   import NNConfig, ConvConfig, PoolConfig
-from nn.globals  import get_hand_gesture_cfg, BRAM_COUNT, DSP_COUNT
+from nn.globals  import get_mnist_cfg, BRAM_COUNT, DSP_COUNT
 from nn.quantize import QuantConv2d, QuantizeActivation, LearnedShiftQuantizer
 
 class cnn(torch.nn.Module):
@@ -93,6 +93,8 @@ class cnn(torch.nn.Module):
         render_verilog(self.config)
 
     def forward(self, x):
+        # Map 1-bit input from {0.0, 1.0} to {-1.0, 1.0} to match the hardware's 1-bit signed logic
+        x = 2.0 * x - 1.0
         x = self.features(x)           
         
         # Global Max
@@ -242,7 +244,7 @@ class cnn(torch.nn.Module):
             print(f"Estimated Max Frame Rate: {fps:.2f} FPS")
 
 if __name__ == "__main__":
-    network = cnn(get_hand_gesture_cfg())
+    network = cnn(get_mnist_cfg())
     print("\n--- Network ARCHITECTURE ---")
     print(network)
     print("\n--- RESOURCE UTILIZATION ---")

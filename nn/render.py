@@ -7,7 +7,7 @@ from   pathlib  import Path
 import re
 
 from nn.config  import NNConfig, ConvConfig, PoolConfig, ClassifierConfig
-from nn.globals import HAND_GESTURE_CFG
+from nn.globals import MNIST_CFG
 
 def _rom_needs_hi(cfg) -> bool:
     '''True when a layer's ROM exceeds one SB_RAM40_4K tile (16 bits wide).'''
@@ -315,4 +315,4 @@ def render_verilog(cfg: NNConfig) -> None:
     print("Run make bitstream ESP=1 ?")
 
 if __name__ == "__main__":
-   render_verilog(HAND_GESTURE_CFG)
+   render_verilog(MNIST_CFG)
