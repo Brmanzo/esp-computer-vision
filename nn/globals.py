@@ -20,7 +20,7 @@ def get_mnist_cfg(num_classes: int = 10, img_h: int = 28, img_w: int = 28) -> NN
     '''Returns the hardware-aware NNConfig for MNIST digit classification.'''
     return NNConfig(
         input_dimensions = InputDimensions(img_w, img_h),
-        in_channels      = [1, 4, 8, 12],
+        in_channels      = [1, 4, 9, 12],
         in_bits          = [1, 3, 3, 4],
         kernels          = [[3,2], [3,2], [3], [1]],
         padding          = 1,
@@ -29,9 +29,9 @@ def get_mnist_cfg(num_classes: int = 10, img_h: int = 28, img_w: int = 28) -> NN
         bus_width        = 8,
         bias_bits        = [8, 16, 16, 32],
         q_schedule = [QSchedule(25, [3, 3, 3, 3, 5, 10], 8, 3),   # L0:  25 warmup, drops 8→3
-                      QSchedule(30, [3, 3, 3, 3, 15],   12, 8),  # L1:  30 warmup, drops 12→8
-                      QSchedule(40, [3, 3, 3, 3, 20],   12, 8),  # L2:  40 warmup, drops 12→8
-                      QSchedule(50, [3, 3, 3, 3, 25],   12, 8)],  # Cls: 50 warmup, drops 12→8
-        use_dsp          = [0, 2, 4, 2])
+                      QSchedule(30, [3, 3, 3, 3, 15],   8, 4),  # L1:  30 warmup, drops 12→8
+                      QSchedule(40, [3, 3, 3, 3, 20],   8, 4),  # L2:  40 warmup, drops 12→8
+                      QSchedule(50, [3, 3, 3, 3, 25],   8, 4)],  # Cls: 50 warmup, drops 12→8
+        use_dsp          = [0, 3, 4, 1])
 
 MNIST_CFG = get_mnist_cfg()

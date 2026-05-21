@@ -66,10 +66,10 @@ module neuron_dsp #(
     end else if (en_i) begin
       if (load_bias_i) begin
         // On the first cycle of a frame, load the bias and perform the first multiplication
-        acc_r <= `SB_MAC16_OUT'($signed(bias_i)) + (`SB_MAC16_OUT'($signed(data_w)) * `SB_MAC16_OUT'($signed(weight_w)));
+        acc_r <= `SB_MAC16_OUT'($signed(bias_i)) + `SB_MAC16_OUT'($signed(data_w) * $signed(weight_w));
       end else begin
         // On subsequent cycles, accumulate the product
-        acc_r <= acc_r + (`SB_MAC16_OUT'($signed(data_w)) * `SB_MAC16_OUT'($signed(weight_w)));
+        acc_r <= acc_r + `SB_MAC16_OUT'($signed(data_w) * $signed(weight_w));
       end
     end
   end
