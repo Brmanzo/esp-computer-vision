@@ -101,6 +101,19 @@ RECURSE ?= 1
 NETLISTSVG_STACK ?= 65536
 NETLISTSVG_JS    ?= $(shell readlink -f $(shell which netlistsvg 2>/dev/null) 2>/dev/null)
 
+STAT_PARSE := python3 $(REPO_ROOT)/nn/util.py
+
+stat-modules: $(TOP_SV) $(FILELIST) $(SYNTH_SOURCES) $(HEX_FILES)
+	$(YOSYS) -p 'read_verilog -sv -DSYNTHESIS $(if $(filter 1,$(ESP)),-DESP,) $(TOP_SV) $(SYNTH_SOURCES); hierarchy -top top; synth_ice40 -dsp -noflatten -top top; stat' | $(STAT_PARSE) $(if $(MOD),--top $(MOD),)
+
+list-modules: $(TOP_SV) $(FILELIST) $(SYNTH_SOURCES) $(HEX_FILES)
+	$(YOSYS) -p 'read_verilog -sv -DSYNTHESIS $(if $(filter 1,$(ESP)),-DESP,) $(TOP_SV) $(SYNTH_SOURCES); hierarchy -top top; synth_ice40 -dsp -noflatten -top top; ls'
+
+stat-raw: $(TOP_SV) $(FILELIST) $(SYNTH_SOURCES) $(HEX_FILES)
+	$(YOSYS) -p 'read_verilog -sv -DSYNTHESIS $(if $(filter 1,$(ESP)),-DESP,) $(TOP_SV) $(SYNTH_SOURCES); hierarchy -top top; synth_ice40 -dsp -noflatten -top top; stat'
+
+
+
 %.expanded.pdf: %.expanded.json
 	node --stack-size=$(NETLISTSVG_STACK) $(NETLISTSVG_JS) $< -o $(subst .pdf,.svg,$@)
 	$(RSVG) -f pdf $(subst .pdf,.svg,$@) -o $@
@@ -157,4 +170,4 @@ clean: synth-clean
 targets-help: synth-help
 vars-help: synth-vars-help
 
-.PHONY: synth-clean synth-help synth-vars-help vars-help targets-help clean synth-mapped synth-clean synth-abstract
+.PHONY: synth-clean synth-help synth-vars-help vars-help targets-help clean synth-mapped synth-clean synth-abstract stat-modules list-modules stat-raw
