@@ -4,7 +4,7 @@
 import torch
 
 from nn.config   import NNConfig, ConvConfig, PoolConfig
-from nn.globals  import get_hand_gesture_cfg, BRAM_COUNT, DSP_COUNT
+from nn.globals  import NN_CFG, BRAM_COUNT, DSP_COUNT
 from nn.quantize import QuantConv2d, QuantizeActivation, LearnedShiftQuantizer
 
 class cnn(torch.nn.Module):
@@ -242,7 +242,7 @@ class cnn(torch.nn.Module):
             print(f"Estimated Max Frame Rate: {fps:.2f} FPS")
 
 if __name__ == "__main__":
-    network = cnn(get_hand_gesture_cfg())
+    network = cnn(NN_CFG)
     print("\n--- Network ARCHITECTURE ---")
     print(network)
     print("\n--- RESOURCE UTILIZATION ---")

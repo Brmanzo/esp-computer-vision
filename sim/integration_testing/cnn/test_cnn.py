@@ -13,7 +13,7 @@ from util.utilities  import runner, clock_start_sequence, reset_sequence, get_pa
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from functional_models.cnn_model import CNNModel, PictureGenerator
 from util.weight_loader import load_weights_from_vh
-from nn.globals import HAND_GESTURE_CFG
+from nn.globals import NN_CFG
 
 @cocotb.test
 async def full_cnn_test(dut) -> None:
@@ -25,7 +25,7 @@ async def full_cnn_test(dut) -> None:
       SAMPLE_IDX    : dataset index when INJECT_PIXELS is not set (default 10)
     """
     # 1. Load Architecture Config
-    config = HAND_GESTURE_CFG
+    config = NN_CFG
     # Apply learned shift from VH file so CNNModel uses the correct ShiftBits
     classifier_shift_env = int(os.environ.get("CLASSIFIER_SHIFT", str(config.classifier_config._shift)))
     config.classifier_config._shift = classifier_shift_env
@@ -76,7 +76,7 @@ async def full_cnn_test(dut) -> None:
     await om.wait(timeout_ns)
 
     # 5. Report Results
-    from nn.preprocess import get_class_names
+    from nn.tasks.hand_gesture.preprocess import get_class_names
     from nn.inference import get_inference, get_inference_from_pixels
     from nn.sample import get_sample
 
@@ -127,7 +127,7 @@ def test_full(inject_pixels: str = "") -> None:
         inject_pixels: "zeros" | "ones" | "<comma-separated ints>" | "" (dataset, default)
     """
     tbpath = Path(__file__).parent
-    config = HAND_GESTURE_CFG
+    config = NN_CFG
     simulator = "verilator"
     params = {"BusBits": 8}
     testname = "full_cnn_test"

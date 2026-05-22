@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# nn.preprocess.py
+# nn.tasks.hand_gesture.preprocess.py
 # Bradley Manzo 2026
 
 import kagglehub

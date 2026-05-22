@@ -15,7 +15,7 @@ from   typing   import Any, Optional
 
 from nn.arch     import cnn, QuantConv2d
 from nn.config   import NNConfig, ConvConfig, ClassifierConfig
-from nn.globals  import DATAPATH, ROMPATH, HAND_GESTURE_CFG
+from nn.globals  import DATAPATH, ROMPATH, NN_CFG, NET_PATH
 from nn.quantize import LearnedShiftQuantizer, QuantizeActivation, \
                         generate_random_quantized_weights
 
@@ -345,7 +345,7 @@ def export_csv_to_hex(csv_path: Path, sv_path: Path, hex_path: Path, config: NNC
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Export QAT Network to Hardware files")
-    parser.add_argument("network_in", nargs="?", default=DATAPATH / "gesture_net_quantized.pth", type=Path)
+    parser.add_argument("network_in", nargs="?", default=NET_PATH, type=Path)
     parser.add_argument("csv_out", nargs="?", default=DATAPATH / "hardware_weights.csv", type=Path)
     parser.add_argument("sv_out", nargs="?", default=DATAPATH / "hardware_weights.vh", type=Path)
     parser.add_argument("hex_out", nargs="?", default=ROMPATH, type=Path)
@@ -358,8 +358,8 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # 1. Refresh the CSV from the trained network (or generate random weights)
-    export_nn_to_csv(args.network_in, config=HAND_GESTURE_CFG, output_csv=args.csv_out, random_weights=args.random)
+    export_nn_to_csv(args.network_in, config=NN_CFG, output_csv=args.csv_out, random_weights=args.random)
 
     # 2. Generate the SystemVerilog header and hex files
-    export_csv_to_hex(args.csv_out, args.sv_out, args.hex_out, config=HAND_GESTURE_CFG)
+    export_csv_to_hex(args.csv_out, args.sv_out, args.hex_out, config=NN_CFG)
     print("Run cnn.py render ?")

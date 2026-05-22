@@ -8,29 +8,27 @@ import re
 import torch
 from   typing import Sized, cast
 
-from nn.globals    import HAND_GESTURE_CFG, GESTURE_CLASSES
+from nn.globals    import NN_CFG, CLASSES, NET_PATH, prepare_data
 from nn.arch       import cnn
-from nn.preprocess import prepare_data
 from nn.sample     import get_sample
 
 def run_inference(sample_idx: int):
     # 1. Setup Constants
     IMG_H, IMG_W = 240, 320
     IN_BITS = 1
-    DATAPATH = Path(__file__).parent / "data"
-    NN_PATH = DATAPATH / "gesture_net_quantized.pth"
+    NN_PATH = NET_PATH
     dataset_name = "roobansappani/hand-gesture-recognition"
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # 2. Load Data and Metadata
-    class_names = sorted(GESTURE_CLASSES)  # okay=0, paper=1, peace=2, up=3
+    class_names = sorted(CLASSES)  # okay=0, paper=1, peace=2, up=3
 
     # Still need the loader to get the images
-    _, test_loader, _ = prepare_data(dataset_name, IMG_H, IMG_W, IN_BITS, 0.8, 32, target_classes=GESTURE_CLASSES)
+    _, test_loader, _ = prepare_data(dataset_name, IMG_H, IMG_W, IN_BITS, 0.8, 32, target_classes=CLASSES)
     
     # 3. Load network
-    network = cnn(config=HAND_GESTURE_CFG)
+    network = cnn(config=NN_CFG)
     
     if not NN_PATH.exists():
         print(f"Error: network weights not found at {NN_PATH}. Run training first.")
@@ -177,25 +175,25 @@ def get_inference(sample_idx: int) -> int:
     pixels, _ = get_sample(sample_idx)
     if pixels is None:
         raise ValueError(f"Could not load sample {sample_idx}")
-    return _hw_integer_forward(pixels, HAND_GESTURE_CFG)
+    return _hw_integer_forward(pixels, NN_CFG)
 
 
 def get_inference_from_pixels(pixels: list, config=None) -> int:
     '''Hardware-accurate inference on an explicit flat list of binary {0,1} pixels.'''
-    return _hw_integer_forward(pixels, config or HAND_GESTURE_CFG)
+    return _hw_integer_forward(pixels, config or NN_CFG)
 
 
 def hw_eval(n_trials: int = 100) -> float:
     '''Run hardware-accurate integer inference on n_trials test samples and report accuracy.'''
 
     dataset_name = "roobansappani/hand-gesture-recognition"
-    IMG_H, IMG_W = HAND_GESTURE_CFG.in_dims.height, HAND_GESTURE_CFG.in_dims.width
-    IN_BITS = HAND_GESTURE_CFG._in_bits[0]
+    IMG_H, IMG_W = NN_CFG.in_dims.height, NN_CFG.in_dims.width
+    IN_BITS = NN_CFG._in_bits[0]
     assert IMG_H is not None and IMG_W is not None, "Input dimensions must be specified in config"
     _, test_loader, _ = prepare_data(dataset_name, IMG_H, IMG_W, IN_BITS, 0.8, 1,
-                                     target_classes=GESTURE_CLASSES)
+                                     target_classes=CLASSES)
 
-    class_names = sorted(GESTURE_CLASSES)
+    class_names = sorted(CLASSES)
     correct = 0
     total   = 0
     per_class_correct = {name: 0 for name in class_names}
@@ -206,7 +204,7 @@ def hw_eval(n_trials: int = 100) -> float:
             break
         label  = int(label_t[0])
         pixels = (img_t[0].flatten() > 0.5).int().tolist()
-        pred   = _hw_integer_forward(pixels, HAND_GESTURE_CFG)
+        pred   = _hw_integer_forward(pixels, NN_CFG)
 
         name = class_names[label]
         per_class_total[name]   += 1

@@ -6,25 +6,25 @@ from   pathlib import Path
 import sys
 from   torchvision.utils import save_image
 
-from nn.globals    import HAND_GESTURE_CFG, DATAPATH, GESTURE_CLASSES
-from nn.preprocess import prepare_data, get_transforms
+from nn.globals    import NN_CFG, DATAPATH, CLASSES
+from nn.tasks.hand_gesture.preprocess import prepare_data, get_transforms
 
 def sample_to_hex(sample_idx:int=0, path:Path=DATAPATH):
     '''Samples an image from the dataset, applies preprocessing, and returns a Verilog hex string.'''
     
-    # 1. Load dataset using standard parameters from HAND_GESTURE_CFG
+    # 1. Load dataset using standard parameters from NN_CFG
     dataset_name = "roobansappani/hand-gesture-recognition"
-    if HAND_GESTURE_CFG.in_dims.height is None or HAND_GESTURE_CFG.in_dims.width is None or HAND_GESTURE_CFG._in_bits[0] is None:
-        print("Error: HAND_GESTURE_CFG is missing input dimensions.")
+    if NN_CFG.in_dims.height is None or NN_CFG.in_dims.width is None or NN_CFG._in_bits[0] is None:
+        print("Error: NN_CFG is missing input dimensions.")
         return None, None
     train_loader, test_loader, num_classes = prepare_data(
         dataset_name, 
-        img_h      = HAND_GESTURE_CFG.in_dims.height,
-        img_w      = HAND_GESTURE_CFG.in_dims.width,
-        in_bits    = HAND_GESTURE_CFG._in_bits[0],
+        img_h      = NN_CFG.in_dims.height,
+        img_w      = NN_CFG.in_dims.width,
+        in_bits    = NN_CFG._in_bits[0],
         data_split = 0.8,
         batch_size = 1,
-        target_classes = GESTURE_CLASSES
+        target_classes = CLASSES
     )
     
     # 2. Grab the sample from the test loader
@@ -62,17 +62,17 @@ def sample_to_hex(sample_idx:int=0, path:Path=DATAPATH):
 def get_sample(sample_idx: int):
     '''Returns preprocessed pixels and label for a specific dataset index.'''
     dataset_name = "roobansappani/hand-gesture-recognition"
-    if HAND_GESTURE_CFG.in_dims.height is None or HAND_GESTURE_CFG.in_dims.width is None or HAND_GESTURE_CFG._in_bits[0] is None:
-        print("Error: HAND_GESTURE_CFG is missing input dimensions.")
+    if NN_CFG.in_dims.height is None or NN_CFG.in_dims.width is None or NN_CFG._in_bits[0] is None:
+        print("Error: NN_CFG is missing input dimensions.")
         return None, None
     train_loader, test_loader, num_classes = prepare_data(
         dataset_name, 
-        img_h      = HAND_GESTURE_CFG.in_dims.height,
-        img_w      = HAND_GESTURE_CFG.in_dims.width,
-        in_bits    = HAND_GESTURE_CFG._in_bits[0],
+        img_h      = NN_CFG.in_dims.height,
+        img_w      = NN_CFG.in_dims.width,
+        in_bits    = NN_CFG._in_bits[0],
         data_split = 0.8,
         batch_size = 1,
-        target_classes = GESTURE_CLASSES
+        target_classes = CLASSES
     )
     
     for i, (batch_img, batch_label) in enumerate(test_loader):
