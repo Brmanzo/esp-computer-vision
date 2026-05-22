@@ -3,35 +3,20 @@
 
 from pathlib import Path
 
-from nn.config import NNConfig, InputDimensions
-from nn.quantize import QSchedule
+from nn.tasks.mnist.mnist     import get_nn_cfg as _get_mnist_cfg, MNIST_NET_PATH, MNIST_CLASSES
+from nn.tasks.mnist.preprocess import prepare_mnist_data as _prepare_mnist_data, get_transforms as _get_mnist_transforms
 
 # Default paths matching the training pipeline
 DATAPATH = Path("nn") / "data"
-ROMPATH = DATAPATH / "roms" / "hex"
+ROMPATH  = DATAPATH / "roms" / "hex"
 
 BAUD = 115200  # 12 MHz / (prescale=13 * 8) ≈ 115385 baud (0.16% error)
 BRAM_COUNT = 30 - 1 # Subtract 1 for the Skid Buffer BRAM on deframer
 DSP_COUNT  = 8
 
-MNIST_CLASSES = [str(d) for d in range(10)]
-
-def get_nn_cfg(num_classes: int = 10, img_h: int = 28, img_w: int = 28) -> NNConfig:
-    '''Returns the hardware-aware NNConfig for MNIST digit classification.'''
-    return NNConfig(
-        input_dimensions = InputDimensions(img_w, img_h),
-        in_channels      = [1, 4, 9, 12],
-        in_bits          = [1, 2, 3, 3],
-        kernels          = [[3,2], [3,2], [3], [1]],
-        padding          = 1,
-        stride           = 1,
-        num_classes      = num_classes,
-        bus_width        = 8,
-        bias_bits        = [8, 16, 16, 16],
-        q_schedule = [QSchedule(25, [3, 3, 3, 3, 5, 10], 8, 3),   # L0:  25 warmup, drops 8→3
-                      QSchedule(30, [3, 3, 3, 3, 15],  12, 8),  # L1:  30 warmup, drops 12→8
-                      QSchedule(40, [3, 3, 3, 3, 20],  12, 8),  # L2:  40 warmup, drops 12→8
-                      QSchedule(50, [3, 3, 3, 3, 25],  12, 8)],  # Cls: 50 warmup, drops 12→8
-        use_dsp          = [0, 3, 4, 1])
-
-NN_CFG = get_nn_cfg()
+# MNIST Task
+NET_PATH       = MNIST_NET_PATH
+CLASSES        = MNIST_CLASSES
+NN_CFG         = _get_mnist_cfg()
+prepare_data   = _prepare_mnist_data
+get_transforms = _get_mnist_transforms

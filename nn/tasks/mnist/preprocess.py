@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# nn.preprocess.py
+# nn.tasks.mnist.preprocess.py
 # Bradley Manzo 2026
 
 from   pathlib import Path

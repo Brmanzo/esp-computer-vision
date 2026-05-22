@@ -11,9 +11,8 @@ from   typing  import List, Tuple, Callable
 from nn.arch       import cnn, QuantConv2d
 from nn.config     import NNConfig
 from nn.export     import export_nn_to_csv, export_csv_to_hex
-from nn.globals    import get_nn_cfg
+from nn.globals    import NN_CFG, NET_PATH, prepare_data, get_transforms
 from nn.plot       import plot_training
-from nn.preprocess import prepare_mnist_data, get_transforms
 
 
 def train_network(network: torch.nn.Module, train_loader: DataLoader, test_loader: DataLoader, train_aug: Callable, cfg: NNConfig, device: str, global_max:float,
@@ -148,7 +147,7 @@ def train_network(network: torch.nn.Module, train_loader: DataLoader, test_loade
 def main():
     # 1. Configure network
     IMG_H, IMG_W = 28, 28
-    tmp_cfg = get_nn_cfg(img_h=IMG_H, img_w=IMG_W)
+    tmp_cfg = NN_CFG
     max_sched_epochs = max(q_sched.total_epochs() for q_sched in tmp_cfg.q_schedule)
 
     # 2. Parse CLI arguments
@@ -168,7 +167,7 @@ def main():
 
     datapath     = Path("nn") / "data"
     plot_path    = datapath / "training_accuracy.png"
-    network_path = Path(args.network_path) if args.network_path else datapath / "mnist_net_quantized.pth"
+    network_path = Path(args.network_path) if args.network_path else NET_PATH
     csv_path     = datapath / "hardware_weights.csv"
     sv_path      = datapath / "hardware_weights.vh"
 
@@ -176,10 +175,10 @@ def main():
     torch.backends.cudnn.benchmark = True
 
     # 2. Configure network
-    cfg = get_nn_cfg()
+    cfg = NN_CFG
 
     # 3. Prepare Data
-    train_loader, test_loader, _ = prepare_mnist_data(datapath, IMG_H, IMG_W, BATCH_SIZE)
+    train_loader, test_loader, _ = prepare_data(datapath, IMG_H, IMG_W, BATCH_SIZE)
     _, train_aug = get_transforms(IMG_H, IMG_W)
 
     # 4. Create network

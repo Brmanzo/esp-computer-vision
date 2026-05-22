@@ -9,9 +9,8 @@ import re
 import torch
 from   typing import Sized, cast
 
-from nn.globals    import DATAPATH, NN_CFG, MNIST_CLASSES
+from nn.globals    import DATAPATH, NN_CFG, CLASSES, NET_PATH, prepare_data
 from nn.arch       import cnn
-from nn.preprocess import prepare_mnist_data
 from nn.sample     import get_sample
 
 def run_inference(sample_idx: int):
@@ -19,12 +18,12 @@ def run_inference(sample_idx: int):
     IMG_W = NN_CFG.in_dims.width
     assert IMG_H is not None and IMG_W is not None
     DATAPATH = Path(__file__).parent / "data"
-    NN_PATH = DATAPATH / "mnist_net_quantized.pth"
+    NN_PATH = NET_PATH
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    class_names = sorted(MNIST_CLASSES)
-    _, test_loader, _ = prepare_mnist_data(DATAPATH, IMG_H, IMG_W, 1)    
+    class_names = sorted(CLASSES)
+    _, test_loader, _ = prepare_data(DATAPATH, IMG_H, IMG_W, 1)    
     # 3. Load network
     network = cnn(config=NN_CFG)
     

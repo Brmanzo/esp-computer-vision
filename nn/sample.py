@@ -6,8 +6,7 @@ from   pathlib import Path
 import sys
 from   torchvision.utils import save_image
 
-from nn.globals    import NN_CFG, DATAPATH
-from nn.preprocess import prepare_mnist_data
+from nn.globals    import NN_CFG, DATAPATH, prepare_data
 
 def sample_to_hex(sample_idx: int = 0, path: Path = DATAPATH):
     '''Samples an image from MNIST, applies preprocessing, and returns a Verilog hex string.'''
@@ -15,7 +14,7 @@ def sample_to_hex(sample_idx: int = 0, path: Path = DATAPATH):
         print("Error: NN_CFG is missing input dimensions.")
         return None, None
 
-    _, test_loader, _ = prepare_mnist_data(
+    _, test_loader, _ = prepare_data(
         data_dir   = DATAPATH,
         img_h      = NN_CFG.in_dims.height,
         img_w      = NN_CFG.in_dims.width,
@@ -54,7 +53,7 @@ def get_sample(sample_idx: int):
         print("Error: NN_CFG is missing input dimensions.")
         return None, None
 
-    _, test_loader, _ = prepare_mnist_data(
+    _, test_loader, _ = prepare_data(
         data_dir   = DATAPATH,
         img_h      = NN_CFG.in_dims.height,
         img_w      = NN_CFG.in_dims.width,
