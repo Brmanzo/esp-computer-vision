@@ -7,12 +7,13 @@ module cnn_framed #(
   parameter int unsigned BusBits = 8
   ,parameter              FileName_0    = "nn/data/roms/hex/zeros.hex"
   ,parameter              FileName_1    = "nn/data/roms/hex/zeros.hex"
+  ,parameter              FileName_1_hi = "nn/data/roms/hex/zeros.hex"
   ,parameter              FileName_2    = "nn/data/roms/hex/zeros.hex"
   ,parameter              FileName_2_hi = "nn/data/roms/hex/zeros.hex"
   ,parameter              FileName_3    = "nn/data/roms/hex/zeros.hex"
 
-  ,localparam int unsigned WidthIn   = 320
-  ,localparam int unsigned HeightIn  = 240
+  ,parameter  int unsigned WidthIn   = 320
+  ,parameter  int unsigned HeightIn  = 240
   ,localparam int unsigned InBits    = 1
   ,localparam int unsigned PackedNum = BusBits / InBits
   ,localparam int unsigned BytesIn   = (WidthIn * HeightIn) / PackedNum
@@ -60,6 +61,7 @@ module cnn_framed #(
      .BusBits      (BusBits)
     ,.FileName_0   (FileName_0)
     ,.FileName_1   (FileName_1)
+    ,.FileName_1_hi(FileName_1_hi)
     ,.FileName_2   (FileName_2)
     ,.FileName_2_hi(FileName_2_hi)
     ,.FileName_3   (FileName_3)

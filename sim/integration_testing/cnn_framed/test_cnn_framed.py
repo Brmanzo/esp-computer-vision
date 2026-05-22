@@ -10,10 +10,11 @@ sys.set_int_max_str_digits(0)
 
 from util.utilities  import runner, clock_start_sequence, reset_sequence, get_param_string, inject_weights_and_biases
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
-from functional_models.cnn import CNNModel
+from functional_models.cnn_model import CNNModel
 from functional_models.cnn_framed_model import CnnFramedModel, FramedPictureGenerator
 from util.weight_loader import load_weights_from_vh
 from nn.globals import NN_CFG
+from nn.render import patch_cnn_framed_sv
 
 @cocotb.test
 async def full_cnn_test(dut) -> None:
@@ -34,7 +35,7 @@ async def full_cnn_test(dut) -> None:
     """
     from util.bitwise import unpack_kernel_weights, unpack_weights, unpack_biases
     from nn.sample import get_sample
-    from nn.tasks.hand_gesture.preprocess import get_class_names
+    from nn.globals import CLASSES as class_names_list
     from nn.inference import get_inference, get_inference_from_pixels
 
     # 1. Architecture config + learned shift
@@ -118,7 +119,7 @@ async def full_cnn_test(dut) -> None:
     await om.wait(timeout_ns)
 
     # 9. Report and assert
-    class_names = get_class_names()
+    class_names = sorted(class_names_list)
     assert len(framed_model.results) > 0, (
         "No class byte captured — CnnFramedModel.produce() was never called with class position. "
         "Pipeline may have timed out or class_framer wakeup byte consumed all produce() calls."
@@ -154,8 +155,9 @@ def test_full(inject_pixels: str = "") -> None:
     """
     tbpath = Path(__file__).parent
     config = NN_CFG
+    assert config.in_dims.width is not None and config.in_dims.height is not None
     simulator = "verilator"
-    params = {"BusBits": 8}
+    params = {"BusBits": 8, "WidthIn": config.in_dims.width, "HeightIn": config.in_dims.height}
     testname = "full_cnn_test"
 
     param_str = get_param_string(params)
@@ -179,6 +181,9 @@ def test_full(inject_pixels: str = "") -> None:
     classifier_shift = int(m.group(1))
     config.classifier_config._shift = classifier_shift
     os.environ["CLASSIFIER_SHIFT"] = str(classifier_shift)
+
+    # Sync tb_cnn_framed.sv FileName parameters to current model's ROM layout
+    patch_cnn_framed_sv(config, tbpath / "tb_cnn_framed.sv")
 
     # Inject weights for all conv/pool layers
     for i, layer_cfg in enumerate(config.layers):
@@ -226,10 +231,13 @@ def test_full(inject_pixels: str = "") -> None:
     _write_vh(os.path.join(work_dir, f"layer_{c_idx}_weights.vh"), f"LAYER_{c_idx}_WEIGHTS", c_w_bits, raw_dict[f"LAYER_{c_idx}_WEIGHTS"])
     _write_vh(os.path.join(work_dir, f"layer_{c_idx}_biases.vh"),  f"LAYER_{c_idx}_BIASES",  c_b_bits, raw_dict[f"LAYER_{c_idx}_BIASES"])
 
-    # Master header including all layers + CLASSIFIER_SHIFT
+    # Master header: all localparam int lines from vh (shifts, TruncGuard, etc.) + layer includes
+    int_params = re.findall(r"localparam\s+int\s+\w+\s*=\s*\d+\s*;", vh_content)
     master_header_path = os.path.join(work_dir, "injected_weights_0.vh")
     with open(master_header_path, "w") as f:
-        f.write(f"localparam int CLASSIFIER_SHIFT = {classifier_shift};\n")
+        for param_line in int_params:
+            f.write(param_line + "\n")
+        f.write("\n")
         for i in range(len(config.layers) + 1):
             f.write(f'`include "layer_{i}_weights.vh"\n')
             f.write(f'`include "layer_{i}_biases.vh"\n')

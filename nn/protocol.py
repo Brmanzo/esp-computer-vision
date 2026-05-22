@@ -6,10 +6,11 @@
 # the cnn_uart cocotb integration test. Both must stay in sync with
 # deframer.sv and class_framer.sv.
 
+from nn.globals import IMG_DIMS
+
 HEADER    = bytes([0xA5, 0x5A])
 TAIL      = bytes([0xA5, 0x5A])
 WAKEUP    = 0x99
-IMG_BYTES = (320 * 240) // 8   # 9600 — 8 binary pixels per byte, LSB-first
 
 
 def build_frame(pixels: list) -> bytes:
@@ -17,7 +18,7 @@ def build_frame(pixels: list) -> bytes:
 
     Returns HEADER + 9600 image bytes (LSB-first packed).
     """
-    buf = bytearray(IMG_BYTES)
+    buf = bytearray(IMG_DIMS.term_count // 8)
     for i, px in enumerate(pixels):
         if px:
             buf[i // 8] |= 1 << (i % 8)

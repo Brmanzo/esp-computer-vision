@@ -146,8 +146,10 @@ def train_network(network: torch.nn.Module, train_loader: DataLoader, test_loade
 
 def main():
     # 1. Configure network
-    IMG_H, IMG_W = 28, 28
     tmp_cfg = NN_CFG
+    IMG_H = tmp_cfg.in_dims.height
+    IMG_W = tmp_cfg.in_dims.width
+    assert IMG_H is not None and IMG_W is not None
     max_sched_epochs = max(q_sched.total_epochs() for q_sched in tmp_cfg.q_schedule)
 
     # 2. Parse CLI arguments

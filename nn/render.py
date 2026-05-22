@@ -273,6 +273,27 @@ def patch_uart_cnn_sv(cfg: NNConfig, path: Path) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def patch_cnn_framed_sv(cfg: NNConfig, path: Path) -> None:
+    '''Keep FileName parameter declarations and cnn forwarding in tb_cnn_framed.sv in sync with cnn.sv.'''
+    decl_lines, fwd_lines = [], []
+    for i, needs_hi in _build_filename_rows(cfg):
+        if needs_hi:
+            decl_lines += [f'  ,parameter              FileName_{i}    = "nn/data/roms/hex/zeros.hex"',
+                           f'  ,parameter              FileName_{i}_hi = "nn/data/roms/hex/zeros.hex"']
+            fwd_lines  += [f'    ,.FileName_{i}   (FileName_{i})',
+                           f'    ,.FileName_{i}_hi(FileName_{i}_hi)']
+        else:
+            decl_lines.append(f'  ,parameter              FileName_{i}    = "nn/data/roms/hex/zeros.hex"')
+            fwd_lines.append( f'    ,.FileName_{i}   (FileName_{i})')
+
+    text = path.read_text(encoding="utf-8")
+    text = re.sub(r'(?:  ,parameter +FileName_\S+ *= *"[^"]*"\n)+',
+                  '\n'.join(decl_lines) + '\n', text)
+    text = re.sub(r'(?:    ,\.FileName_\S+ *\(FileName_[A-Za-z0-9_]+\)\n)+',
+                  '\n'.join(fwd_lines) + '\n', text)
+    path.write_text(text, encoding="utf-8")
+
+
 def patch_top_sv(cfg: NNConfig, path: Path) -> None:
     '''Keep FileName arguments in the uart_cnn instantiation in top.sv in sync with cnn.sv.'''
     arg_lines = []
