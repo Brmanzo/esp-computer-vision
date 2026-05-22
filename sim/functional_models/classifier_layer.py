@@ -3,7 +3,7 @@ import numpy as np
 from   typing import List, Optional
 
 from util.utilities  import assert_resolvable, sim_verbose
-from util.bitwise    import unpack_terms, pack_terms
+from util.bitwise    import unpack_terms, pack_terms, sign_extend
 from util.torch_ref  import torch_classifier_ref
 from util.gen_inputs import gen_input_channels
 
@@ -42,6 +42,7 @@ class ClassifierLayerModel:
             self._Unsigned = int(unsigned_obj.value) if unsigned_obj is not None else 0
             shift_obj = getattr(dut, "ShiftBits", None)
             self._ShiftBits = int(shift_obj.value) if shift_obj is not None else 0
+            self._bias_bits = int(dut.BiasBits.value)
         else:
             try:
                 self._term_bits   = int(kwargs["term_bits"])
@@ -51,6 +52,7 @@ class ClassifierLayerModel:
                 self._weight_bits = int(kwargs.get("weight_bits", 2))
                 self._Unsigned    = int(kwargs.get("unsigned_in", 0))
                 self._ShiftBits   = int(kwargs.get("ShiftBits", 0))
+                self._bias_bits   = int(kwargs.get("bias_bits", 8))
             except KeyError as e:
                 raise ValueError(f"Missing required parameter when dut is None: {e}")
 
@@ -65,7 +67,7 @@ class ClassifierLayerModel:
         if biases is None:
             biases = [0] * self._class_count
             
-        self.b = np.array(biases, dtype=int)
+        self.b = np.array([sign_extend(b, self._bias_bits) for b in biases], dtype=int)
 
         # If scalar bias for OC=1, normalize to shape (1,)
         if self.b.shape == () and self._class_count == 1:
@@ -89,7 +91,7 @@ class ClassifierLayerModel:
             return 32
 
         # Linear layer internally extends InBits to InBits+1 for the signed MAC
-        self._acc_bits = acc_width(self._term_bits + 1, self._weight_bits, self._in_channels, int(kwargs.get("bias_bits", 4)) if dut is None else int(dut.BiasBits.value))
+        self._acc_bits = acc_width(self._term_bits + 1, self._weight_bits, self._in_channels, self._bias_bits)
 
     def _truncate_to_bits(self, val: int, bits: int) -> int:
         """Simulates hardware signed truncation."""
@@ -110,12 +112,12 @@ class ClassifierLayerModel:
         if bits == 1:
             return 1 if v == 1 else -1
         if bits == 2:
-            return 1 if v == 1 else (-1 if v == -1 else 0)
+            return 1 if v == 1 else (-1 if (v == 3 or v == -1) else 0)
         
         if is_unsigned:
              return v & ((1 << bits) - 1)
              
-        return v
+        return sign_extend(v, bits)
 
     def step(self, x: List[int]) -> Optional[List[tuple]]:
         """

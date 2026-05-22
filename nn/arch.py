@@ -93,6 +93,8 @@ class cnn(torch.nn.Module):
         render_verilog(self.config)
 
     def forward(self, x):
+        # Map 1-bit input from {0.0, 1.0} to {-1.0, 1.0} to match the hardware's 1-bit signed logic
+        x = 2.0 * x - 1.0
         x = self.features(x)           
         
         # Global Max

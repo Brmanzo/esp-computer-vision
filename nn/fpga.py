@@ -15,8 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from nn.inference  import get_inference_from_pixels
 from nn.protocol   import build_frame, parse_response
-from nn.tasks.hand_gesture.preprocess import prepare_data
-from nn.globals    import NN_CFG, CLASSES, BAUD
+from nn.globals    import NN_CFG, BAUD, DATAPATH, prepare_data
 
 # ── Serial config ─────────────────────────────────────────────────────────────
 
@@ -95,21 +94,15 @@ def main():
 
     inject_env = os.environ.get("INJECT_PIXELS", "")
 
+    cfg = NN_CFG
+    assert cfg.in_dims.height is not None and cfg.in_dims.width is not None
+    n_pixels = cfg.in_dims.width * cfg.in_dims.height
+
     # Load dataset once upfront (skipped for smoke-test modes).
     samples: list[tuple[list, int]] = []
     if not inject_env:
         print("Loading dataset...")
-        cfg = NN_CFG
-        assert cfg.in_dims.height is not None and cfg.in_dims.width is not None
-        _, test_loader, _ = prepare_data(
-            "roobansappani/hand-gesture-recognition",
-            img_h          = cfg.in_dims.height,
-            img_w          = cfg.in_dims.width,
-            in_bits        = cfg._in_bits[0],
-            data_split     = 0.8,
-            batch_size     = 1,
-            target_classes = CLASSES,
-        )
+        _, test_loader, _ = prepare_data(DATAPATH, cfg.in_dims.height, cfg.in_dims.width, 1)
         for batch_img, batch_label in test_loader:
             pixels = (batch_img[0].flatten() > 0.5).int().tolist()
             samples.append((pixels, int(batch_label[0])))
@@ -131,10 +124,10 @@ def main():
 
         # 1. Load sample
         if inject_env == "zeros":
-            pixels, label = [0] * (320 * 240), None
+            pixels, label = [0] * n_pixels, None
             print("  Smoke test (all zeros)")
         elif inject_env == "ones":
-            pixels, label = [1] * (320 * 240), None
+            pixels, label = [1] * n_pixels, None
             print("  Smoke test (all ones)")
         else:
             pixels, label = samples[idx]

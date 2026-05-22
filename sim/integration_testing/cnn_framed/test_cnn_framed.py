@@ -168,7 +168,7 @@ def test_full(inject_pixels: str = "") -> None:
         os.environ.pop("INJECT_PIXELS", None)
 
     # Load weights from hardware_weights.vh
-    vh_path = (tbpath / ".." / ".." / ".." / "model" / "data" / "hardware_weights.vh").resolve()
+    vh_path = (tbpath / ".." / ".." / ".." / "nn" / "data" / "hardware_weights.vh").resolve()
     _, raw_dict = load_weights_from_vh(str(vh_path), config)
 
     with open(vh_path) as f:

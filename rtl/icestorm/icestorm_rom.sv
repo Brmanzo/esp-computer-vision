@@ -27,7 +27,7 @@ module icestorm_rom #(
    localparam int unsigned ActualDepth     = (Depth < 256) ? 256 : Depth;
    localparam int unsigned ActualDepthBits = (ActualDepth <= 1) ? 1 : $clog2(ActualDepth);
 
-   logic [Width-1:0] rom [ActualDepth-1:0];
+   (* ram_style = "block" *) logic [Width-1:0] rom [ActualDepth-1:0];
    logic [Width-1:0]  rd_data_r;
    assign rd_data_o = rd_data_r;
 

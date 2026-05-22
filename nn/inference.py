@@ -1,6 +1,7 @@
 # nn.inference.py
 import argparse
 import ast
+import math
 import numpy as np
 import pandas as pd
 from   pathlib import Path
@@ -8,25 +9,21 @@ import re
 import torch
 from   typing import Sized, cast
 
-from nn.globals    import NN_CFG, CLASSES, NET_PATH, prepare_data
+from nn.globals    import DATAPATH, NN_CFG, CLASSES, NET_PATH, prepare_data
 from nn.arch       import cnn
 from nn.sample     import get_sample
 
 def run_inference(sample_idx: int):
-    # 1. Setup Constants
-    IMG_H, IMG_W = 240, 320
-    IN_BITS = 1
+    IMG_H = NN_CFG.in_dims.height
+    IMG_W = NN_CFG.in_dims.width
+    assert IMG_H is not None and IMG_W is not None
+    DATAPATH = Path(__file__).parent / "data"
     NN_PATH = NET_PATH
-    dataset_name = "roobansappani/hand-gesture-recognition"
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # 2. Load Data and Metadata
-    class_names = sorted(CLASSES)  # okay=0, paper=1, peace=2, up=3
-
-    # Still need the loader to get the images
-    _, test_loader, _ = prepare_data(dataset_name, IMG_H, IMG_W, IN_BITS, 0.8, 32, target_classes=CLASSES)
-    
+    class_names = sorted(CLASSES)
+    _, test_loader, _ = prepare_data(DATAPATH, IMG_H, IMG_W, 1)    
     # 3. Load network
     network = cnn(config=NN_CFG)
     
@@ -71,9 +68,51 @@ def run_inference(sample_idx: int):
     print(f"Confidence:   {confidence:.2%}")
     
     if pred_idx == label:
-        print("\033[92mSUCCESS: Network correctly identified the gesture!\033[0m")
+        print("\033[92mSUCCESS: Network correctly identified the number!\033[0m")
     else:
-        print("\033[91mFAILURE: Network misidentified the gesture.\033[0m")
+        print("\033[91mFAILURE: Network misidentified the number.\033[0m")
+
+def _layer_acc_bits(conv, shift_override: int | None = None, trunc_guard: int = 3) -> int:
+    '''Mirror RTL conv_acc_bits(): compute hardware accumulator width for a conv layer.
+    shift_override: pass the actual learned shift from hardware_weights.vh; falls back to
+    conv._shift (theoretical) only when not supplied.'''
+    kA       = conv._kernel_width ** 2
+    ib       = conv._in_bits
+    wb       = conv._q_schedule._q_min_bits
+    ic       = conv._in_ch
+    bb       = conv._bias_bits
+    sh       = shift_override if shift_override is not None else conv._shift
+    ob       = conv._out_bits
+    unsigned = 1 if ib > 2 else 0
+
+    if ib == 1:
+        max_input = 1
+    elif ib == 2 and not unsigned:
+        max_input = 1          # ternary {-1,0,+1}
+    elif unsigned:
+        max_input = (1 << ib) - 1
+    else:
+        max_input = 1 << (ib - 1)
+
+    max_weight = 1 if wb <= 2 else (1 << (wb - 1))
+    worst      = kA * max_input * max_weight * ic
+    clog2      = lambda n: 0 if n <= 1 else math.ceil(math.log2(n))
+    wc_bits    = clog2(worst + 1) + 1
+    wc_bits    = max(wc_bits, bb) + 1
+    acc_bits   = min(wc_bits, 32)
+    if trunc_guard != 0 and (sh + ob + trunc_guard) < acc_bits:
+        acc_bits = sh + ob + trunc_guard
+    return acc_bits
+
+
+def _signed_truncate(acc: np.ndarray, bits: int) -> np.ndarray:
+    '''Mask accumulator to a bits-wide two's-complement signed integer,
+    simulating hardware modular wrap-around at AccBits.'''
+    mask = (1 << bits) - 1
+    acc  = acc & mask
+    half = 1 << (bits - 1)
+    return np.where(acc >= half, acc - (1 << bits), acc)
+
 
 def _hw_integer_forward(pixels: list, config) -> int:
     '''Core hardware-accurate integer forward pass shared by get_inference() and
@@ -98,6 +137,11 @@ def _hw_integer_forward(pixels: list, config) -> int:
     layer_shifts: dict[int, int] = {}
     for ms in re.finditer(r"localparam\s+int\s+LAYER_(\d+)_SHIFT\s*=\s*(\d+)\s*;", vh_content):
         layer_shifts[int(ms.group(1))] = int(ms.group(2))
+    m_tg = re.search(r"localparam\s+int\s+TRUNC_GUARD\s*=\s*(\d+)\s*;", vh_content)
+    global_trunc_guard = int(m_tg.group(1)) if m_tg else 3
+    layer_trunc_guards: dict[int, int] = {}
+    for mt in re.finditer(r"localparam\s+int\s+LAYER_(\d+)_MIN_TRUNC_GUARD\s*=\s*(\d+)\s*;", vh_content):
+        layer_trunc_guards[int(mt.group(1))] = int(mt.group(2))
 
     def _conv(x: np.ndarray, w: np.ndarray, b: np.ndarray, pad: int, pad_value: int = 0) -> np.ndarray:
         if pad > 0:
@@ -126,6 +170,12 @@ def _hw_integer_forward(pixels: list, config) -> int:
         # Ternary layers (InBits=2): hardware pads with 2'b00 = ternary 0, contributing 0.
         pad_value = -1 if i == 0 else 0
         acc = _conv(act, w, b, conv._padding, pad_value)
+        # Hardware accumulator wraps at AccBits (set by TruncGuard in conv_layer.sv).
+        # Use the actual learned shift from the VH file so AccBits matches the bitstream.
+        # Sign-path layers (out_bits <= 2) have no LAYER_i_SHIFT entry; RTL ShiftBits defaults to 0.
+        hw_shift = layer_shifts.get(i, 0) if i < len(config.layers) - 1 else classifier_shift
+        trunc_guard = layer_trunc_guards.get(i, global_trunc_guard)
+        acc = _signed_truncate(acc, _layer_acc_bits(conv, shift_override=hw_shift, trunc_guard=trunc_guard))
 
         if i == len(config.layers) - 1:
             # Last feature layer: ReLU + logical right-shift + unsigned saturation
@@ -186,12 +236,10 @@ def get_inference_from_pixels(pixels: list, config=None) -> int:
 def hw_eval(n_trials: int = 100) -> float:
     '''Run hardware-accurate integer inference on n_trials test samples and report accuracy.'''
 
-    dataset_name = "roobansappani/hand-gesture-recognition"
+    DATAPATH = Path(__file__).parent / "data"
     IMG_H, IMG_W = NN_CFG.in_dims.height, NN_CFG.in_dims.width
-    IN_BITS = NN_CFG._in_bits[0]
     assert IMG_H is not None and IMG_W is not None, "Input dimensions must be specified in config"
-    _, test_loader, _ = prepare_data(dataset_name, IMG_H, IMG_W, IN_BITS, 0.8, 1,
-                                     target_classes=CLASSES)
+    _, test_loader, _ = prepare_data(DATAPATH, IMG_H, IMG_W, 1)
 
     class_names = sorted(CLASSES)
     correct = 0

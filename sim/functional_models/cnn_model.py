@@ -5,11 +5,16 @@ from typing import List, Optional, Dict, Any
 import numpy as np
 import os
 
+import re
+from pathlib import Path
 from functional_models.conv_layer import ConvLayerModel
 from functional_models.pool_layer import PoolLayerModel
 from functional_models.classifier_layer import ClassifierLayerModel
 from nn.config import NNConfig
 from util.bitwise import pack_terms
+
+# Absolute path to the hardware weights VH, independent of CWD (cocotb runs from sim work_dir)
+_VH_PATH = Path(__file__).resolve().parent.parent.parent / "nn" / "data" / "hardware_weights.vh"
 
 class PictureGenerator:
     def __init__(self, model, inject_pixels: Optional[List[int]] = None) -> None:
@@ -70,9 +75,23 @@ class CNNModel:
         self._config = config
         self._weights_dict = weights_dict or {}
 
+        # Load per-layer ShiftBits and TruncGuard from the hardware weights VH so that
+        # ConvLayerModel instances match what the RTL actually uses (sign-path layers have
+        # ShiftBits=0 because render.py doesn't emit it for OutBits<=2 layers).
+        # Use an absolute path because cocotb simulation runs from work_dir, not repo root.
+        self._layer_shifts: dict[int, int] = {}
+        self._layer_trunc_guards: dict[int, int] = {}
+        if _VH_PATH.exists():
+            with open(_VH_PATH) as _f:
+                _vh = _f.read()
+            for _m in re.finditer(r"localparam\s+int\s+LAYER_(\d+)_(?:LEARNED_)?SHIFT\s*=\s*(\d+)", _vh):
+                self._layer_shifts[int(_m.group(1))] = int(_m.group(2))
+            for _m in re.finditer(r"localparam\s+int\s+LAYER_(\d+)_(?:MIN_)?TRUNC_GUARD\s*=\s*(\d+)", _vh):
+                self._layer_trunc_guards[int(_m.group(1))] = int(_m.group(2))
+
         self.layers: List[Any] = []
         self.results: List[int] = []
-        
+
         # 1. Instantiate Conv/Pool Layers
         for i, layer_cfg in enumerate(config.layers):
             # Conv Layer
@@ -99,7 +118,11 @@ class CNNModel:
     def _get_conv_params(self, cfg, index):
         w = self._weights_dict.get(f"LAYER_{index}_WEIGHTS")
         b = self._weights_dict.get(f"LAYER_{index}_BIASES")
-        is_last = (index == len(self._config.layers) - 1)
+        
+        # Fallback to cfg._shift if VH parsing failed or layer was not in VH
+        default_shift = getattr(cfg, "_shift", 0) if cfg._out_bits > 2 else 0
+        shift = self._layer_shifts.get(index, default_shift)
+        trunc_guard = self._layer_trunc_guards.get(index, 0)
         return {
             "KernelWidth": cfg._kernel_width,
             "LineWidthPx": cfg._input_dims.width,
@@ -112,7 +135,9 @@ class CNNModel:
             "OutChannels": cfg._out_ch,
             "Stride":      cfg._stride,
             "Padding":     cfg._padding,
-            "ShiftBits":   self._config.classifier_config._shift if is_last else 0,
+            "ShiftBits":   shift,
+            "TruncGuard":  trunc_guard,
+            "Unsigned":    1 if cfg._in_bits > 2 else 0,
             "weights":     w,
             "biases":      b
         }
@@ -142,6 +167,7 @@ class CNNModel:
             "class_count": cfg._num_classes,
             "weight_bits": cfg._q_schedule._q_min_bits,
             "bias_bits":   cfg._bias_bits,
+            "ShiftBits":   cfg._shift,
             "weights":     w,
             "biases":      b,
             "unsigned_in": 1 if cfg._in_bits > 2 else 0,
@@ -183,7 +209,8 @@ class CNNModel:
         """Standard ModelRunner interface for top-level DUT."""
         from util.bitwise import unpack_terms
         packed = int(self._dut.data_i.value.integer)
-        raw_val = unpack_terms(packed, self._InBits, self._InChannels)
+        is_unsigned = self._InBits > 2
+        raw_val = unpack_terms(packed, self._InBits, self._InChannels, signed=not is_unsigned)
         return self.step(raw_val)
 
     def produce(self, expected):
@@ -200,15 +227,15 @@ class CNNModel:
         if sim_verbose():
             print(f"CNN Top-Level Output #{self._deqs}: expected {expected_id}, got {got_id}")
 
-        # Check against PyTorch Inference if requested
+        # Check against hw-accurate integer model if requested
         if os.environ.get("CHECK_INFERENCE") == "1":
             sample_idx = int(os.environ.get("SAMPLE_IDX", 0))
             from nn.inference import get_inference
-            torch_pred = get_inference(sample_idx)
-            if got_id != torch_pred:
-                 print(f"\033[93mWARNING: Hardware output ({got_id}) differs from PyTorch prediction ({torch_pred}) for sample {sample_idx}!\033[0m")
+            hw_pred = get_inference(sample_idx)
+            if got_id != hw_pred:
+                 print(f"\033[93mWARNING: Hardware output ({got_id}) differs from SW integer prediction ({hw_pred}) for sample {sample_idx}!\033[0m")
             else:
-                 print(f"\033[92mSUCCESS: Hardware output matches PyTorch prediction ({got_id}) for sample {sample_idx}!\033[0m")
+                 print(f"\033[92mSUCCESS: Hardware output matches SW integer prediction ({got_id}) for sample {sample_idx}!\033[0m")
 
         assert got_id == expected_id, (
             f"CNN Output Mismatch! Expected {expected_id}, got {got_id} at Output #{self._deqs}"

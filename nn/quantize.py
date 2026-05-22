@@ -135,12 +135,24 @@ class QuantConv2d(nn.Conv2d):
         # 5. Calculate the folded bias
         folded_b = self.bn_bias - (mean * bn_scale)
 
-        # 6. Quantize the folded weights
+        # 6. Quantize the folded weights and biases
         if self._quantize:
+            # Compute the weight scale matching QuantizeWeight.forward
+            if self._weight_bits == 2:
+                qmax = 1.0
+            else:
+                qmax = float(2**(self._weight_bits - 1) - 1)
+            max_abs = folded_w.abs().max()
+            w_scale = max_abs / qmax if max_abs > 0.0 else 1.0
+
+            # Quantize weights
             w_q = cast(torch.Tensor, QuantizeWeight.apply(folded_w, self._weight_bits))
-            b_min = -2**(self._bias_bits - 1)
-            b_max = 2**(self._bias_bits - 1) - 1
-            folded_b = torch.clamp(folded_b, b_min, b_max)
+
+            # Quantize biases with STE matching hardware's bias scaling & clamping
+            b_min = float(-2**(self._bias_bits - 1))
+            b_max = float(2**(self._bias_bits - 1) - 1)
+            b_hw = torch.clamp(torch.round(folded_b / w_scale), b_min, b_max)
+            folded_b = folded_b + (b_hw * w_scale - folded_b).detach()
         else:
             w_q = folded_w
 

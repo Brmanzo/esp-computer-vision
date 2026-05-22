@@ -26,7 +26,8 @@ module filter_dsp #(
   // Widen narrow inputs so Yosys retains a $mul cell that ICE40_DSP can infer.
   // 2-bit × 8-bit is simplified to mux/shift before the ICE40_DSP pass runs;
   // anything ≥5 bits keeps a $mul and maps to SB_MAC16.
-  ,localparam int unsigned EffInBits   = (InBits < 5) ? 5 : InBits
+  ,localparam int unsigned EffInBits     = (InBits < 8) ? 8 : InBits
+  ,localparam int unsigned EffWeightBits = (WeightBits < 8) ? 8 : WeightBits
 ) (
    input [0:0] clk_i
   ,input [0:0] rst_i
@@ -132,7 +133,7 @@ module filter_dsp #(
 
   neuron_dsp #(
      .InBits     (EffInBits)
-    ,.WeightBits (WeightBits)
+    ,.WeightBits (EffWeightBits)
     ,.BiasBits   (BiasBits)
     ,.OutBits    (`SB_MAC16_OUT)
     ,.Unsigned   (Unsigned)
@@ -142,7 +143,7 @@ module filter_dsp #(
     ,.en_i        (en_q)
     ,.load_bias_i (load_bias_r) // Load Bias only on first cycle
     ,.data_i      (data_q)
-    ,.weight_i    (weight_i) // 1-cycle delayed from ROM
+    ,.weight_i    (EffWeightBits'($signed(weight_i))) // 1-cycle delayed from ROM
     ,.bias_i      (bias_q)
     ,.acc_o       (neuron_o)
     );

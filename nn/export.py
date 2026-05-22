@@ -19,6 +19,55 @@ from nn.globals  import DATAPATH, ROMPATH, NN_CFG, NET_PATH
 from nn.quantize import LearnedShiftQuantizer, QuantizeActivation, \
                         generate_random_quantized_weights
 
+def compute_min_trunc_guard(
+    weights_flat: list, biases: list,
+    in_bits: int, out_bits: int,
+    in_channels: int, out_channels: int, kernel_width: int,
+    learned_shift: int,
+) -> int:
+    '''Return the minimum TruncGuard such that AccBits covers the worst-case
+    accumulation for these actual quantized weights (signed, from the CSV).
+
+    For binary inputs (in_bits==1) the hardware maps 0→-1 and 1→+1, so each
+    term contributes ±weight; worst-case magnitude per OC is Σ|w|.
+    For unsigned inputs (in_bits>2) worst-case positive acc is max_input × Σmax(w,0)
+    and worst-case negative is max_input × Σmin(w,0).
+
+    The minimum AccBits to hold the signed worst-case value without wrap:
+        acc_bits_needed = ceil(log2(worst_mag + 1)) + 1
+    Then:
+        min_trunc_guard = max(0, acc_bits_needed − learned_shift − out_bits)
+    '''
+    import numpy as np
+    w = np.array(weights_flat, dtype=np.int64).reshape(out_channels, in_channels, kernel_width, kernel_width)
+    b = np.array(biases, dtype=np.int64)
+
+    unsigned = in_bits > 2
+    max_input = (1 << in_bits) - 1 if unsigned else 1  # binary: effective magnitude is 1
+
+    worst_mag = 0
+    for oc in range(out_channels):
+        w_oc = w[oc]
+        if not unsigned:
+            # Binary (in_bits=1) and ternary (in_bits=2): each input can be ±1, so
+            # worst-case positive is achieved by aligning input sign with weight sign → Σ|w|.
+            max_pos = int(np.sum(np.abs(w_oc))) + int(b[oc])
+            min_neg = -int(np.sum(np.abs(w_oc))) + int(b[oc])
+        else:
+            # Unsigned input [0, max_input]: maximise positive by using max_input for
+            # positive weights and 0 for negative weights (and vice-versa for min).
+            max_pos = max_input * int(np.sum(np.maximum(w_oc, 0))) + int(b[oc])
+            min_neg = max_input * int(np.sum(np.minimum(w_oc, 0))) + int(b[oc])
+        worst_mag = max(worst_mag, abs(max_pos), abs(min_neg))
+
+    if worst_mag <= 1:
+        acc_bits_needed = 2
+    else:
+        acc_bits_needed = math.ceil(math.log2(worst_mag + 1)) + 1  # +1 for sign bit
+
+    return max(0, acc_bits_needed - learned_shift - out_bits)
+
+
 def get_hardware_weights(fused_layer: QuantConv2d, previous_act_scale: float = 1.0):
     '''Extracts the folded integer weights and biases directly from the QAT layer.
     
@@ -148,7 +197,9 @@ def export_nn_to_csv(nn_path: Path, config: NNConfig, output_csv: Path, random_w
             qmax_out  = (2 ** module._out_bits) - 1
             clip_abs  = float(module.clip_val.abs().clamp(min=1e-4).item())
             raw_shift = math.log2(clip_abs / (qmax_out * last_w_scale))
-            shift_val = max(0, round(raw_shift))
+            # floor() keeps more dynamic range in integer inference; round() over-compresses
+            # when integer accumulations fall below the float clip boundary.
+            shift_val = max(0, math.floor(raw_shift))
 
             if all_hardware_data:
                 conv_idx = len(all_hardware_data) - 1
@@ -289,6 +340,7 @@ def export_csv_to_hex(csv_path: Path, sv_path: Path, hex_path: Path, config: NNC
                                       "bias_flat": str})
     
     # Iterate through csv rows
+    min_trunc_guards: list[int] = []
     for i, row in enumerate(df.itertuples()):
         w_bits = int(str(row.weight_bits))
         b_bits = int(str(row.bias_bits))
@@ -300,7 +352,7 @@ def export_csv_to_hex(csv_path: Path, sv_path: Path, hex_path: Path, config: NNC
             # Mask to bit-width to handle negative numbers correctly in hex
             masked_val = int(str(val)) & ((1 << w_bits) - 1)
             packed_w |= (masked_val << (idx * w_bits))
-        
+
         # 2. Pack Biases into a single large bit-vector for Header (.vh)
         biases = ast.literal_eval(str(row.bias_flat))
         packed_b = 0
@@ -310,34 +362,63 @@ def export_csv_to_hex(csv_path: Path, sv_path: Path, hex_path: Path, config: NNC
 
         w_total_bits = len(weights) * w_bits
         b_total_bits = len(biases) * b_bits
-        
+
         # Format as Verilog hex literals (e.g. 160'hABC...)
         max_digits = max(len(str(w_total_bits-1)), len(str(b_total_bits-1)))
         sv_lines.append(f"localparam logic signed [{w_total_bits-1:>{max_digits}}:0] LAYER_{i}_WEIGHTS = {w_total_bits}'h{packed_w:x};")
         sv_lines.append(f"localparam logic signed [{b_total_bits-1:>{max_digits}}:0] LAYER_{i}_BIASES  = {b_total_bits}'h{packed_b:x};")
         sv_lines.append("")
 
-        # 3. Emit per-layer shift for intermediate 4-bit+ layers (gen_learned_shift path)
-        if hasattr(row, 'layer_shift') and str(row.layer_shift) not in ("", "nan", "None"):
-            ls = int(float(str(row.layer_shift)))
-            sv_lines.append(f"localparam int LAYER_{i}_SHIFT = {ls};  // Per-layer output shift for acc >> LAYER_{i}_SHIFT")
-            sv_lines.append("")
-
-        # 4. Emit CLASSIFIER_SHIFT for the final feature layer (carries the learned shift)
-        if hasattr(row, 'classifier_shift') and str(row.classifier_shift) not in ("", "nan", "None"):
-            learned_shift = int(float(str(row.classifier_shift)))
-            sv_lines.append(f"localparam int CLASSIFIER_SHIFT = {learned_shift};  // Learned right-shift for acc >> CLASSIFIER_SHIFT")
-            sv_lines.append("")
-        
-        # 4. Generate Hex file if layer uses DSPs
+        # 3. Determine layer config (needed for shifts and TruncGuard)
         layer_cfg: Any
         if i < len(config.layers):
             layer_cfg = config.layers[i].ConvLayer
         else:
             layer_cfg = config.classifier_config
-            
+
+        # 4. Emit per-layer shift for intermediate 4-bit+ layers (gen_learned_shift path)
+        if hasattr(row, 'layer_shift') and str(row.layer_shift) not in ("", "nan", "None"):
+            ls = int(float(str(row.layer_shift)))
+            sv_lines.append(f"localparam int LAYER_{i}_SHIFT = {ls};  // Per-layer output shift for acc >> LAYER_{i}_SHIFT")
+            sv_lines.append("")
+
+        # 5. Emit CLASSIFIER_SHIFT for the final feature layer (carries the learned shift)
+        if hasattr(row, 'classifier_shift') and str(row.classifier_shift) not in ("", "nan", "None"):
+            learned_shift = int(float(str(row.classifier_shift)))
+            sv_lines.append(f"localparam int CLASSIFIER_SHIFT = {learned_shift};  // Learned right-shift for acc >> CLASSIFIER_SHIFT")
+            sv_lines.append("")
+
+        # 6. Compute minimum TruncGuard from actual quantized weights (feature conv layers only)
+        if i < len(config.layers):
+            if hasattr(row, 'layer_shift') and str(row.layer_shift) not in ("", "nan", "None"):
+                hw_shift = int(float(str(row.layer_shift)))
+            else:
+                # Sign-path layers (out_bits <= 2) don't emit ShiftBits in the renderer;
+                # conv_layer.sv defaults ShiftBits to 0.
+                hw_shift = 0
+            min_tg = compute_min_trunc_guard(
+                weights_flat=weights,
+                biases=biases,
+                in_bits=layer_cfg._in_bits,
+                out_bits=layer_cfg._out_bits,
+                in_channels=layer_cfg._in_ch,
+                out_channels=layer_cfg._out_ch,
+                kernel_width=layer_cfg._kernel_width,
+                learned_shift=hw_shift,
+            )
+            min_trunc_guards.append(min_tg)
+            sv_lines.append(f"localparam int LAYER_{i}_MIN_TRUNC_GUARD = {min_tg};  // Minimum TruncGuard to cover worst-case acc from actual weights")
+            sv_lines.append("")
+
+        # 7. Generate Hex file if layer uses DSPs
         if layer_cfg._dsp_count > 0:
             pack_hex_weights(hex_path, weights, w_bits, layer_cfg._dsp_count, layer_cfg, i)
+
+    if min_trunc_guards:
+        global_tg = max(min_trunc_guards)
+        sv_lines.append(f"localparam int TRUNC_GUARD = {global_tg};  // Max across all layers; set conv_layer.sv TruncGuard to this or higher")
+        sv_lines.append("")
+
     with open(sv_path, 'w') as f:
         f.write("\n".join(sv_lines))
     print(f"SystemVerilog export complete! Saved to {sv_path}")
@@ -359,7 +440,9 @@ if __name__ == "__main__":
 
     # 1. Refresh the CSV from the trained network (or generate random weights)
     export_nn_to_csv(args.network_in, config=NN_CFG, output_csv=args.csv_out, random_weights=args.random)
+    export_nn_to_csv(args.network_in, config=NN_CFG, output_csv=args.csv_out, random_weights=args.random)
 
     # 2. Generate the SystemVerilog header and hex files
+    export_csv_to_hex(args.csv_out, args.sv_out, args.hex_out, config=NN_CFG)
     export_csv_to_hex(args.csv_out, args.sv_out, args.hex_out, config=NN_CFG)
     print("Run cnn.py render ?")

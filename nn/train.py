@@ -11,7 +11,7 @@ from   typing  import List, Tuple, Callable
 from nn.arch       import cnn, QuantConv2d
 from nn.config     import NNConfig
 from nn.export     import export_nn_to_csv, export_csv_to_hex
-from nn.globals    import NN_CFG, CLASSES, NET_PATH, prepare_data, get_transforms
+from nn.globals    import NN_CFG, NET_PATH, prepare_data, get_transforms
 from nn.plot       import plot_training
 
 
@@ -20,8 +20,22 @@ def train_network(network: torch.nn.Module, train_loader: DataLoader, test_loade
     '''Executes the full training and progressive quantization schedule.'''
     
     begin_q_epochs = cfg.q_schedule[0]._q_start
-    # Switch to AdamW for better weight decay handling in QAT
-    opt = torch.optim.AdamW(network.parameters(), lr=lr, weight_decay=weight_decay)
+    # Separate parameters for weight decay: exclude biases, batchnorm, and quantization clipping parameters
+    no_decay = ['bias', 'bn_weight', 'bn_bias', 'clip_val']
+    decay_params = []
+    no_decay_params = []
+    for name, param in network.named_parameters():
+        if not param.requires_grad:
+            continue
+        if any(nd in name for nd in no_decay):
+            no_decay_params.append(param)
+        else:
+            decay_params.append(param)
+            
+    opt = torch.optim.AdamW([
+        {'params': decay_params,    'weight_decay': weight_decay},
+        {'params': no_decay_params, 'weight_decay': 0.0},
+    ], lr=lr)
     loss_fn = torch.nn.CrossEntropyLoss()
     
     # Use OneCycleLR for the entire duration to manage LR better through quantization transitions
@@ -73,8 +87,9 @@ def train_network(network: torch.nn.Module, train_loader: DataLoader, test_loade
 
         # 2. Training Logic
         network.train()
+        train_total = 0
+        train_correct = 0.0
         for x, y in train_loader:
-            x    = train_aug(x) 
             x, y = x.to(device), y.to(device)
             
             logits = network(x)
@@ -88,19 +103,17 @@ def train_network(network: torch.nn.Module, train_loader: DataLoader, test_loade
             # Step the scheduler every BATCH
             scheduler.step()
 
+            # Calculate train accuracy on the fly
+            with torch.no_grad():
+                pred = logits.argmax(1)
+                train_correct += (pred == y).sum().item()
+                train_total   += y.numel()
+
         # 3. Evaluation Logic
         network.eval()
-        train_total = 1e-6 
-        train_correct = 0.0
-        
         with torch.no_grad():
             if not getattr(network, '_is_fine_tuning', False):
-                for x, y in train_loader:
-                    x, y = x.to(device), y.to(device)
-                    pred = network(x).argmax(1)
-                    train_correct += (pred == y).sum().item()
-                    train_total   += y.numel()
-                train_acc = train_correct / train_total
+                train_acc = train_correct / (train_total + 1e-6)
             else:
                 train_acc = 0.0
             
@@ -121,9 +134,9 @@ def train_network(network: torch.nn.Module, train_loader: DataLoader, test_loade
             torch.save(network.state_dict(), network_save_path)
             if test_acc >= global_max:
                 global_max = test_acc
-                print(f"\033[32m  --> New best network saved! (Acc: {best_test_acc:.3f})\033[0m")
+                print(f"\033[92m  --> New best network saved! (Acc: {best_test_acc:.3f})\033[0m")
             elif test_acc < global_max and test_acc > 0.9:
-                print(f"\033[92m  --> New best network saved! (Acc: {best_test_acc:.3f} but not global max)\033[0m")
+                print(f"\033[32m  --> New best network saved! (Acc: {best_test_acc:.3f} but not global max)\033[0m")
             else:
                 print(f"\033[93m  --> New best network saved! (Acc: {best_test_acc:.3f} but not global max)\033[0m")
         else:
@@ -132,45 +145,41 @@ def train_network(network: torch.nn.Module, train_loader: DataLoader, test_loade
     return train_acc_history, test_acc_history
 
 def main():
-    # 1. Configure network Baseline (to find default epochs)
-    IMG_H, IMG_W = 240, 320
-    # Use a temporary config to find max epochs from schedule
-    max_sched_epochs = max(q_sched.total_epochs() for q_sched in NN_CFG.q_schedule)
+    # 1. Configure network
+    IMG_H, IMG_W = 28, 28
+    tmp_cfg = NN_CFG
+    max_sched_epochs = max(q_sched.total_epochs() for q_sched in tmp_cfg.q_schedule)
 
     # 2. Parse CLI arguments
-    parser = argparse.ArgumentParser(description='Train the Hand Gesture CNN')
+    parser = argparse.ArgumentParser(description='Train the MNIST CNN')
     parser.add_argument('--epochs', type=int, default=max_sched_epochs, help=f'Total training epochs (Default: {max_sched_epochs})')
     parser.add_argument('--batch-size', type=int, default=64, help='Batch size')
-    parser.add_argument('--lr', type=float, default=5e-4, help='Learning rate')
+    parser.add_argument('--lr', type=float, default=2e-4, help='Learning rate')
     parser.add_argument('--fine-tune', action='store_true', help='Resume from checkpoint for fine-tuning')
     parser.add_argument('--network-path', type=str, default=None, help='Path to network for resuming/fine-tuning')
     args = parser.parse_args()
 
     # 3. Set parameters
-    DATA_SPLIT = 0.8
-    BATCH_SIZE = args.batch_size
-    IN_BITS = 1
+    BATCH_SIZE    = args.batch_size
     LEARNING_RATE = args.lr
     WEIGHT_DECAY  = 1e-5
-    global_max = 0.0
-    
-    dataset_name = "roobansappani/hand-gesture-recognition"
-    datapath   = Path("nn") / "data"
-    plot_path  = datapath / "training_accuracy.png"
+    global_max    = 0.0
+
+    datapath     = Path("nn") / "data"
+    plot_path    = datapath / "training_accuracy.png"
     network_path = Path(args.network_path) if args.network_path else NET_PATH
-    csv_path   = datapath / "hardware_weights.csv"
-    sv_path    = datapath / "hardware_weights.vh"
+    csv_path     = datapath / "hardware_weights.csv"
+    sv_path      = datapath / "hardware_weights.vh"
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.backends.cudnn.benchmark = True
 
-    # 2. Configure and Create network (to find num_classes)
+    # 2. Configure network
     cfg = NN_CFG
-    num_classes = cfg.num_classes
 
-    # 3. Prepare Data (filtered to the explicit gesture class list)
-    train_loader, test_loader, num_classes = prepare_data(dataset_name, IMG_H, IMG_W, IN_BITS, DATA_SPLIT, BATCH_SIZE, target_classes=CLASSES)
-    _, train_aug = get_transforms(IMG_H, IMG_W, IN_BITS)
+    # 3. Prepare Data
+    train_loader, test_loader, _ = prepare_data(datapath, IMG_H, IMG_W, BATCH_SIZE)
+    _, train_aug = get_transforms(IMG_H, IMG_W)
 
     # 4. Create network
     network = cnn(config = cfg)

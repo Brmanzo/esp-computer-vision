@@ -15,7 +15,7 @@ from cocotbext.uart import UartSource, UartSink
 
 from util.utilities  import runner, clock_start_sequence, reset_sequence, get_param_string, inject_weights_and_biases
 from util.weight_loader import load_weights_from_vh
-from functional_models.cnn import CNNModel
+from functional_models.cnn_model import CNNModel
 from nn.globals import NN_CFG
 from nn.protocol import build_frame, parse_response
 
@@ -170,7 +170,7 @@ def test_full(inject_pixels: str = "") -> None:
         os.environ.pop("INJECT_PIXELS", None)
 
     # Load weights from hardware_weights.vh
-    vh_path = (tbpath / ".." / ".." / ".." / "model" / "data" / "hardware_weights.vh").resolve()
+    vh_path = (tbpath / ".." / ".." / ".." / "nn" / "data" / "hardware_weights.vh").resolve()
     _, raw_dict = load_weights_from_vh(str(vh_path), config)
 
     with open(vh_path) as f:

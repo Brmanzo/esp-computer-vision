@@ -46,7 +46,7 @@ module conv_layer #(
    ,parameter  int unsigned OutChannels = 1
    ,localparam int unsigned KernelArea  = KernelWidth * KernelWidth
    ,parameter  int unsigned ShiftBits   = 0
-   ,parameter  int unsigned TruncGuard  = 3
+   ,parameter  int unsigned TruncGuard  = 0
 
    ,parameter  int unsigned Stride     = 1
    ,localparam int unsigned StrideBits = (Stride <= 1) ? 1 : $clog2(Stride)

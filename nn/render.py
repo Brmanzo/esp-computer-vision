@@ -149,6 +149,7 @@ def render_conv_layer(cfg: ConvConfig, is_last_feature: bool = False):
         f"    ,.Padding     ({cfg._padding})",
         f"    ,.DSPCount    ({cfg._dsp_count})",
         f"    ,.Unsigned    ({1 if cfg._in_bits > 2 else 0})",
+        f"    ,.TruncGuard  (LAYER_{cfg._layer_num}_MIN_TRUNC_GUARD)"
     ]
     if is_last_feature:
         lines.append("    ,.ShiftBits   (CLASSIFIER_SHIFT)")
@@ -285,6 +286,10 @@ def patch_top_sv(cfg: NNConfig, path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     text = re.sub(r'(?:    ,\.FileName_\S+ *\("[^"]*"\)\n)+',
                   '\n'.join(arg_lines) + '\n', text)
+    
+    text = re.sub(r'\.WidthIn\s*\(\d+\)', f'.WidthIn    ({cfg.in_dims.width})', text)
+    text = re.sub(r'\.HeightIn\s*\(\d+\)', f'.HeightIn   ({cfg.in_dims.height})', text)
+
     path.write_text(text, encoding="utf-8")
 
 

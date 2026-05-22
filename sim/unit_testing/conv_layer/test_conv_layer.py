@@ -318,13 +318,17 @@ async def rate_tests(dut, in_rate, out_rate):
 
         shift_obj = getattr(dut, "ShiftBits", None)
         shift_bits = int(shift_obj.value) if shift_obj is not None else 0
+        trunc_guard_obj = getattr(dut, "TruncGuard", None)
+        trunc_guard = int(trunc_guard_obj.value) if trunc_guard_obj is not None else 0
         from functional_models.conv_layer import calc_acc_bits
         acc_bits = calc_acc_bits(K, int(dut.InBits.value), WW, IC, BW, Unsigned)
+        out_bits = int(dut.OutBits.value)
+        hw_acc_bits = min(acc_bits, shift_bits + out_bits + trunc_guard) if trunc_guard > 0 else acc_bits
         ref = torch_conv_ref(
             input_activation, kernels_4d, S,
-            in_bits=int(dut.InBits.value), out_bits=int(dut.OutBits.value),
+            in_bits=int(dut.InBits.value), out_bits=out_bits,
             padding=int(dut.Padding.value), biases=biases_2d,
-            shift_bits=shift_bits, acc_bits=acc_bits, unsigned=bool(Unsigned)
+            shift_bits=shift_bits, acc_bits=hw_acc_bits, unsigned=bool(Unsigned)
         )
         
         if sim_verbose():
