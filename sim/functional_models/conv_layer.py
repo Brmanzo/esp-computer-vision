@@ -25,7 +25,7 @@ def calc_acc_bits(kernel_width, in_bits, weight_bits, in_channels, bias_bits, un
     worst_case_sum = terms * max_input * max_weight
     wc_bits = worst_case_sum.bit_length() + 1
     acc_bits = max(wc_bits, int(bias_bits)) + 1
-    return acc_bits
+    return min(acc_bits, 32)
 
 class RandomDataGenerator:
     def __init__(self, dut):
@@ -69,6 +69,7 @@ class ConvLayerModel():
             self._Padding      = int(dut.Padding.value) if hasattr(dut, 'Padding') else 0
             unsigned_obj       = getattr(dut, "Unsigned", None)
             self._Unsigned     = int(unsigned_obj.value) if unsigned_obj is not None else 0
+            self._trunc_guard  = int(getattr(dut, "TruncGuard", 0)) # Optional truncation guard for learned shift layers
         else:
             try:
                 self._kernel_width = int(kwargs["KernelWidth"])
@@ -84,19 +85,20 @@ class ConvLayerModel():
                 self._ShiftBits    = int(kwargs.get("ShiftBits", 0))
                 self._Padding      = int(kwargs.get("Padding", 0))
                 self._Unsigned     = int(kwargs.get("Unsigned", 0))
+                self._trunc_guard  = int(kwargs.get("TruncGuard", 0))
             except KeyError as e:
                 raise ValueError(f"Missing required parameter when dut is None: {e}")
-
-        self._AccBits = calc_acc_bits(self._kernel_width, self._InBits, self._weight_width, self._InChannels, self._bias_bits, self._Unsigned)
-        if self._OutBits + self._ShiftBits > self._AccBits:
-            print(f"WARNING: OutBits({self._OutBits}) + ShiftBits({self._ShiftBits}) > AccBits({self._AccBits}). "
-                  f"Shift was derived from training precision (q_max_bits); accumulator computed from q_min_bits.")
         
+        self._AccBits = calc_acc_bits(self._kernel_width, self._InBits, self._weight_width, self._InChannels, self._bias_bits, self._Unsigned)
+        # Hardware AccBits: conv_acc_bits() in RTL applies TruncGuard to reduce the accumulator
+        # below the theoretical worst-case when shift+out+guard < wc_bits.
+        trunc_limit = self._ShiftBits + self._OutBits + self._trunc_guard
+        self._HwAccBits = min(self._AccBits, trunc_limit) if self._trunc_guard > 0 else self._AccBits
         if weights is None:
             raise ValueError("Weights must be provided to ConvLayerModel")
         if biases is None:
             biases = [0] * self._OutChannels
-        self._biases = biases
+        self._biases = [sign_extend(b, self._bias_bits) for b in biases]
 
         # Dimensions scaled for padding
         self._padded_width  = self._input_width + 2 * self._Padding
@@ -165,7 +167,7 @@ class ConvLayerModel():
                     win_enc = np.vectorize(sign_extend)(win, self._InBits)
                     if self._Unsigned:
                         win_enc = win_enc & ((1 << self._InBits) - 1)
-                
+
                 # Weight Encoding: matching hardware logic for 1-bit BNN and 2-bit Ternary
                 kernel = self.k[oc, ic]
                 if self._weight_width == 1:
@@ -175,34 +177,30 @@ class ConvLayerModel():
                     k_enc = np.where(kernel == 1, 1, np.where((kernel == 3) | (kernel == -1), -1, 0))
                 else:
                     k_enc = np.vectorize(sign_extend)(kernel, self._weight_width)
-                
+
                 acc += int((k_enc * win_enc).sum())
 
-            # Calculate the sum including bias
+            # Calculate the sum including bias, then sign-truncate to _HwAccBits.
+            # The RTL accumulator is _HwAccBits wide and wraps modulo 2^_HwAccBits,
+            # so all output encoding must operate on the truncated value.
             biased_acc = acc + self._biases[oc]
-            print(f"MODEL: oc={oc} acc={acc} bias={self._biases[oc]} biased_acc={biased_acc}")
+            acc_mask = (1 << self._HwAccBits) - 1
+            hw_acc = sign_extend(biased_acc & acc_mask, self._HwAccBits)
 
             if self._OutBits == 1:
-                # Binary Output Encoding {-1,1} -> {0,1}
-                result[oc] = 1 if biased_acc > 0 else 0
+                result[oc] = 1 if hw_acc > 0 else 0
             elif self._OutBits == 2:
-                # Ternary Output Encoding {-1,0,1} matching hardware output_encoder
-                result[oc] = 1 if biased_acc > 0 else (-1 if biased_acc < 0 else 0)
-            elif self._OutBits >= self._AccBits:
-                # gen_full_out: signed pass-through (OutBits wide enough to hold full accumulator)
-                acc_mask = (1 << self._AccBits) - 1
-                result[oc] = sign_extend(biased_acc & acc_mask, self._AccBits)
+                # Ternary: sign of hw_acc (after hardware truncation)
+                result[oc] = 1 if hw_acc > 0 else (-1 if hw_acc < 0 else 0)
+            elif self._OutBits >= self._HwAccBits:
+                # gen_full_out: signed pass-through
+                result[oc] = hw_acc
             else:
-                # gen_learned_shift: matches output_encoder.sv exactly
-                #   1. ReLU: clamp negatives to 0
-                #   2. Logical right shift by ShiftBits (== arithmetic for non-negative values)
-                #   3. Unsigned saturation at 2^OutBits-1
-                acc_mask = (1 << self._AccBits) - 1
-                usable_acc_signed = sign_extend(biased_acc & acc_mask, self._AccBits)
-                if usable_acc_signed < 0:
+                # gen_learned_shift: ReLU → logical right shift → unsigned saturation
+                if hw_acc < 0:
                     result[oc] = 0
                 else:
-                    shifted = usable_acc_signed >> self._ShiftBits
+                    shifted = hw_acc >> self._ShiftBits
                     unsigned_max = (1 << self._OutBits) - 1
                     result[oc] = min(shifted, unsigned_max)
 

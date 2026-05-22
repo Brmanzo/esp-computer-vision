@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).parent.parent
 
 # Add paths once for the entire session
 sys.path.insert(0, str(REPO_ROOT / "sim"))
+sys.path.insert(0, str(REPO_ROOT))  # expose the nn package
 
 def pytest_addoption(parser):
     parser.addoption("--dsp", action="store_true", default=False, help="Test using neuron_dsp implementation")

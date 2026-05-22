@@ -26,6 +26,8 @@ module neuron_seq #(
   ,localparam int unsigned ROMWidth    = WeightBits * EffectiveDSPs
   ,localparam int unsigned ROMDepth    = InChannels * OutChannelsPerDSP
   ,localparam int unsigned ROMAddrBits = (ROMDepth > 1) ? $clog2(ROMDepth) : 1
+  ,localparam int unsigned EffInBits     = (InBits < 8) ? 8 : InBits
+  ,localparam int unsigned EffWeightBits = (WeightBits < 8) ? 8 : WeightBits
 )  (
    input [0:0] clk_i
   ,input [0:0] rst_i
@@ -245,8 +247,8 @@ module neuron_seq #(
       end
 
       neuron_dsp #(
-         .InBits     (InBits)
-        ,.WeightBits (WeightBits)
+         .InBits     (EffInBits)
+        ,.WeightBits (EffWeightBits)
         ,.OutBits    (OutBits)
         ,.BiasBits   (BiasBits)
       ) dsp_inst (
@@ -254,8 +256,8 @@ module neuron_seq #(
         ,.rst_i      (rst_i)
         ,.en_i       (en_q)
         ,.load_bias_i(load_bias_q)
-        ,.data_i     (neuron_in)
-        ,.weight_i   (current_weight)           // Delayed 1 cycle by icestorm_rom
+        ,.data_i     (EffInBits'($signed(neuron_in)))
+        ,.weight_i   (EffWeightBits'($signed(current_weight)))           // Delayed 1 cycle by icestorm_rom
         ,.bias_i     (bias_q)
         ,.acc_o      (neuron_out)
       );

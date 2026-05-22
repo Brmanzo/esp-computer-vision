@@ -11,7 +11,7 @@ from   typing  import List, Tuple, Callable
 from nn.arch       import cnn, QuantConv2d
 from nn.config     import NNConfig
 from nn.export     import export_nn_to_csv, export_csv_to_hex
-from nn.globals    import get_mnist_cfg
+from nn.globals    import get_nn_cfg
 from nn.plot       import plot_training
 from nn.preprocess import prepare_mnist_data, get_transforms
 
@@ -136,9 +136,9 @@ def train_network(network: torch.nn.Module, train_loader: DataLoader, test_loade
             torch.save(network.state_dict(), network_save_path)
             if test_acc >= global_max:
                 global_max = test_acc
-                print(f"\033[32m  --> New best network saved! (Acc: {best_test_acc:.3f})\033[0m")
+                print(f"\033[92m  --> New best network saved! (Acc: {best_test_acc:.3f})\033[0m")
             elif test_acc < global_max and test_acc > 0.9:
-                print(f"\033[92m  --> New best network saved! (Acc: {best_test_acc:.3f} but not global max)\033[0m")
+                print(f"\033[32m  --> New best network saved! (Acc: {best_test_acc:.3f} but not global max)\033[0m")
             else:
                 print(f"\033[93m  --> New best network saved! (Acc: {best_test_acc:.3f} but not global max)\033[0m")
         else:
@@ -149,7 +149,7 @@ def train_network(network: torch.nn.Module, train_loader: DataLoader, test_loade
 def main():
     # 1. Configure network
     IMG_H, IMG_W = 28, 28
-    tmp_cfg = get_mnist_cfg(img_h=IMG_H, img_w=IMG_W)
+    tmp_cfg = get_nn_cfg(img_h=IMG_H, img_w=IMG_W)
     max_sched_epochs = max(q_sched.total_epochs() for q_sched in tmp_cfg.q_schedule)
 
     # 2. Parse CLI arguments
@@ -177,7 +177,7 @@ def main():
     torch.backends.cudnn.benchmark = True
 
     # 2. Configure network
-    cfg = get_mnist_cfg()
+    cfg = get_nn_cfg()
 
     # 3. Prepare Data
     train_loader, test_loader, _ = prepare_mnist_data(datapath, IMG_H, IMG_W, BATCH_SIZE)

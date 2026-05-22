@@ -13,7 +13,7 @@ from util.utilities  import runner, clock_start_sequence, reset_sequence, get_pa
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from functional_models.cnn_model import CNNModel, PictureGenerator
 from util.weight_loader import load_weights_from_vh
-from nn.globals import HAND_GESTURE_CFG
+from nn.globals import NN_CFG
 
 @cocotb.test
 async def full_cnn_test(dut) -> None:
@@ -25,7 +25,7 @@ async def full_cnn_test(dut) -> None:
       SAMPLE_IDX    : dataset index when INJECT_PIXELS is not set (default 10)
     """
     # 1. Load Architecture Config
-    config = HAND_GESTURE_CFG
+    config = NN_CFG
     # Apply learned shift from VH file so CNNModel uses the correct ShiftBits
     classifier_shift_env = int(os.environ.get("CLASSIFIER_SHIFT", str(config.classifier_config._shift)))
     config.classifier_config._shift = classifier_shift_env
@@ -76,23 +76,21 @@ async def full_cnn_test(dut) -> None:
     await om.wait(timeout_ns)
 
     # 5. Report Results
-    from nn.preprocess import get_class_names
+    from nn.globals import MNIST_CLASSES
     from nn.inference import get_inference, get_inference_from_pixels
     from nn.sample import get_sample
 
-    class_names = get_class_names()
+    class_names = MNIST_CLASSES
 
     assert len(functional_model.results) > 0, "No hardware output captured — pipeline may have timed out"
     got_id = functional_model.results[0]
 
     inject_env = os.environ.get("INJECT_PIXELS", "")
-    # Verilog predicts 1, Functional model predicts 2, Pytorch predicts 1, FPGA predicts 6
     if inject_env == "zeros":
         pixels = [0] * n_pixels
         sw_id  = get_inference_from_pixels(pixels, config)
         label  = None
         desc   = "injected all-zeros"
-    # Verilog predicts 1, Functional model predicts 2, Pytorch predicts 0, FPGA predicts 5
     elif inject_env == "ones":
         pixels = [1] * n_pixels
         sw_id  = get_inference_from_pixels(pixels, config)
@@ -127,7 +125,7 @@ def test_full(inject_pixels: str = "") -> None:
         inject_pixels: "zeros" | "ones" | "<comma-separated ints>" | "" (dataset, default)
     """
     tbpath = Path(__file__).parent
-    config = HAND_GESTURE_CFG
+    config = NN_CFG
     simulator = "verilator"
     params = {"BusBits": 8}
     testname = "full_cnn_test"
@@ -144,7 +142,7 @@ def test_full(inject_pixels: str = "") -> None:
         os.environ.pop("INJECT_PIXELS", None)
     
     # 2. Load weights from original .vh for injection
-    vh_path = (tbpath / ".." / ".." / ".." / "model" / "data" / "hardware_weights.vh").resolve()
+    vh_path = (tbpath / ".." / ".." / ".." / "nn" / "data" / "hardware_weights.vh").resolve()
     _, raw_dict = load_weights_from_vh(str(vh_path), config)
 
     # Parse CLASSIFIER_SHIFT from the vh file (different format: localparam int ...)
@@ -165,7 +163,7 @@ def test_full(inject_pixels: str = "") -> None:
         inject_weights_and_biases(
             simulator=simulator, parameters=params, param_str=param_str,
             tbpath=tbpath, test_class="full", Weights=raw_dict[f"LAYER_{i}_WEIGHTS"], Biases=raw_dict[f"LAYER_{i}_BIASES"],
-            weight_bits=cfg._q_schedule._q_min_bits, bias_bits=cfg._bias_bits,
+            weight_bits=cfg._q_schedule._q_min_bits, bias_bits=cfg._bias_bits * cfg._out_ch,
             weight_count=cfg._out_ch * cfg._in_ch * (cfg._kernel_width**2),
             layer=i, dsp_count=cfg._dsp_count, custom_work_dir=work_dir,
             oc=cfg._out_ch, ic=cfg._in_ch, kw=cfg._kernel_width)
@@ -176,7 +174,7 @@ def test_full(inject_pixels: str = "") -> None:
     inject_weights_and_biases(
         simulator=simulator, parameters=params, param_str=param_str,
         tbpath=tbpath, test_class="full", Weights=raw_dict[f"LAYER_{c_idx}_WEIGHTS"], Biases=raw_dict[f"LAYER_{c_idx}_BIASES"],
-        weight_bits=c_cfg._q_schedule._q_min_bits, bias_bits=c_cfg._bias_bits,
+        weight_bits=c_cfg._q_schedule._q_min_bits, bias_bits=c_cfg._bias_bits * c_cfg._num_classes,
         weight_count=c_cfg._num_classes * c_cfg._in_ch,
         layer=c_idx, dsp_count=c_cfg._dsp_count, custom_work_dir=work_dir,
         oc=c_cfg._num_classes, ic=c_cfg._in_ch, kw=1)
@@ -203,9 +201,14 @@ def test_full(inject_pixels: str = "") -> None:
     _write_vh(os.path.join(work_dir, f"layer_{c_idx}_biases.vh"),  f"LAYER_{c_idx}_BIASES",  c_b_bits, raw_dict[f"LAYER_{c_idx}_BIASES"])
 
     # Create the master header that includes all layer headers
+    # Emit all localparam int lines from the VH (shifts, TruncGuard values, etc.)
+    # so that cnn.sv can resolve them as elaboration-time constants.
+    int_params = re.findall(r"localparam\s+int\s+\w+\s*=\s*\d+\s*;", vh_content)
     master_header_path = os.path.join(work_dir, "injected_weights_0.vh")
     with open(master_header_path, "w") as f:
-        f.write(f"localparam int CLASSIFIER_SHIFT = {classifier_shift};\n")
+        for param_line in int_params:
+            f.write(param_line + "\n")
+        f.write("\n")
         for i in range(len(config.layers) + 1):
             f.write(f'`include "layer_{i}_weights.vh"\n')
             f.write(f'`include "layer_{i}_biases.vh"\n')

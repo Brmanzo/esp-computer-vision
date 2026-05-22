@@ -13,7 +13,7 @@ from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from functional_models.cnn import CNNModel
 from functional_models.cnn_framed_model import CnnFramedModel, FramedPictureGenerator
 from util.weight_loader import load_weights_from_vh
-from nn.globals import HAND_GESTURE_CFG
+from nn.globals import NN_CFG
 
 @cocotb.test
 async def full_cnn_test(dut) -> None:
@@ -38,7 +38,7 @@ async def full_cnn_test(dut) -> None:
     from nn.inference import get_inference, get_inference_from_pixels
 
     # 1. Architecture config + learned shift
-    config = HAND_GESTURE_CFG
+    config = NN_CFG
     config.classifier_config._shift = int(
         os.environ.get("CLASSIFIER_SHIFT", str(config.classifier_config._shift))
     )
@@ -153,7 +153,7 @@ def test_full(inject_pixels: str = "") -> None:
         inject_pixels: "zeros" | "ones" | "<comma-separated ints>" | "" (dataset, default)
     """
     tbpath = Path(__file__).parent
-    config = HAND_GESTURE_CFG
+    config = NN_CFG
     simulator = "verilator"
     params = {"BusBits": 8}
     testname = "full_cnn_test"
@@ -168,7 +168,7 @@ def test_full(inject_pixels: str = "") -> None:
         os.environ.pop("INJECT_PIXELS", None)
 
     # Load weights from hardware_weights.vh
-    vh_path = (tbpath / ".." / ".." / ".." / "model" / "data" / "hardware_weights.vh").resolve()
+    vh_path = (tbpath / ".." / ".." / ".." / "nn" / "data" / "hardware_weights.vh").resolve()
     _, raw_dict = load_weights_from_vh(str(vh_path), config)
 
     with open(vh_path) as f:

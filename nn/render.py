@@ -7,7 +7,7 @@ from   pathlib  import Path
 import re
 
 from nn.config  import NNConfig, ConvConfig, PoolConfig, ClassifierConfig
-from nn.globals import MNIST_CFG
+from nn.globals import NN_CFG
 
 def _rom_needs_hi(cfg) -> bool:
     '''True when a layer's ROM exceeds one SB_RAM40_4K tile (16 bits wide).'''
@@ -149,6 +149,7 @@ def render_conv_layer(cfg: ConvConfig, is_last_feature: bool = False):
         f"    ,.Padding     ({cfg._padding})",
         f"    ,.DSPCount    ({cfg._dsp_count})",
         f"    ,.Unsigned    ({1 if cfg._in_bits > 2 else 0})",
+        f"    ,.TruncGuard  (LAYER_{cfg._layer_num}_MIN_TRUNC_GUARD)"
     ]
     if is_last_feature:
         lines.append("    ,.ShiftBits   (CLASSIFIER_SHIFT)")
@@ -315,4 +316,4 @@ def render_verilog(cfg: NNConfig) -> None:
     print("Run make bitstream ESP=1 ?")
 
 if __name__ == "__main__":
-   render_verilog(MNIST_CFG)
+   render_verilog(NN_CFG)
