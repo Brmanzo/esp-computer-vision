@@ -91,7 +91,6 @@ def train_network(network: torch.nn.Module, train_loader: DataLoader, test_loade
         train_total = 0
         train_correct = 0.0
         for x, y in train_loader:
-            x    = train_aug(x) 
             x, y = x.to(device), y.to(device)
             
             logits = network(x)
