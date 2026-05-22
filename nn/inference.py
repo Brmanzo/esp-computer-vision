@@ -9,7 +9,7 @@ import re
 import torch
 from   typing import Sized, cast
 
-from nn.globals    import DATAPATH, NN_CFG, CLASSES, NET_PATH, prepare_data
+from nn.globals    import NN_CFG, CLASSES, NET_PATH, prepare_data
 from nn.arch       import cnn
 from nn.sample     import get_sample
 
@@ -287,7 +287,7 @@ if __name__ == "__main__":
     if args.cmd == "hw-eval":
         hw_eval(args.trials)
         print("Run cnn.py export ?")
-        print("Run cnn.py render ?")
+        print("Run cnn.py verilog ?")
     else:
         idx = args.idx if args.cmd == "infer" else 10
         run_inference(idx)

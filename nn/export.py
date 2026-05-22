@@ -30,13 +30,13 @@ def compute_min_trunc_guard(
 
     For binary inputs (in_bits==1) the hardware maps 0→-1 and 1→+1, so each
     term contributes ±weight; worst-case magnitude per OC is Σ|w|.
-    For unsigned inputs (in_bits>2) worst-case positive acc is max_input × Σmax(w,0)
-    and worst-case negative is max_input × Σmin(w,0).
+    For unsigned inputs (in_bits>2) worst-case positive acc is max_input x Σmax(w,0)
+    and worst-case negative is max_input x Σmin(w,0).
 
     The minimum AccBits to hold the signed worst-case value without wrap:
         acc_bits_needed = ceil(log2(worst_mag + 1)) + 1
     Then:
-        min_trunc_guard = max(0, acc_bits_needed − learned_shift − out_bits)
+        min_trunc_guard = max(0, acc_bits_needed - learned_shift - out_bits)
     '''
     import numpy as np
     w = np.array(weights_flat, dtype=np.int64).reshape(out_channels, in_channels, kernel_width, kernel_width)
@@ -445,4 +445,4 @@ if __name__ == "__main__":
     # 2. Generate the SystemVerilog header and hex files
     export_csv_to_hex(args.csv_out, args.sv_out, args.hex_out, config=NN_CFG)
     export_csv_to_hex(args.csv_out, args.sv_out, args.hex_out, config=NN_CFG)
-    print("Run cnn.py render ?")
+    print("Run cnn.py verilog ?")

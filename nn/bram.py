@@ -402,7 +402,7 @@ if __name__ == "__main__":
             print("Run make stat ?")
             print("Run make prog ice40.bin ?")
         else:
-            print("Run make clean && cnn.py export && cnn.py render && make bitstream ESP=1 ?")
+            print("Run make clean && cnn.py export && cnn.py verilog && make bitstream ESP=1 ?")
         sys.exit(0 if all_success else 1)
 
     # 2. Arguments provided: Manual run

@@ -240,7 +240,7 @@ def main():
     export_csv_to_hex(csv_path, sv_path, datapath / "roms" / "hex", config=cfg)
     print("Run cnn.py inference hw-eval --trials 100 ?")
     print("Run cnn.py export ?")
-    print("Run cnn.py render ?")
+    print("Run cnn.py verilog ?")
 
 if __name__ == "__main__":
     main()

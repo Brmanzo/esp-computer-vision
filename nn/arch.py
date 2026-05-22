@@ -4,7 +4,7 @@
 import torch
 
 from nn.config   import NNConfig, ConvConfig, PoolConfig
-from nn.globals  import NN_CFG, BRAM_COUNT, DSP_COUNT
+from nn.globals  import NN_CFG, BRAM_COUNT, DSP_COUNT, CLK_FREQ_HZ
 from nn.quantize import QuantConv2d, QuantizeActivation, LearnedShiftQuantizer
 
 class cnn(torch.nn.Module):
@@ -39,7 +39,7 @@ class cnn(torch.nn.Module):
             # that the hardware applies.  Binary (1-bit) and ternary (2-bit) layers use signed
             # QuantizeActivation because their hardware paths (gen_binary_out / gen_ternary_out)
             # preserve sign information.
-            if conv._out_bits > 2:
+            if conv._out_bits > 2: 
                 learned_q = LearnedShiftQuantizer(
                     init_shift = conv._shift,
                     out_bits   = conv._out_bits,
@@ -240,7 +240,7 @@ class cnn(torch.nn.Module):
         
         if self.config.in_dims.height is not None and self.config.in_dims.width is not None and  max_effective_cycles > 0:
             input_pixels = self.config.in_dims.width * self.config.in_dims.height
-            fps = 12_000_000 / (max_effective_cycles * input_pixels)
+            fps = CLK_FREQ_HZ / (max_effective_cycles * input_pixels)
             print(f"Estimated Max Frame Rate: {fps:.2f} FPS")
 
 if __name__ == "__main__":

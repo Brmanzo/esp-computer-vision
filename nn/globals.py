@@ -13,9 +13,10 @@ from nn.tasks.mnist.preprocess import prepare_mnist_data as _prepare_mnist_data,
 DATAPATH = Path("nn") / "data"
 ROMPATH  = DATAPATH / "roms" / "hex"
 
-BAUD = 115200  # 12 MHz / (prescale=13 * 8) ≈ 115385 baud (0.16% error)
-BRAM_COUNT = 30 - 1 # Subtract 1 for the Skid Buffer BRAM on deframer
-DSP_COUNT  = 8
+BRAM_COUNT  = 30 - 1 # Subtract 1 for the Skid Buffer BRAM on deframer
+DSP_COUNT   = 8
+BAUD        = 115200  # 12 MHz / (prescale=13 * 8) ≈ 115385 baud (0.16% error)
+CLK_FREQ_HZ = 12_000_000  # 12 MHz Clock
 
 CURRENT_TASK = "mnist"  # "mnist" or "hand_gesture"
 
@@ -26,7 +27,6 @@ if CURRENT_TASK == "hand_gesture":
     NN_CFG         = get_hand_gesture_cfg()
     prepare_data   = _prepare_data
     get_transforms = _get_transforms
-    IMG_DIMS       = InputDimensions(320, 240)
 elif CURRENT_TASK == "mnist":
     # MNIST Task
     NET_PATH       = MNIST_NET_PATH
@@ -34,4 +34,3 @@ elif CURRENT_TASK == "mnist":
     NN_CFG         = _get_mnist_cfg()
     prepare_data   = _prepare_mnist_data
     get_transforms = _get_mnist_transforms
-    IMG_DIMS       = InputDimensions(28, 28)

@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
-# nn.protocol.py
+# nn.uart.py
 # Bradley Manzo 2026
 
 # Shared UART framing constants and helpers used by python_demo.py and
 # the cnn_uart cocotb integration test. Both must stay in sync with
 # deframer.sv and class_framer.sv.
 
-from nn.globals import IMG_DIMS
+from nn.globals import NN_CFG
 
 HEADER    = bytes([0xA5, 0x5A])
 TAIL      = bytes([0xA5, 0x5A])
 WAKEUP    = 0x99
-
 
 def build_frame(pixels: list) -> bytes:
     """Pack a flat list of binary {0,1} pixels into the wire frame.
 
     Returns HEADER + 9600 image bytes (LSB-first packed).
     """
-    buf = bytearray(IMG_DIMS.term_count // 8)
+    buf = bytearray(NN_CFG.in_dims.term_count // 8)
     for i, px in enumerate(pixels):
         if px:
             buf[i // 8] |= 1 << (i % 8)
