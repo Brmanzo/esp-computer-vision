@@ -119,8 +119,8 @@ wire [0:0] uart_tx;
 `endif
 
   uart_cnn #(
-     .WidthIn    (320)
-    ,.HeightIn   (240)
+     .WidthIn    (28)
+    ,.HeightIn   (28)
     ,.BusBits    (8)
     ,.InBits     (1)
     ,.FileName_0    ("nn/data/roms/hex/layer_0_weights.hex")

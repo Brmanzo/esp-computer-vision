@@ -15,7 +15,7 @@ from cocotbext.uart import UartSource, UartSink
 
 from util.utilities  import runner, clock_start_sequence, reset_sequence, get_param_string, inject_weights_and_biases
 from util.weight_loader import load_weights_from_vh
-from functional_models.cnn import CNNModel
+from functional_models.cnn_model import CNNModel
 from nn.globals import NN_CFG
 from nn.protocol import build_frame, parse_response
 

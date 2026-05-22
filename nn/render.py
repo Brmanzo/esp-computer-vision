@@ -286,6 +286,10 @@ def patch_top_sv(cfg: NNConfig, path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     text = re.sub(r'(?:    ,\.FileName_\S+ *\("[^"]*"\)\n)+',
                   '\n'.join(arg_lines) + '\n', text)
+    
+    text = re.sub(r'\.WidthIn\s*\(\d+\)', f'.WidthIn    ({cfg.in_dims.width})', text)
+    text = re.sub(r'\.HeightIn\s*\(\d+\)', f'.HeightIn   ({cfg.in_dims.height})', text)
+
     path.write_text(text, encoding="utf-8")
 
 
