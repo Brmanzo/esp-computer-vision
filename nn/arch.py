@@ -89,7 +89,7 @@ class cnn(torch.nn.Module):
         # 3. Utilities
         self.ram_utilization()
         # Update cnn.sv with current architecture
-        from nn.render   import render_verilog
+        from nn.verilog   import render_verilog
         render_verilog(self.config)
 
     def forward(self, x):

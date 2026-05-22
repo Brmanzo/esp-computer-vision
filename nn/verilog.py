@@ -49,7 +49,7 @@ def render_header(cfg, num_layers: int = 1):
         "",
         "`timescale 1ns / 1ps",
         "module cnn #(",
-        f"  parameter int unsigned BusBits = {BusBits}",
+        f"   parameter int unsigned BusBits = {BusBits}",
     ]
 
     def _plain_params():
@@ -63,7 +63,7 @@ def render_header(cfg, num_layers: int = 1):
                 yield f"  ,parameter              FileName_{i}    = \"{_lo_hex(i)}\""
                 yield f"  ,parameter              FileName_{i}_hi = \"{_hi_hex(i)}\""
             else:
-                yield f"  ,parameter              FileName_{i} = \"{_std_hex(i)}\""
+                yield f"  ,parameter              FileName_{i}    = \"{_std_hex(i)}\""
 
     # Add FileName parameters for each layer to support ROM injection
     lines.extend(_plain_params())
@@ -144,22 +144,22 @@ def render_conv_layer(cfg: ConvConfig, is_last_feature: bool = False):
         f"    ,.InChannels  ({cfg._in_ch})",
         f"    ,.OutChannels ({cfg._out_ch})",
         f"    ,.Stride      ({cfg._stride})",
-        f"    ,.Weights     (LAYER_{cfg._layer_num}_WEIGHTS)",
         f"    ,.Biases      (LAYER_{cfg._layer_num}_BIASES)",
         f"    ,.Padding     ({cfg._padding})",
         f"    ,.DSPCount    ({cfg._dsp_count})",
         f"    ,.Unsigned    ({1 if cfg._in_bits > 2 else 0})",
         f"    ,.TruncGuard  (LAYER_{cfg._layer_num}_MIN_TRUNC_GUARD)"
     ]
-    if is_last_feature:
-        lines.append("    ,.ShiftBits   (CLASSIFIER_SHIFT)")
-    elif cfg._out_bits > 2:
+    if is_last_feature or cfg._out_bits > 2:
         lines.append(f"    ,.ShiftBits   (LAYER_{cfg._layer_num}_SHIFT)")
-    lines.append(f"    ,.FileName    (FileName_{cfg._layer_num})")
-    if _rom_needs_hi(cfg):
-        lines.append(f"    ,.FileName_hi (FileName_{cfg._layer_num}_hi)")
+    if cfg._dsp_count == 0:
+        lines.append(f"    ,.Weights     (LAYER_{cfg._layer_num}_WEIGHTS)")
+    else:
+        lines.append(f"    ,.FileName    (FileName_{cfg._layer_num})")
+        if _rom_needs_hi(cfg):
+            lines.append(f"    ,.FileName_hi (FileName_{cfg._layer_num}_hi)")
     lines += [
-        f"  ) conv_layer_inst_{cfg._layer_num} (",
+        f"  ) conv_layer_{cfg._layer_num}_inst (",
         "     .clk_i     (clk_i)",
         "    ,.rst_i     (rst_i)",
         "",
@@ -188,7 +188,7 @@ def render_pool_layer(cfg: PoolConfig):
         f"    ,.InChannels  ({cfg._in_ch})",
         f"    ,.PoolMode    ({cfg._mode})",
         f"    ,.Unsigned    ({unsigned})",
-        f"  ) pool_layer_inst_{cfg._layer_num} (",
+        f"  ) pool_layer_{cfg._layer_num}_inst (",
         "     .clk_i    (clk_i)",
         "    ,.rst_i    (rst_i)",
         "",
@@ -214,15 +214,17 @@ def render_classifier_layer(cfg: ClassifierConfig):
         f"    ,.ClassCount ({cfg._num_classes})",
         f"    ,.WeightBits ({cfg._q_schedule._q_min_bits})",
         f"    ,.BiasBits   ({cfg._bias_bits})", # Bias bits are fixed to 8 for now since we haven't implemented quantized biases
-        f"    ,.Weights    (LAYER_{cfg._layer_num}_WEIGHTS)",
         f"    ,.Biases     (LAYER_{cfg._layer_num}_BIASES)",
         f"    ,.DSPCount   ({cfg._dsp_count})",
-        f"    ,.FileName   (FileName_{cfg._layer_num})",
     ]
-    if _rom_needs_hi(cfg):
-        lines.append(f"    ,.FileName_hi (FileName_{cfg._layer_num}_hi)")
+    if cfg._dsp_count == 0:
+        lines.append(f"    ,.Weights    (LAYER_{cfg._layer_num}_WEIGHTS)")
+    else:
+        lines.append(f"    ,.FileName   (FileName_{cfg._layer_num})")
+        if _rom_needs_hi(cfg):
+            lines.append(f"    ,.FileName_hi (FileName_{cfg._layer_num}_hi)")
     lines += [
-        f"  ) classifier_layer_inst_{cfg._layer_num} (",
+        f"  ) classifier_layer_{cfg._layer_num}_inst (",
         "     .clk_i   (clk_i)",
         "    ,.rst_i   (rst_i)",
         "",

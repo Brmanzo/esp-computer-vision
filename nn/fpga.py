@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from nn.inference  import get_inference_from_pixels
-from nn.protocol   import build_frame, parse_response
+from nn.uart   import build_frame, parse_response
 from nn.globals    import NN_CFG, BAUD, DATAPATH, prepare_data
 
 # ── Serial config ─────────────────────────────────────────────────────────────
@@ -142,7 +142,7 @@ def main():
         hw_pred = run_trial(ser, pixels)
 
         if hw_pred is None:
-            print("  No valid response from FPGA. Stopping.")
+            print("  No valid response from FPGA. Stopping.\n  Did you make bitstream ESP=0 ?")
             break
 
         # 4. Report

@@ -12,9 +12,9 @@ from util.utilities  import runner, clock_start_sequence, reset_sequence, get_pa
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from functional_models.cnn_model import CNNModel
 from functional_models.cnn_framed_model import CnnFramedModel, FramedPictureGenerator
-from util.weight_loader import load_weights_from_vh
+from util.weight_loader import load_weights_from_vh, load_raw_weights_from_csv
 from nn.globals import NN_CFG
-from nn.render import patch_cnn_framed_sv
+from nn.verilog import patch_cnn_framed_sv
 
 @cocotb.test
 async def full_cnn_test(dut) -> None:
@@ -40,8 +40,9 @@ async def full_cnn_test(dut) -> None:
 
     # 1. Architecture config + learned shift
     config = NN_CFG
+    last_layer_shift_key = f"LAYER_{len(config.layers) - 1}_SHIFT"
     config.classifier_config._shift = int(
-        os.environ.get("CLASSIFIER_SHIFT", str(config.classifier_config._shift))
+        os.environ.get(last_layer_shift_key, str(config.classifier_config._shift))
     )
 
     # 2. Reconstruct weights dict from injected env vars
@@ -172,15 +173,21 @@ def test_full(inject_pixels: str = "") -> None:
     # Load weights from hardware_weights.vh
     vh_path = (tbpath / ".." / ".." / ".." / "nn" / "data" / "hardware_weights.vh").resolve()
     _, raw_dict = load_weights_from_vh(str(vh_path), config)
+    csv_path = (tbpath / ".." / ".." / ".." / "nn" / "data" / "hardware_weights.csv").resolve()
+    csv_weights = load_raw_weights_from_csv(str(csv_path), config)
+    for k, v in csv_weights.items():
+        raw_dict.setdefault(k, v)
 
     with open(vh_path) as f:
         vh_content = f.read()
-    m = re.search(r"localparam\s+int\s+CLASSIFIER_SHIFT\s*=\s*(\d+)\s*;", vh_content)
+    last_n = len(config.layers) - 1
+    last_layer_shift_key = f"LAYER_{last_n}_SHIFT"
+    m = re.search(rf"localparam\s+int\s+{last_layer_shift_key}\s*=\s*(\d+)\s*;", vh_content)
     if m is None:
-        raise ValueError("CLASSIFIER_SHIFT not found in hardware_weights.vh")
-    classifier_shift = int(m.group(1))
-    config.classifier_config._shift = classifier_shift
-    os.environ["CLASSIFIER_SHIFT"] = str(classifier_shift)
+        raise ValueError(f"{last_layer_shift_key} not found in hardware_weights.vh")
+    last_layer_shift = int(m.group(1))
+    config.classifier_config._shift = last_layer_shift
+    os.environ[last_layer_shift_key] = str(last_layer_shift)
 
     # Sync tb_cnn_framed.sv FileName parameters to current model's ROM layout
     patch_cnn_framed_sv(config, tbpath / "tb_cnn_framed.sv")

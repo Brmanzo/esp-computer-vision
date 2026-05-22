@@ -74,3 +74,41 @@ def load_weights_from_vh(vh_path: str, config: NNConfig) -> Tuple[Dict[str, Any]
         )
 
     return unpacked_dict, raw_integers
+
+
+def load_raw_weights_from_csv(csv_path: str, config: NNConfig) -> Dict[str, int]:
+    """Return packed raw weight integers keyed by LAYER_N_WEIGHTS, sourced from the CSV.
+
+    Used as a fallback for layers whose weights are stored in hex ROM files rather
+    than as localparam declarations in the vh (i.e. when dsp_count > 0).
+    """
+    import ast
+    import pandas as pd
+
+    df = pd.read_csv(csv_path)
+
+    def _pack(flat: list, bits: int) -> int:
+        mask = (1 << bits) - 1
+        packed = 0
+        for idx, val in enumerate(flat):
+            packed |= (int(val) & mask) << (idx * bits)
+        return packed
+
+    raw: Dict[str, int] = {}
+    for i, layer_cfg in enumerate(config.layers):
+        cfg = layer_cfg.ConvLayer
+        row = df.iloc[i]
+        raw[f"LAYER_{i}_WEIGHTS"] = _pack(
+            ast.literal_eval(str(row.weights_flat)),
+            cfg._q_schedule._q_min_bits,
+        )
+
+    c_idx = len(config.layers)
+    c_cfg = config.classifier_config
+    row = df.iloc[c_idx]
+    raw[f"LAYER_{c_idx}_WEIGHTS"] = _pack(
+        ast.literal_eval(str(row.weights_flat)),
+        c_cfg._q_schedule._q_min_bits,
+    )
+
+    return raw

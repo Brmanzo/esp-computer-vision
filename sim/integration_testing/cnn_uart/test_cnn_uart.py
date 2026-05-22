@@ -14,11 +14,11 @@ sys.set_int_max_str_digits(0)
 from cocotbext.uart import UartSource, UartSink
 
 from util.utilities  import runner, clock_start_sequence, reset_sequence, get_param_string, inject_weights_and_biases
-from util.weight_loader import load_weights_from_vh
+from util.weight_loader import load_weights_from_vh, load_raw_weights_from_csv
 from functional_models.cnn_model import CNNModel
 from nn.globals import NN_CFG
-from nn.protocol import build_frame, parse_response
-from nn.render import patch_uart_cnn_sv
+from nn.uart import build_frame, parse_response
+from nn.verilog import patch_uart_cnn_sv
 
 # uart_cnn.sv has prescale=13 hardcoded.
 # At the 1 GHz simulation clock (1 ns/cycle):
@@ -58,8 +58,9 @@ async def full_cnn_test(dut) -> None:
 
     # 1. Architecture config + learned shift
     config = NN_CFG
+    last_layer_shift_key = f"LAYER_{len(config.layers) - 1}_SHIFT"
     config.classifier_config._shift = int(
-        os.environ.get("CLASSIFIER_SHIFT", str(config.classifier_config._shift))
+        os.environ.get(last_layer_shift_key, str(config.classifier_config._shift))
     )
 
     # 2. Reconstruct weights dict from injected env vars
@@ -174,15 +175,21 @@ def test_full(inject_pixels: str = "") -> None:
     # Load weights from hardware_weights.vh
     vh_path = (tbpath / ".." / ".." / ".." / "nn" / "data" / "hardware_weights.vh").resolve()
     _, raw_dict = load_weights_from_vh(str(vh_path), config)
+    csv_path = (tbpath / ".." / ".." / ".." / "nn" / "data" / "hardware_weights.csv").resolve()
+    csv_weights = load_raw_weights_from_csv(str(csv_path), config)
+    for k, v in csv_weights.items():
+        raw_dict.setdefault(k, v)
 
     with open(vh_path) as f:
         vh_content = f.read()
-    m = re.search(r"localparam\s+int\s+CLASSIFIER_SHIFT\s*=\s*(\d+)\s*;", vh_content)
+    last_n = len(config.layers) - 1
+    last_layer_shift_key = f"LAYER_{last_n}_SHIFT"
+    m = re.search(rf"localparam\s+int\s+{last_layer_shift_key}\s*=\s*(\d+)\s*;", vh_content)
     if m is None:
-        raise ValueError("CLASSIFIER_SHIFT not found in hardware_weights.vh")
-    classifier_shift = int(m.group(1))
-    config.classifier_config._shift = classifier_shift
-    os.environ["CLASSIFIER_SHIFT"] = str(classifier_shift)
+        raise ValueError(f"{last_layer_shift_key} not found in hardware_weights.vh")
+    last_layer_shift = int(m.group(1))
+    config.classifier_config._shift = last_layer_shift
+    os.environ[last_layer_shift_key] = str(last_layer_shift)
 
     # Sync uart_cnn.sv FileName parameters to current model's ROM layout
     repo_root = (tbpath / ".." / ".." / "..").resolve()

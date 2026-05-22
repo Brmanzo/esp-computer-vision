@@ -132,8 +132,6 @@ def _hw_integer_forward(pixels: list, config) -> int:
 
     with open(VH_PATH, 'r') as f:
         vh_content = f.read()
-    m = re.search(r"localparam\s+int\s+CLASSIFIER_SHIFT\s*=\s*(\d+)\s*;", vh_content)
-    classifier_shift = int(m.group(1)) if m else config.classifier_config._shift
     layer_shifts: dict[int, int] = {}
     for ms in re.finditer(r"localparam\s+int\s+LAYER_(\d+)_SHIFT\s*=\s*(\d+)\s*;", vh_content):
         layer_shifts[int(ms.group(1))] = int(ms.group(2))
@@ -171,20 +169,14 @@ def _hw_integer_forward(pixels: list, config) -> int:
         pad_value = -1 if i == 0 else 0
         acc = _conv(act, w, b, conv._padding, pad_value)
         # Hardware accumulator wraps at AccBits (set by TruncGuard in conv_layer.sv).
-        # Use the actual learned shift from the VH file so AccBits matches the bitstream.
-        # Sign-path layers (out_bits <= 2) have no LAYER_i_SHIFT entry; RTL ShiftBits defaults to 0.
-        hw_shift = layer_shifts.get(i, 0) if i < len(config.layers) - 1 else classifier_shift
+        # All gen_learned_shift layers (including the last feature layer) now share LAYER_i_SHIFT.
+        hw_shift = layer_shifts.get(i, conv._shift)
         trunc_guard = layer_trunc_guards.get(i, global_trunc_guard)
         acc = _signed_truncate(acc, _layer_acc_bits(conv, shift_override=hw_shift, trunc_guard=trunc_guard))
 
-        if i == len(config.layers) - 1:
-            # Last feature layer: ReLU + logical right-shift + unsigned saturation
-            shifted = np.maximum(acc, 0) >> classifier_shift
-            act = np.clip(shifted, 0, (1 << conv._out_bits) - 1)
-        elif conv._out_bits > 2:
-            # Intermediate 4-bit+ layer: same gen_learned_shift hardware path as last feature
-            ls = layer_shifts.get(i, config.layers[i].ConvLayer._shift)
-            shifted = np.maximum(acc, 0) >> ls
+        if i == len(config.layers) - 1 or conv._out_bits > 2:
+            # Last feature layer or intermediate 4-bit+ layer: ReLU + right-shift + unsigned saturation
+            shifted = np.maximum(acc, 0) >> hw_shift
             act = np.clip(shifted, 0, (1 << conv._out_bits) - 1)
         else:
             # Ternary (2-bit) / binary (1-bit): sign → {-1, 0, +1}

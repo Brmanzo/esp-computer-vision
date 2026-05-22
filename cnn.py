@@ -4,7 +4,7 @@
 Tools:
   bram   Verify BRAM contents against hex ROMs
   export        Quantize and export weights to hex files
-  render        Render CNN architecture to SystemVerilog
+  verilog       Render CNN architecture to SystemVerilog
   train         Train the neural network
   inference     Run inference
   sample        Sample/collect data
@@ -13,7 +13,7 @@ Tools:
 import sys
 import runpy
 
-TOOLS = {"bram", "export", "render", "train", "inference", "sample", "arch", "fpga"}
+TOOLS = {"bram", "export", "verilog", "train", "inference", "sample", "arch", "fpga"}
 
 if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
     print(__doc__)

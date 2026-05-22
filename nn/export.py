@@ -133,9 +133,6 @@ def export_nn_to_csv(nn_path: Path, config: NNConfig, output_csv: Path, random_w
     # Features followed by Classifier
     all_modules = list(network.features.children()) + list(network.classifier.children())
 
-    # Track the learned classifier output shift separately
-    classifier_shift: Optional[int] = None
-
     for module in all_modules:
         if isinstance(module, QuantConv2d):
             layer_idx = len(all_hardware_data)
@@ -208,19 +205,17 @@ def export_nn_to_csv(nn_path: Path, config: NNConfig, output_csv: Path, random_w
                 all_hardware_data[-1]["layer_shift"] = shift_val
                 if is_last_feature:
                     # Back-propagate into config so RTL render sees the trained value.
-                    classifier_shift = shift_val
-                    config.classifier_config._shift = classifier_shift
-                    all_hardware_data[-1]["classifier_shift"] = classifier_shift
-                    print(f"  Learned Classifier Shift: {classifier_shift} (formula gave {raw_shift:.2f}, module.hardware_shift={module.hardware_shift})  act_scale={current_act_scale:.6f}  clip_val={clip_abs:.4f}")
+                    config.classifier_config._shift = shift_val
+                    print(f"  Learned Last-Layer Shift: {shift_val} (formula gave {raw_shift:.2f}, module.hardware_shift={module.hardware_shift})  act_scale={current_act_scale:.6f}  clip_val={clip_abs:.4f}")
                 else:
                     print(f"  Layer {conv_idx} Shift: {shift_val} (formula gave {raw_shift:.2f})  act_scale={current_act_scale:.6f}  clip_val={clip_abs:.4f}")
 
     # If no LearnedShiftQuantizer was encountered (e.g. random_weights path),
-    # fall back to the analytically-derived shift on the last feature conv row
-    if all_hardware_data and "classifier_shift" not in all_hardware_data[-2 if len(all_hardware_data) > 1 else -1]:
-        feature_row_idx = len(all_hardware_data) - 2  # last feature row, not classifier
-        if 0 <= feature_row_idx < len(all_hardware_data):
-            all_hardware_data[feature_row_idx]["classifier_shift"] = config.classifier_config._shift
+    # fall back to the analytically-derived shift on the last feature conv row (random_weights path)
+    feature_row_idx = len(all_hardware_data) - 2  # last feature row, not classifier
+    if 0 <= feature_row_idx < len(all_hardware_data):
+        if "layer_shift" not in all_hardware_data[feature_row_idx]:
+            all_hardware_data[feature_row_idx]["layer_shift"] = config.classifier_config._shift
 
     df = pd.DataFrame(all_hardware_data)
     df.to_csv(output_csv, index=False)
@@ -365,7 +360,9 @@ def export_csv_to_hex(csv_path: Path, sv_path: Path, hex_path: Path, config: NNC
 
         # Format as Verilog hex literals (e.g. 160'hABC...)
         max_digits = max(len(str(w_total_bits-1)), len(str(b_total_bits-1)))
-        sv_lines.append(f"localparam logic signed [{w_total_bits-1:>{max_digits}}:0] LAYER_{i}_WEIGHTS = {w_total_bits}'h{packed_w:x};")
+        layer_i_cfg = config.layers[i].ConvLayer if i < len(config.layers) else config.classifier_config
+        if layer_i_cfg._dsp_count == 0:
+            sv_lines.append(f"localparam logic signed [{w_total_bits-1:>{max_digits}}:0] LAYER_{i}_WEIGHTS = {w_total_bits}'h{packed_w:x};")
         sv_lines.append(f"localparam logic signed [{b_total_bits-1:>{max_digits}}:0] LAYER_{i}_BIASES  = {b_total_bits}'h{packed_b:x};")
         sv_lines.append("")
 
@@ -382,13 +379,7 @@ def export_csv_to_hex(csv_path: Path, sv_path: Path, hex_path: Path, config: NNC
             sv_lines.append(f"localparam int LAYER_{i}_SHIFT = {ls};  // Per-layer output shift for acc >> LAYER_{i}_SHIFT")
             sv_lines.append("")
 
-        # 5. Emit CLASSIFIER_SHIFT for the final feature layer (carries the learned shift)
-        if hasattr(row, 'classifier_shift') and str(row.classifier_shift) not in ("", "nan", "None"):
-            learned_shift = int(float(str(row.classifier_shift)))
-            sv_lines.append(f"localparam int CLASSIFIER_SHIFT = {learned_shift};  // Learned right-shift for acc >> CLASSIFIER_SHIFT")
-            sv_lines.append("")
-
-        # 6. Compute minimum TruncGuard from actual quantized weights (feature conv layers only)
+        # 5. Compute minimum TruncGuard from actual quantized weights (feature conv layers only)
         if i < len(config.layers):
             if hasattr(row, 'layer_shift') and str(row.layer_shift) not in ("", "nan", "None"):
                 hw_shift = int(float(str(row.layer_shift)))
@@ -413,11 +404,6 @@ def export_csv_to_hex(csv_path: Path, sv_path: Path, hex_path: Path, config: NNC
         # 7. Generate Hex file if layer uses DSPs
         if layer_cfg._dsp_count > 0:
             pack_hex_weights(hex_path, weights, w_bits, layer_cfg._dsp_count, layer_cfg, i)
-
-    if min_trunc_guards:
-        global_tg = max(min_trunc_guards)
-        sv_lines.append(f"localparam int TRUNC_GUARD = {global_tg};  // Max across all layers; set conv_layer.sv TruncGuard to this or higher")
-        sv_lines.append("")
 
     with open(sv_path, 'w') as f:
         f.write("\n".join(sv_lines))

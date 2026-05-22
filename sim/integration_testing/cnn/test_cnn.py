@@ -12,7 +12,7 @@ sys.set_int_max_str_digits(0)
 from util.utilities  import runner, clock_start_sequence, reset_sequence, get_param_string, inject_raw_param, inject_weights_and_biases
 from util.components import ModelRunner, RateGenerator, InputModel, OutputModel
 from functional_models.cnn_model import CNNModel, PictureGenerator
-from util.weight_loader import load_weights_from_vh
+from util.weight_loader import load_weights_from_vh, load_raw_weights_from_csv
 from nn.globals import NN_CFG
 
 @cocotb.test
@@ -27,8 +27,9 @@ async def full_cnn_test(dut) -> None:
     # 1. Load Architecture Config
     config = NN_CFG
     # Apply learned shift from VH file so CNNModel uses the correct ShiftBits
-    classifier_shift_env = int(os.environ.get("CLASSIFIER_SHIFT", str(config.classifier_config._shift)))
-    config.classifier_config._shift = classifier_shift_env
+    last_layer_shift_key = f"LAYER_{len(config.layers) - 1}_SHIFT"
+    last_layer_shift_env = int(os.environ.get(last_layer_shift_key, str(config.classifier_config._shift)))
+    config.classifier_config._shift = last_layer_shift_env
 
     # 2. Instantiate Functional Model
     from typing import Any
@@ -144,17 +145,21 @@ def test_full(inject_pixels: str = "") -> None:
     # 2. Load weights from original .vh for injection
     vh_path = (tbpath / ".." / ".." / ".." / "nn" / "data" / "hardware_weights.vh").resolve()
     _, raw_dict = load_weights_from_vh(str(vh_path), config)
+    csv_path = (tbpath / ".." / ".." / ".." / "nn" / "data" / "hardware_weights.csv").resolve()
+    csv_weights = load_raw_weights_from_csv(str(csv_path), config)
+    for k, v in csv_weights.items():
+        raw_dict.setdefault(k, v)
 
-    # Parse CLASSIFIER_SHIFT from the vh file (different format: localparam int ...)
     with open(vh_path, 'r') as f:
         vh_content = f.read()
-    m = re.search(r"localparam\s+int\s+CLASSIFIER_SHIFT\s*=\s*(\d+)\s*;", vh_content)
+    last_n = len(config.layers) - 1
+    last_layer_shift_key = f"LAYER_{last_n}_SHIFT"
+    m = re.search(rf"localparam\s+int\s+{last_layer_shift_key}\s*=\s*(\d+)\s*;", vh_content)
     if m is None:
-        raise ValueError("CLASSIFIER_SHIFT not found in hardware_weights.vh")
-    classifier_shift = int(m.group(1))
-    # Stamp learned shift onto config so CNNModel picks it up via classifier_config._shift
-    config.classifier_config._shift = classifier_shift
-    os.environ["CLASSIFIER_SHIFT"] = str(classifier_shift)
+        raise ValueError(f"{last_layer_shift_key} not found in hardware_weights.vh")
+    last_layer_shift = int(m.group(1))
+    config.classifier_config._shift = last_layer_shift
+    os.environ[last_layer_shift_key] = str(last_layer_shift)
 
     # 3. Inject parameters and generate headers for each layer
     # Feature Layers
