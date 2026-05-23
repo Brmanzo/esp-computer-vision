@@ -17,6 +17,7 @@ BRAM_COUNT  = 30 - 1 # Subtract 1 for the Skid Buffer BRAM on deframer
 DSP_COUNT   = 8
 BAUD        = 115200  # 12 MHz / (prescale=13 * 8) ≈ 115385 baud (0.16% error)
 CLK_FREQ_HZ = 12_000_000  # 12 MHz Clock
+BUS_WIDTH   = 8
 
 CURRENT_TASK = "mnist"  # "mnist" or "hand_gesture"
 

@@ -101,10 +101,11 @@ RECURSE ?= 1
 NETLISTSVG_STACK ?= 65536
 NETLISTSVG_JS    ?= $(shell readlink -f $(shell which netlistsvg 2>/dev/null) 2>/dev/null)
 
-STAT_PARSE := python3 $(REPO_ROOT)/nn/util.py
+STAT_PARSE  := python3 $(REPO_ROOT)/nn/util.py
+PARSE_FLAGS ?=
 
 stat-modules: $(TOP_SV) $(FILELIST) $(SYNTH_SOURCES) $(HEX_FILES)
-	$(YOSYS) -p 'read_verilog -sv -DSYNTHESIS $(if $(filter 1,$(ESP)),-DESP,) $(TOP_SV) $(SYNTH_SOURCES); hierarchy -top top; synth_ice40 -dsp -noflatten -top top; stat' | $(STAT_PARSE) $(if $(MOD),--top $(MOD),)
+	$(YOSYS) -p 'read_verilog -sv -DSYNTHESIS $(if $(filter 1,$(ESP)),-DESP,) $(TOP_SV) $(SYNTH_SOURCES); hierarchy -top top; synth_ice40 -dsp -noflatten -top top; stat' | $(STAT_PARSE) $(if $(MOD),--top $(MOD),) $(PARSE_FLAGS)
 
 list-modules: $(TOP_SV) $(FILELIST) $(SYNTH_SOURCES) $(HEX_FILES)
 	$(YOSYS) -p 'read_verilog -sv -DSYNTHESIS $(if $(filter 1,$(ESP)),-DESP,) $(TOP_SV) $(SYNTH_SOURCES); hierarchy -top top; synth_ice40 -dsp -noflatten -top top; ls'
@@ -112,7 +113,30 @@ list-modules: $(TOP_SV) $(FILELIST) $(SYNTH_SOURCES) $(HEX_FILES)
 stat-raw: $(TOP_SV) $(FILELIST) $(SYNTH_SOURCES) $(HEX_FILES)
 	$(YOSYS) -p 'read_verilog -sv -DSYNTHESIS $(if $(filter 1,$(ESP)),-DESP,) $(TOP_SV) $(SYNTH_SOURCES); hierarchy -top top; synth_ice40 -dsp -noflatten -top top; stat'
 
+# Synthesize one module in isolation with explicit parameter overrides.
+# Usage: make stat-param MOD=unpacker PARAMS="UnpackedWidth=1 PackedNum=8" [PARSE_FLAGS="--fold --csv"]
+# PARAMS is a space-separated list of Key=Value pairs.
+stat-param: $(SYNTH_SOURCES)
+	$(YOSYS) -p 'read_verilog -sv -DSYNTHESIS $(SYNTH_SOURCES); $(foreach p,$(PARAMS),chparam -set $(subst =, ,$(p)) $(MOD);) hierarchy -top $(MOD); synth_ice40 -dsp -noflatten -top $(MOD); stat' | $(STAT_PARSE) --top $(MOD) $(PARSE_FLAGS)
 
+# Sweep one parameter over a range, emitting labelled CSV rows.
+# Usage: make stat-sweep MOD=unpacker SWEEP=UnpackedWidth=1:8 PARAMS="PackedNum=4" PARSE_FLAGS="--fold"
+# SWEEP=VAR=start:end  (inclusive, step 1)
+# Output: CSV with SWEEP variable as first column; redirect to a file for MATLAB import.
+# Synthesize each NN_CFG layer independently and report aggregated totals.
+# Usage: make stat-design [PARSE_FLAGS="--fold"]
+stat-design: $(addprefix $(REPO_ROOT)/,$(SYNTH_SOURCES))
+	SYNTH_SOURCES="$(SYNTH_SOURCES)" YOSYS="$(YOSYS)" python3 $(REPO_ROOT)/nn/util.py --design $(PARSE_FLAGS)
+
+stat-sweep: $(SYNTH_SOURCES)
+	@svar="$$(echo '$(SWEEP)' | cut -d= -f1)"; \
+	 rng="$$(echo '$(SWEEP)' | cut -d= -f2-)"; \
+	 start="$$(echo $$rng | cut -d: -f1)"; \
+	 end="$$(echo $$rng | cut -d: -f2)"; \
+	 for v in $$(seq $$start $$end); do \
+	   $(YOSYS) -p 'read_verilog -sv -DSYNTHESIS $(SYNTH_SOURCES); $(foreach p,$(PARAMS),chparam -set $(subst =, ,$(p)) $(MOD);) chparam -set '"$$svar"' '"$$v"' $(MOD); hierarchy -top $(MOD); synth_ice40 -dsp -noflatten -top $(MOD); stat' \
+	   | $(STAT_PARSE) --top $(MOD) $(PARSE_FLAGS) --csv --label "$$svar=$$v"; \
+	 done
 
 %.expanded.pdf: %.expanded.json
 	node --stack-size=$(NETLISTSVG_STACK) $(NETLISTSVG_JS) $< -o $(subst .pdf,.svg,$@)
@@ -170,4 +194,4 @@ clean: synth-clean
 targets-help: synth-help
 vars-help: synth-vars-help
 
-.PHONY: synth-clean synth-help synth-vars-help vars-help targets-help clean synth-mapped synth-clean synth-abstract stat-modules list-modules stat-raw
+.PHONY: synth-clean synth-help synth-vars-help vars-help targets-help clean synth-mapped synth-clean synth-abstract stat-modules list-modules stat-raw stat-param stat-sweep stat-design

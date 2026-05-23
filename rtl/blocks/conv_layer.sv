@@ -61,7 +61,7 @@ module conv_layer #(
    ,localparam int YBits = (LineCountPx <= 1) ? 1 : $clog2(PaddedHeight + 1)
 
    ,localparam int unsigned WeightIndex = InChannels * KernelArea * WeightBits
-   ,parameter logic signed [OutChannels*WeightIndex-1:0] Weights = '0
+   ,parameter logic signed [OutChannels*InChannels*KernelWidth*KernelWidth*WeightBits-1:0] Weights = '0
    ,parameter logic signed [OutChannels*BiasBits-1:0]    Biases = '0
    ,parameter FileName    = "nn/data/roms/hex/zeros.hex"
    ,parameter FileName_hi = "nn/data/roms/hex/zeros.hex"

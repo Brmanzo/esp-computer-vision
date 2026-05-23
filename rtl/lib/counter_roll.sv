@@ -4,9 +4,9 @@
 `timescale 1ns / 1ps
 module counter_roll #(
   parameter int unsigned  CountBits  = 8
- ,parameter int unsigned  MaxVal     = '1
+ ,parameter int unsigned  MaxVal     = CountBits'(2**CountBits - 1)
  ,parameter int unsigned  ResetVal   = '0
- ,parameter bit           EnableDown = 1'b1
+ ,parameter bit           EnableDown = 1'b0
 )  (
   input [0:0] clk_i
  ,input [0:0] rst_i

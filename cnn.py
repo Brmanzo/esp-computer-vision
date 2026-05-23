@@ -9,11 +9,12 @@ Tools:
   inference     Run inference
   sample        Sample/collect data
   arch          Architecture Report
+  util          Predict FPGA utilization
 """
 import sys
 import runpy
 
-TOOLS = {"bram", "export", "verilog", "train", "inference", "sample", "arch", "fpga"}
+TOOLS = {"bram", "export", "verilog", "train", "inference", "sample", "arch", "fpga", "util"}
 
 if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
     print(__doc__)

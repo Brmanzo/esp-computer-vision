@@ -18,10 +18,13 @@ RTL designed and tested on icebreaker V1.1a FPGA for hardware acceleration.
     - [Building the ESP Project](#building-the-esp-project)
   - [Hardware Installation](#hardware-installation)
     - [Synthesizing for Icebreaker Board](#synthesizing-for-icebreaker-board)
+  - [Verification](#verification)
     - [Unit Testing](#unit-testing)
     - [Integration Testing](#integration-testing)
-  - [Neural Network Design](#neural-network-design)
-  - [Neural Network Training](#neural-network-training)
+  - [Neural Network](#neural-network)
+    - [Setup](#setup)
+    - [Design](#design)
+    - [Training](#training)
   - [Credits](#credits)
   - [License](#license)
 
@@ -148,22 +151,27 @@ GPIO_NUM_1  - GPIO 47 (PMOD1A)
 GPIO_NUM_2  - GPIO 45 (PMOD1A)
 GND         - GND     (PMOD1B)
 ```
+![CNN Design Flow](cnn_design_flow.svg)
+
 ### Synthesizing for Icebreaker Board
 ```bash
-# To check FPGA resource utilization
-make util
-
 # To generate a schematic of the hardware run
 make <MODULE>.pdf
 
+# To estimate the LC, FF, RAM, and DSP cost run
+make stat-design
+
 # Within repo root run
-make bitstream
+make bitstream ESP=[0|1]
+
+# To check FPGA resource utilization
+make util && make stat
 
 # To run interactive place and route
 LIBGL_ALWAYS_SOFTWARE=1 nextpnr-ice40 --up5k --package sg48 --pcf boards/icebreakerV1_1a/icebreaker.pcf --gui --json ice40.json
 
 # Then flash the resulting ice40.bin using
-iceprog ice40.bin
+make prog ice40.bin
 
 # To verify ROM hexfiles written to FPGA
 cnn.py bram
@@ -171,7 +179,7 @@ cnn.py bram
 # To clean the current repository
 make clean
 ```
-
+## Verification
 ### Unit Testing
 ```bash
 # within sim/unit_testing/ open the module you'd like to test, then run
@@ -183,37 +191,70 @@ make list-tests
 # Run specific test(s) via keyword
 make test <KEYWORD>
 
+# To test icestorm dsp sequential modules
+cd sim/unit_testing/filter && make test DSP=1
+cd sim/unit_testing/neuron && make test DSP=1
+
 # Lint module and dependencies with Verilator and Verible
 make lint
 
-# To test all unit tests from root
-make test-all
+# To test all unit tests alphabetically from root
+make test-all FROM=<START_TEST_NAME>
 
-# To lint all unit tests from root
+# To lint all RTL from root
 make lint-all
 
-# To clean all unit tests from root
+# To clean all test artifacts from root
 make clean-all
 ```
 
 ### Integration Testing
 ```bash
 
-# To verify via simulation in python
-# within sim/integration/testing/cnn_uart/
-make test <SAMPLE_IDX=#> VERBOSE=1
+# To run a smoke test for cnn
+cd sim/integration_testing/cnn/ && make test INJECT_PIXELS=[zeros|ones]
+
+# To verify cnn via functional model and pytorch
+cd sim/integration_testing/cnn/ && make test <SAMPLE_IDX=#> VERBOSE=1
+
+# To verify cnn within deframer, framer pipeline
+cd sim/integration_testing/cnn/ && make test <SAMPLE_IDX=#> VERBOSE=1
 
 # To verify via FPGA with USB serial I/O
-python3 demo/python_demo.py <SAMPLE_IDX> <ttyUSB1>
+make bitstream ESP=0
+cnn.py fpga <sample_idx> [ttyUSBx] [--trials N]
 ```
 
-## Neural Network Design
+## Neural Network 
+### Setup
 
 ```bash
 # To setup the cnn.py environment run
 bash install.sh
 source ~/.bashrc
+
+# Create a new directory and config under tasks
+mkdir nn/tasks/<TASK_NAME>
 ```
+
+```python
+# Within <TASK_NAME>/<TASK_NAME>.py elaborate nn_config, network_path, and classes
+
+# Within <TASK_NAME>/preprocess.py elaborate your preprocessing and training transformations
+
+# Include these structures in nn/globals.py and hook them to the global generics
+CURRENT_TASK = "TASK_NAME"
+
+if CURRENT_TASK == "TASK_NAME":
+    # Hand Gesture Task
+    NET_PATH       = <TASK_NAME>_NET_PATH
+    CLASSES        = <TASK_NAME>_CLASSES
+    NN_CFG         = get_<TASK_NAME>_cfg()
+    prepare_data   = _prepare_<TASK_NAME>_data
+    get_transforms = _get_<TASK_NAME>_transforms
+```
+
+### Design
 ```python
 # Schedule the weight quantization per layer using QSchedule
   QSchedule(
@@ -261,11 +302,26 @@ source ~/.bashrc
 ```
 
 ```bash
-# To report BRAM and DSP Usage along with network architecture
-cnn.py model
+# To report BRAM and DSP Usage, performance analysis, and print network architecture
+cnn.py arch
+
+# To estimate LC, DFF, CARRY, RAM, and DSP cost from design spec via Yosys
+make stat-design
+
+# To report hardware cost for individual modules to command line
+make stat-sweep MOD=<MODULE_NAME> PARAMS="P1=V1 P2=V2"
+
+# To sweep a range of parameters and report hardware cost for individual modules to command line
+make stat-sweep MOD=<MODULE_NAME> SWEEP=<PARAMETER_TO_SWEEP>=<START:END> PARAMS="P1=V1 P2=V2"
+
+# To report hardware cost for individual modules to csv
+make stat-sweep MOD=<MODULE_NAME> SWEEP=<PARAMETER_TO_SWEEP>=<START:END> PARAMS="P1=V1 P2=V2" PARSE_FLAGS="--csv" > <FILENAME>.csv
+
+# To fold DFF primitives and CARRY/LUT4
+make stat-sweep MOD=<MODULE_NAME> SWEEP=<PARAMETER_TO_SWEEP>=<START:END> PARAMS="P1=V1 P2=V2" PARSE_FLAGS="--fold"
 ```
 
-## Neural Network Training
+### Training
 ```bash
 # To sample a preprocessed dataset item
 cnn.py sample <INDEX>
@@ -279,8 +335,14 @@ cnn.py train --finetune
 # To export neural network weights to verilog header file
 cnn.py export
 
+# To generate random weights for testing FPGA util
+cnn.py export --random
+
+# To evaluate quantized neural network accuracy
+cnn.py inference hw-eval --trials <TRIAL_NUM>
+
 # To render the cnn.sv from the specs in globals.py
-cnn.py render
+cnn.py verilog
 ```
 
 ## Credits
