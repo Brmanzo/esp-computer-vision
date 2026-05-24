@@ -17,14 +17,14 @@ RTL designed and tested on icebreaker V1.1a FPGA for hardware acceleration.
   - [Firmware Installation](#firmware-installation)
     - [Building the ESP Project](#building-the-esp-project)
   - [Hardware Installation](#hardware-installation)
-    - [Synthesizing for Icebreaker Board](#synthesizing-for-icebreaker-board)
-  - [Verification](#verification)
-    - [Unit Testing](#unit-testing)
-    - [Integration Testing](#integration-testing)
   - [Neural Network](#neural-network)
     - [Setup](#setup)
     - [Design](#design)
     - [Training](#training)
+    - [Synthesizing for Icebreaker Board](#synthesizing-for-icebreaker-board)
+  - [Verification](#verification)
+    - [Unit Testing](#unit-testing)
+    - [Integration Testing](#integration-testing)
   - [Credits](#credits)
   - [License](#license)
 
@@ -153,78 +153,6 @@ GND         - GND     (PMOD1B)
 ```
 ![CNN Design Flow](cnn_design_flow.svg)
 
-### Synthesizing for Icebreaker Board
-```bash
-# To generate a schematic of the hardware run
-make <MODULE>.pdf
-
-# To estimate the LC, FF, RAM, and DSP cost run
-make stat-design
-
-# Within repo root run
-make bitstream ESP=[0|1]
-
-# To check FPGA resource utilization
-make util && make stat
-
-# To run interactive place and route
-LIBGL_ALWAYS_SOFTWARE=1 nextpnr-ice40 --up5k --package sg48 --pcf boards/icebreakerV1_1a/icebreaker.pcf --gui --json ice40.json
-
-# Then flash the resulting ice40.bin using
-make prog ice40.bin
-
-# To verify ROM hexfiles written to FPGA
-cnn.py bram
-
-# To clean the current repository
-make clean
-```
-## Verification
-### Unit Testing
-```bash
-# within sim/unit_testing/ open the module you'd like to test, then run
-make test VERBOSE=[0|1]
-
-# List available tests
-make list-tests
-
-# Run specific test(s) via keyword
-make test <KEYWORD>
-
-# To test icestorm dsp sequential modules
-cd sim/unit_testing/filter && make test DSP=1
-cd sim/unit_testing/neuron && make test DSP=1
-
-# Lint module and dependencies with Verilator and Verible
-make lint
-
-# To test all unit tests alphabetically from root
-make test-all FROM=<START_TEST_NAME>
-
-# To lint all RTL from root
-make lint-all
-
-# To clean all test artifacts from root
-make clean-all
-```
-
-### Integration Testing
-```bash
-
-# To run a smoke test for cnn
-cd sim/integration_testing/cnn/ && make test INJECT_PIXELS=[zeros|ones]
-
-# To verify cnn via functional model and pytorch
-cd sim/integration_testing/cnn/ && make test <SAMPLE_IDX=#> VERBOSE=1
-
-# To verify cnn within deframer, framer pipeline
-cd sim/integration_testing/cnn/ && make test <SAMPLE_IDX=#> VERBOSE=1
-
-# To verify via FPGA with USB serial I/O
-make bitstream ESP=0
-cnn.py fpga <sample_idx> [ttyUSBx] [--trials N]
-```
-
 ## Neural Network 
 ### Setup
 
@@ -309,7 +237,7 @@ cnn.py arch
 make stat-design
 
 # To report hardware cost for individual modules to command line
-make stat-sweep MOD=<MODULE_NAME> PARAMS="P1=V1 P2=V2"
+make stat-param MOD=<MODULE_NAME> PARAMS="P1=V1 P2=V2"
 
 # To sweep a range of parameters and report hardware cost for individual modules to command line
 make stat-sweep MOD=<MODULE_NAME> SWEEP=<PARAMETER_TO_SWEEP>=<START:END> PARAMS="P1=V1 P2=V2"
@@ -340,9 +268,82 @@ cnn.py export --random
 
 # To evaluate quantized neural network accuracy
 cnn.py inference hw-eval --trials <TRIAL_NUM>
+```
+
+### Synthesizing for Icebreaker Board
+```bash
 
 # To render the cnn.sv from the specs in globals.py
 cnn.py verilog
+
+# To generate a schematic of the hardware run
+make <MODULE>.pdf
+
+# To estimate the LC, FF, RAM, and DSP cost run
+make stat-design
+
+# Within repo root run
+make bitstream ESP=[0|1]
+
+# To check FPGA resource utilization
+make util && make stat
+
+# To run interactive place and route
+LIBGL_ALWAYS_SOFTWARE=1 nextpnr-ice40 --up5k --package sg48 --pcf boards/icebreakerV1_1a/icebreaker.pcf --gui --json ice40.json
+
+# Then flash the resulting ice40.bin using
+make prog ice40.bin
+
+# To verify ROM hexfiles written to FPGA
+cnn.py bram
+
+# To verify via FPGA with USB serial I/O
+make bitstream ESP=0
+cnn.py fpga <sample_idx> [ttyUSBx] [--trials N]
+
+# To clean the current repository
+make clean
+```
+## Verification
+### Unit Testing
+```bash
+# within sim/unit_testing/ open the module you'd like to test, then run
+make test VERBOSE=[0|1]
+
+# List available tests
+make list-tests
+
+# Run specific test(s) via keyword
+make test <KEYWORD>
+
+# To test icestorm dsp sequential modules
+cd sim/unit_testing/filter && make test DSP=1
+cd sim/unit_testing/neuron && make test DSP=1
+
+# Lint module and dependencies with Verilator and Verible
+make lint
+
+# To test all unit tests alphabetically from root
+make test-all FROM=<START_TEST_NAME>
+
+# To lint all RTL from root
+make lint-all
+
+# To clean all test artifacts from root
+make clean-all
+```
+
+### Integration Testing
+```bash
+
+# To run a smoke test for cnn
+cd sim/integration_testing/cnn/ && make test INJECT_PIXELS=[zeros|ones]
+
+# To verify cnn via functional model and pytorch
+cd sim/integration_testing/cnn/ && make test <SAMPLE_IDX=#> VERBOSE=1
+
+# To verify cnn within deframer, framer pipeline
+cd sim/integration_testing/cnn/ && make test <SAMPLE_IDX=#> VERBOSE=1
 ```
 
 ## Credits

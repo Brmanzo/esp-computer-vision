@@ -117,7 +117,7 @@ stat-raw: $(TOP_SV) $(FILELIST) $(SYNTH_SOURCES) $(HEX_FILES)
 # Usage: make stat-param MOD=unpacker PARAMS="UnpackedWidth=1 PackedNum=8" [PARSE_FLAGS="--fold --csv"]
 # PARAMS is a space-separated list of Key=Value pairs.
 stat-param: $(SYNTH_SOURCES)
-	$(YOSYS) -p 'read_verilog -sv -DSYNTHESIS $(SYNTH_SOURCES); $(foreach p,$(PARAMS),chparam -set $(subst =, ,$(p)) $(MOD);) hierarchy -top $(MOD); synth_ice40 -dsp -noflatten -top $(MOD); stat' | $(STAT_PARSE) --top $(MOD) $(PARSE_FLAGS)
+	$(YOSYS) -p 'read_verilog -sv -DSYNTHESIS $(SYNTH_SOURCES); $(foreach p,$(PARAMS),chparam -set $(subst =, ,$(p)) $(MOD);) synth_ice40 -dsp -noflatten -top $(MOD); stat' | $(STAT_PARSE) --top $(MOD) $(PARSE_FLAGS)
 
 # Sweep one parameter over a range, emitting labelled CSV rows.
 # Usage: make stat-sweep MOD=unpacker SWEEP=UnpackedWidth=1:8 PARAMS="PackedNum=4" PARSE_FLAGS="--fold"
@@ -134,7 +134,7 @@ stat-sweep: $(SYNTH_SOURCES)
 	 start="$$(echo $$rng | cut -d: -f1)"; \
 	 end="$$(echo $$rng | cut -d: -f2)"; \
 	 for v in $$(seq $$start $$end); do \
-	   $(YOSYS) -p 'read_verilog -sv -DSYNTHESIS $(SYNTH_SOURCES); $(foreach p,$(PARAMS),chparam -set $(subst =, ,$(p)) $(MOD);) chparam -set '"$$svar"' '"$$v"' $(MOD); hierarchy -top $(MOD); synth_ice40 -dsp -noflatten -top $(MOD); stat' \
+	   $(YOSYS) -p 'read_verilog -sv -DSYNTHESIS $(SYNTH_SOURCES); $(foreach p,$(PARAMS),chparam -set $(subst =, ,$(p)) $(MOD);) chparam -set '"$$svar"' '"$$v"' $(MOD); synth_ice40 -dsp -noflatten -top $(MOD); stat' \
 	   | $(STAT_PARSE) --top $(MOD) $(PARSE_FLAGS) --csv --label "$$svar=$$v"; \
 	 done
 

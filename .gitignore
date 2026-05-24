@@ -9,6 +9,9 @@ lint/
 # VSCode
 *.code-workspace
 
+# MATLAB
+mpm
+
 # Python
 __pycache__/
 *.pyc
