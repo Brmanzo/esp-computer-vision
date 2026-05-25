@@ -14,7 +14,7 @@ b = pd.read_csv(args.file_2)
 
 assert set(a.columns) == set(b.columns), "CSV files must have the same columns"
 combined = pd.concat([a, b]).drop_duplicates(
-    subset=['InCh','OutCh','InBits','WeightBits','OutBits','DSPCount']
+    subset=['InChannels', 'InBits', 'PoolMode']
 ).reset_index(drop=True)
 print(f"Combined {len(a)} rows from {args.file_1} and {len(b)} rows from {args.file_2} into {len(combined)} unique rows.")
 combined.to_csv(args.out, index=False)

@@ -20,8 +20,10 @@ ib_vals = unique(ib)';
 wb_vals = unique(wb)';
 
 %% Per-(IB,WB) slice fit
-lc_fits = [];   % [IB, WB, A, B, C, D, R2, N]
-ff_fits = [];
+max_slices = numel(ib_vals) * numel(wb_vals);
+lc_fits = NaN(max_slices, 8);   % [IB, WB, A, B, C, D, R2, N]
+ff_fits = NaN(max_slices, 8);
+fit_idx = 0;
 
 for i = ib_vals
   for w = wb_vals
@@ -36,15 +38,20 @@ for i = ib_vals
     X_lc = [oc_s.*ic_s, oc_s, ic_s, ones(n,1)];
     c_lc = X_lc \ lc_s;
     r2_lc = r2score(lc_s, X_lc * c_lc);
-    lc_fits(end+1,:) = [i, w, c_lc', r2_lc, n];
 
     % FF fit
     X_ff = [oc_s.*log2(max(ic_s,1)), oc_s, ic_s, ones(n,1)];
     c_ff = X_ff \ ff_s;
     r2_ff = r2score(ff_s, X_ff * c_ff);
-    ff_fits(end+1,:) = [i, w, c_ff', r2_ff, n];
+
+        fit_idx = fit_idx + 1;
+        lc_fits(fit_idx,:) = [i, w, c_lc', r2_lc, n];
+        ff_fits(fit_idx,:) = [i, w, c_ff', r2_ff, n];
   end
 end
+
+lc_fits = lc_fits(1:fit_idx,:);
+ff_fits = ff_fits(1:fit_idx,:);
 
 LC_T = array2table(lc_fits, 'VariableNames', ...
     {'InBits','WeightBits','A','B','C','D','R2','N'});
@@ -126,15 +133,19 @@ for p = 1:size(check_pairs,1)
 end
 
 %% Export coefficients to profile_coeffs.csv
-rows = {};
+rows = cell(height(LC_T) + height(FF_T), 1);
+row_idx = 0;
 for k = 1:height(LC_T)
-    rows{end+1} = {LC_T.InBits(k), LC_T.WeightBits(k), 0, 'LC', ...
-                   LC_T.A(k), LC_T.B(k), LC_T.C(k), LC_T.D(k), LC_T.R2(k)};
+    row_idx = row_idx + 1;
+    rows{row_idx} = {LC_T.InBits(k), LC_T.WeightBits(k), 0, 'LC', ...
+                     LC_T.A(k), LC_T.B(k), LC_T.C(k), LC_T.D(k), LC_T.R2(k)};
 end
 for k = 1:height(FF_T)
-    rows{end+1} = {FF_T.InBits(k), FF_T.WeightBits(k), 0, 'FF', ...
-                   FF_T.A(k), FF_T.B(k), FF_T.C(k), FF_T.D(k), FF_T.R2(k)};
+    row_idx = row_idx + 1;
+    rows{row_idx} = {FF_T.InBits(k), FF_T.WeightBits(k), 0, 'FF', ...
+                     FF_T.A(k), FF_T.B(k), FF_T.C(k), FF_T.D(k), FF_T.R2(k)};
 end
+rows = rows(1:row_idx);
 out_T = cell2table(vertcat(rows{:}), 'VariableNames', ...
     {'InBits','WeightBits','DSPCount','Model','A','B','C','D','R2'});
 writetable(out_T, '../profiles/profile_coeffs.csv');

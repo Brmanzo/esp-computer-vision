@@ -16,7 +16,8 @@ T.savings_per_dsp = (T.LC_dsp0 - T.LC) ./ T.DSPCount;
 ib_vals  = unique(T.InBits)';
 dsp_vals = unique(T.DSPCount(T.DSPCount > 0))';
 
-dsp_rows = {};
+dsp_rows = cell(numel(ib_vals) * numel(dsp_vals), 1);
+row_idx = 0;
 for i = ib_vals
   for d = dsp_vals
     mask = T.InBits==i & T.DSPCount==d;
@@ -39,9 +40,12 @@ for i = ib_vals
     fprintf('IB=%d DSP=%d%s  LC=%.2f·OC·IC + %.2f·OC + %.2f·IC + %.2f  R²=%.3f  (N=%d)\n', ...
         i, d, flag, c_full(1), c_full(2), c_full(3), c_full(4), r2, sum(mask));
     % Store WB=-1 as sentinel: profile.py must look up DSP>0 corners by (IB, -1, DSP)
-    dsp_rows{end+1} = {i, -1, d, 'LC', c_full(1), c_full(2), c_full(3), c_full(4), r2};
+    row_idx = row_idx + 1;
+    dsp_rows{row_idx} = {i, -1, d, 'LC', c_full(1), c_full(2), c_full(3), c_full(4), r2};
   end
 end
+
+dsp_rows = dsp_rows(1:row_idx);
 
 %% Append DSP>0 corners to profile_coeffs.csv
 dsp_T = cell2table(vertcat(dsp_rows{:}), 'VariableNames', ...
