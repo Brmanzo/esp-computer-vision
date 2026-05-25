@@ -50,12 +50,14 @@ dsp_T = cell2table(vertcat(dsp_rows{:}), 'VariableNames', ...
 coeffs_path = '../profiles/profile_coeffs.csv';
 if isfile(coeffs_path)
     existing = readtable(coeffs_path);
-    combined = [existing; dsp_T];
+    % Drop stale DSP>0 rows so re-runs don't accumulate duplicates
+    dsp0_only = existing(existing.DSPCount == 0, :);
+    combined  = [dsp0_only; dsp_T];
 else
     combined = dsp_T;
 end
 writetable(combined, coeffs_path);
-fprintf('Appended %d DSP>0 corners; total %d rows in profile_coeffs.csv\n', ...
+fprintf('Written %d DSP>0 corners; total %d rows in profile_coeffs.csv\n', ...
     height(dsp_T), height(combined));
 
 %% Plot 1: LC vs OutChannels/DSPCount (aggregated trend)

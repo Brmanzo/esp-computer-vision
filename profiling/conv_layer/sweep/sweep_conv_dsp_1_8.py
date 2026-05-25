@@ -115,29 +115,46 @@ def main():
                     help="Fix OutBits to one value (recommended; omit to use all in base)")
     ap.add_argument("--samples", default=6,      type=int,
                     help="(IC,OC) sample points per (IB,WB) corner (default 6)")
+    ap.add_argument("--ib",      default=None,   type=int,
+                    help="Only synthesize this InBits value")
+    ap.add_argument("--dsp",     default=None,   type=int,
+                    help="Only synthesize this DSPCount value")
+    ap.add_argument("--append",  action="store_true",
+                    help="Append to existing output CSV instead of overwriting")
     ap.add_argument("--yosys",   default="yosys")
     args = ap.parse_args()
 
-    repo     = os.path.dirname(os.path.abspath(__file__))
+    repo     = os.getcwd()
     sources  = get_synth_sources(repo)
     baseline = load_baseline(args.base)
 
     # Group baseline points by (IB, WB, OB) corner
     corners: dict[tuple, list] = defaultdict(list)
     for (ic, oc, ib, wb, ob), (lc, ff) in baseline.items():
-        if args.ob is not None and ob != args.ob:
+        if args.ob  is not None and ob  != args.ob:
+            continue
+        if args.ib  is not None and ib  != args.ib:
             continue
         corners[(ib, wb, ob)].append((ic, oc, lc, ff))
 
     runs = 0
     t0   = time.time()
 
-    with open(args.out, "w", newline="") as f:
+    append  = args.append and os.path.isfile(args.out)
+    mode    = "a" if append else "w"
+    with open(args.out, mode, newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["InCh", "OutCh", "InBits", "WeightBits", "OutBits",
-                         "DSPCount", "LC", "FF", "LC_dsp0"])
+        if not append:
+            writer.writerow(["InCh", "OutCh", "InBits", "WeightBits", "OutBits",
+                             "DSPCount", "LC", "FF", "LC_dsp0"])
 
         for (ib, wb, ob), pts in sorted(corners.items()):
+            # When targeting a specific DSP, restrict to OC values it can divide
+            if args.dsp is not None:
+                pts = [p for p in pts if p[1] % args.dsp == 0]
+            if not pts:
+                print(f"  (no OC values divisible by DSP={args.dsp} in this corner, skipping)")
+                continue
             lc_vals = [p[2] for p in pts]
             samples = select_samples(pts, lc_vals, args.samples)
 
@@ -145,11 +162,14 @@ def main():
                   f"({len(pts)} baseline pts, {len(samples)} sampled) ---")
 
             for ic, oc, lc_dsp0, ff_dsp0 in samples:
-                # Write DSP=0 baseline row
-                writer.writerow([ic, oc, ib, wb, ob, 0, lc_dsp0, ff_dsp0, lc_dsp0])
+                if not append:
+                    # Write DSP=0 baseline row only in fresh mode; already present when appending
+                    writer.writerow([ic, oc, ib, wb, ob, 0, lc_dsp0, ff_dsp0, lc_dsp0])
 
                 for dsp in valid_dsp_counts(oc):
                     if dsp == 0:
+                        continue
+                    if args.dsp is not None and dsp != args.dsp:
                         continue
                     lc, ff = synthesize(repo, sources, ic, oc, ib, wb, ob, dsp, args.yosys)
                     runs += 1
