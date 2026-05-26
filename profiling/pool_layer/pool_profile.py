@@ -6,7 +6,7 @@ Keys are (InBits, InChannels, PoolMode); values are exact (LC, FF) counts.
 
 Usage:
     from pool_profile import predict, feasible
-    lc, ff = predict(ib=4, ic=8, mode=0)   # mode 0=max, 1=avg
+    lc, ff = predict_pool_layer(ib=4, ic=8, mode=0)   # mode 0=max, 1=avg
 """
 
 import csv
@@ -18,14 +18,14 @@ FF_CAP = 5280
 _TABLE: dict[tuple, tuple] = {}   # (ib, ic, mode) -> (lc, ff)
 
 
-def _load(path: Path = Path(__file__).parent / "profiles/sweep_pool_mode1.csv") -> None:
+def _load(path: Path = Path(__file__).parent / "profiles/profile_coeffs.csv") -> None:
     with open(path, newline="") as f:
         for row in csv.DictReader(f):
             key = (int(row["InBits"]), int(row["InChannels"]), int(row["PoolMode"]))
             _TABLE[key] = (int(row["LC"]), int(row["FF"]))
 
 
-def predict(ib: int, ic: int, mode: int = 0) -> tuple[int, int]:
+def predict_pool_layer(ib: int, ic: int, mode: int = 0) -> tuple[int, int]:
     """
     Return (LC, FF) for a pool_layer configuration.
     Raises KeyError if the configuration was not in the sweep.
@@ -51,7 +51,7 @@ def predict(ib: int, ic: int, mode: int = 0) -> tuple[int, int]:
 def feasible(ib: int, ic: int, mode: int = 0) -> bool:
     """Return True if the configuration was measured and fits within both caps."""
     try:
-        predict(ib, ic, mode)
+        predict_pool_layer(ib, ic, mode)
         return True
     except (KeyError, ValueError):
         return False
@@ -73,7 +73,7 @@ if __name__ == "__main__":
         for ib in [2, 4, 8]:
             for ic in [4, 8, 16]:
                 try:
-                    lc, ff = predict(ib=ib, ic=ic, mode=mode)
-                    print(f"  predict(ib={ib}, ic={ic:2d}, mode={mode_names[mode]})  =>  LC={lc}  FF={ff}")
+                    lc, ff = predict_pool_layer(ib=ib, ic=ic, mode=mode)
+                    print(f"  predict_pool_layer(ib={ib}, ic={ic:2d}, mode={mode_names[mode]})  =>  LC={lc}  FF={ff}")
                 except (KeyError, ValueError) as e:
-                    print(f"  predict(ib={ib}, ic={ic:2d}, mode={mode_names[mode]})  =>  {e}")
+                    print(f"  predict_pool_layer(ib={ib}, ic={ic:2d}, mode={mode_names[mode]})  =>  {e}")

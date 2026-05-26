@@ -61,7 +61,7 @@ def _ff(ic: int, oc: int, ib: int, wb: int) -> float:
     return A*oc*math.log2(max(ic, 1)) + B*oc + C*ic + D
 
 
-def predict(ic: int, oc: int, ib: int, wb: int,
+def predict_conv_layer(ic: int, oc: int, ib: int, wb: int,
             dsp: int = 0) -> tuple[float, float]:
     """
     Predict (LC, FF) for a conv_layer configuration.
@@ -90,13 +90,13 @@ def predict(ic: int, oc: int, ib: int, wb: int,
         raise ValueError(
             f"IC={ic} OC={oc} IB={ib} WB={wb} DSP={dsp}: " + ", ".join(errors)
         )
-    return lc, ff
+    return math.ceil(lc), math.ceil(ff)
 
 
 def feasible(ic: int, oc: int, ib: int, wb: int, dsp: int = 0) -> bool:
     """Return True if the configuration fits within both caps."""
     try:
-        predict(ic, oc, ib, wb, dsp)
+        predict_conv_layer(ic, oc, ib, wb, dsp)
         return True
     except (ValueError, KeyError):
         return False
@@ -117,7 +117,7 @@ def frontier(ib: int, wb: int, dsp: int = 0,
     for ic in range(1, ic_max + 1):
         for oc in range(1, oc_max + 1):
             try:
-                lc, ff = predict(ic, oc, ib, wb, dsp)
+                lc, ff = predict_conv_layer(ic, oc, ib, wb, dsp)
                 results.append((ic, oc, lc, ff))
             except (ValueError, KeyError):
                 break   # LC monotone in OC for DSP=0; safe to break
@@ -238,7 +238,7 @@ if __name__ == "__main__":
     if args.predict:
         ic, oc, ib, wb, dsp = args.predict
         try:
-            lc, ff = predict(ic=ic, oc=oc, ib=ib, wb=wb, dsp=dsp)
+            lc, ff = predict_conv_layer(ic=ic, oc=oc, ib=ib, wb=wb, dsp=dsp)
             print(f"predict(ic={ic}, oc={oc}, ib={ib}, wb={wb}, dsp={dsp})  =>  LC={lc:.0f}  FF={ff:.0f}")
         except (ValueError, KeyError) as e:
             print(f"predict(ic={ic}, oc={oc}, ib={ib}, wb={wb}, dsp={dsp})  =>  {e}")

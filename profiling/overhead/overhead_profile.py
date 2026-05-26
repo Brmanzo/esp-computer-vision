@@ -1,4 +1,4 @@
-from deframer.deframer_profile import predict, _ceil_ple
+from profiling.overhead.deframer.deframer_profile import predict, _ceil_ple
 
 uart         = (82,35)
 class_framer = (19,4)

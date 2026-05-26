@@ -1,15 +1,16 @@
 """
-classifier_profile.py — LC predictor for classifier_layer on iCE40 UP5K.
+classifier_profile.py — LC and FF predictor for classifier_layer on iCE40 UP5K.
 
 Loads regression coefficients from profiles/classifier_coeffs.csv.
 Models per (TermBits, DSPCount) corner:
     DSP=0:  LC = A*IC*CC*WB + B*IC + C*log2(CC) + D
     DSP>0:  LC = A*IC*CC    + B*IC + C*log2(CC) + D  (WB fixed by hardware)
+    FF:     FF = A*IC*CC*WB + B*IC + C*log2(CC) + D  (DSP=0 only)
 
 Usage:
     from classifier_profile import predict, feasible
-    lc = predict(tb=4, ic=8, cc=4, wb=4)
-    lc = predict(tb=4, ic=8, cc=4, wb=4, dsp=2)
+    lc, ff = predict_classifier_layer(tb=4, ic=8, cc=4, wb=4)
+    lc, ff = predict_classifier_layer(tb=4, ic=8, cc=4, wb=4, dsp=2)
 """
 
 import csv
@@ -18,25 +19,44 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Tuple
 
 LC_CAP  = 5280
+FF_CAP  = 5280
 DSP_CAP = 8
 
 _LC: dict[tuple, tuple] = {}   # (tb, dsp) -> (A, B, C, D, R2)
+_FF: dict[tuple, tuple] = {}   # (tb, dsp) -> (A, B, C, D, R2)
 
 
 def _load(path: Path = Path(__file__).parent / "profiles/classifier_coeffs.csv") -> None:
     with open(path, newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            if row["Model"] != "LC":
-                continue
             dsp = int(row["DSPCount"]) if "DSPCount" in row else 0
             key = (int(row["TermBits"]), dsp)
-            _LC[key] = (
+            coeffs = (
                 float(row["A"]), float(row["B"]),
                 float(row["C"]), float(row["D"]), float(row["R2"]),
             )
+            if row["Model"] == "LC":
+                _LC[key] = coeffs
+            elif row["Model"] == "FF":
+                _FF[key] = coeffs
+
+
+def _ff(tb: int, ic: int, cc: int, wb: int, dsp: int) -> float:
+    key = (tb, dsp)
+    if key not in _FF:
+        raise KeyError(
+            f"No FF model for TermBits={tb} DSPCount={dsp} — "
+            f"add FF rows to classifier_coeffs.csv and rerun regression"
+        )
+    A, B, C, D, _ = _FF[key]
+    if dsp == 0:
+        return A*ic*cc*wb + B*ic + C*math.log2(max(cc, 1)) + D
+    else:
+        return A*ic*cc    + B*ic + C*math.log2(max(cc, 1)) + D
 
 
 def _lc(tb: int, ic: int, cc: int, wb: int, dsp: int) -> float:
@@ -55,11 +75,11 @@ def _lc(tb: int, ic: int, cc: int, wb: int, dsp: int) -> float:
         return A*ic*cc + B*ic + C*math.log2(max(cc, 1)) + D
 
 
-def predict(tb: int, ic: int, cc: int, wb: int, dsp: int = 0) -> int:
+def predict_classifier_layer(tb: int, ic: int, cc: int, wb: int, dsp: int = 0) -> Tuple[int, int]:
     """
-    Predict LC for a classifier_layer configuration.
+    Predict_classifier_layer (LC, FF) for a classifier_layer configuration.
     Raises KeyError if the (TermBits, DSPCount) corner is missing.
-    Raises ValueError if cc % dsp != 0 or LC exceeds the iCE40 UP5K cap.
+    Raises ValueError if cc % dsp != 0 or either resource exceeds the iCE40 UP5K cap.
     """
     if dsp > 0 and cc % dsp != 0:
         raise ValueError(f"DSPCount={dsp} does not divide ClassCount={cc}")
@@ -72,15 +92,25 @@ def predict(tb: int, ic: int, cc: int, wb: int, dsp: int = 0) -> int:
         fill_corner(tb=tb, dsp=dsp)
         lc = _lc(tb, ic, cc, wb, dsp)
 
+    try:
+        ff = _ff(tb, ic, cc, wb, dsp)
+    except KeyError:
+        ff = 0
+
+    errors = []
     if lc > LC_CAP:
-        raise ValueError(f"TB={tb} IC={ic} CC={cc} WB={wb} DSP={dsp}: LC={lc:.0f} exceeds cap ({LC_CAP})")
-    return round(lc)
+        errors.append(f"LC={lc:.0f} exceeds cap ({LC_CAP})")
+    if ff > FF_CAP:
+        errors.append(f"FF={ff:.0f} exceeds cap ({FF_CAP})")
+    if errors:
+        raise ValueError(f"TB={tb} IC={ic} CC={cc} WB={wb} DSP={dsp}: " + ", ".join(errors))
+    return math.ceil(lc), math.ceil(ff)
 
 
 def feasible(tb: int, ic: int, cc: int, wb: int, dsp: int = 0) -> bool:
     """Return True if the configuration fits within the LC cap."""
     try:
-        predict(tb, ic, cc, wb, dsp)
+        predict_classifier_layer(tb, ic, cc, wb, dsp)
         return True
     except (KeyError, ValueError):
         return False
@@ -164,6 +194,7 @@ def fill_corner(tb: int, dsp: int,
             print(f"[fill_corner] MATLAB: {line.strip()}")
 
     _LC.clear()
+    _FF.clear()
     _load()
     key = (tb, dsp)
     if key in _LC:
@@ -216,13 +247,19 @@ _load()
 
 
 def _report() -> None:
-    print(f"Corners loaded — LC: {len(_LC)}")
+    print(f"Corners loaded — LC: {len(_LC)}  FF: {len(_FF)}")
     for tb, dsp in sorted(_LC):
         A, B, C, D, r2 = _LC[(tb, dsp)]
         if dsp == 0:
             print(f"  LC  TB={tb} DSP=0   {A:.3f}·IC·CC·WB + {B:.3f}·IC + {C:.3f}·log2(CC) + {D:.3f}  R²={r2:.3f}")
         else:
             print(f"  LC  TB={tb} DSP={dsp}  {A:.3f}·IC·CC    + {B:.3f}·IC + {C:.3f}·log2(CC) + {D:.3f}  R²={r2:.3f}")
+    for tb, dsp in sorted(_FF):
+        A, B, C, D, r2 = _FF[(tb, dsp)]
+        if dsp == 0:
+            print(f"  FF  TB={tb} DSP=0   {A:.3f}·IC·CC·WB + {B:.3f}·IC + {C:.3f}·log2(CC) + {D:.3f}  R²={r2:.3f}")
+        else:
+            print(f"  FF  TB={tb} DSP={dsp}  {A:.3f}·IC·CC    + {B:.3f}·IC + {C:.3f}·log2(CC) + {D:.3f}  R²={r2:.3f}")
 
 
 if __name__ == "__main__":
@@ -256,7 +293,7 @@ if __name__ == "__main__":
         print(f"\nActual LC={actual}")
         if actual is not None:
             try:
-                pred = predict(tb=args.tb, ic=args.ic, cc=args.cc, wb=args.wb, dsp=args.dsp)
+                pred = predict_classifier_layer(tb=args.tb, ic=args.ic, cc=args.cc, wb=args.wb, dsp=args.dsp)
                 print(f"Predicted LC={pred}  err={pred - actual:+d}")
             except (KeyError, ValueError) as e:
                 print(f"Prediction failed: {e}")
@@ -271,10 +308,10 @@ if __name__ == "__main__":
             ap.error("--predict requires --tb --ic --cc --wb (and optionally --dsp)")
         tb, ic, cc, wb, dsp = args.tb, args.ic, args.cc, args.wb, args.dsp
         try:
-            lc = predict(tb=tb, ic=ic, cc=cc, wb=wb, dsp=dsp)
+            lc = predict_classifier_layer(tb=tb, ic=ic, cc=cc, wb=wb, dsp=dsp)
             print(f"predict(tb={tb}, ic={ic}, cc={cc}, wb={wb}, dsp={dsp})  =>  LC={lc}")
         except (ValueError, KeyError) as e:
-            print(f"predict(tb={tb}, ic={ic}, cc={cc}, wb={wb}, dsp={dsp})  =>  {e}")
+            print(f"predict_classifier_layer(tb={tb}, ic={ic}, cc={cc}, wb={wb}, dsp={dsp})  =>  {e}")
     elif args.trials:
         repo    = Path(__file__).parent.parent.parent
         sources = _get_synth_sources(repo)
@@ -298,7 +335,7 @@ if __name__ == "__main__":
             if args.dsp > 0 and cc % args.dsp != 0:
                 continue
             try:
-                pred = predict(tb=tb, ic=ic, cc=cc, wb=wb, dsp=args.dsp)
+                pred = predict_classifier_layer(tb=tb, ic=ic, cc=cc, wb=wb, dsp=args.dsp)
             except (KeyError, ValueError):
                 continue
             actual = _synthesize(repo, sources, tb, ic, cc, wb, args.dsp, args.yosys)
