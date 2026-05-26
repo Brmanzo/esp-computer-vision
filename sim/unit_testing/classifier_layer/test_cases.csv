@@ -4,3 +4,4 @@ TermBits,TermCount,BusBits,InChannels,ClassCount,WeightBits,BiasBits,Unsigned,DS
 2,64,8,16,10,4,4,0,0,1234
 4,128,8,24,10,5,8,1,0,1234
 8,256,8,32,10,8,16,0,0,1234
+8,32,8,4,2,8,16,0,0,1234

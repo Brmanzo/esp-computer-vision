@@ -151,7 +151,7 @@ GPIO_NUM_1  - GPIO 47 (PMOD1A)
 GPIO_NUM_2  - GPIO 45 (PMOD1A)
 GND         - GND     (PMOD1B)
 ```
-![CNN Design Flow](cnn_design_flow.svg)
+![CNN Design Flow](assets/cnn_design_flow.svg)
 
 ## Neural Network 
 ### Setup

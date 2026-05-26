@@ -219,7 +219,7 @@ def design_stat(args: argparse.Namespace) -> None:
         sys.exit("SYNTH_SOURCES not set — run via `make stat-design`")
     yosys = os.environ.get("YOSYS", "yosys")
     config = NN_CFG
-
+    assert config.in_dims.width is not None and config.in_dims.height is not None
     w = int(config.in_dims.width)
     h = int(config.in_dims.height)
     jobs: list[tuple[str, str, dict]] = []
@@ -262,7 +262,7 @@ def design_stat(args: argparse.Namespace) -> None:
         "ShiftBits": cc._shift, "DSPCount": cc._dsp_count,
     }))
 
-    layer_results: list[tuple[str, defaultdict]] = []
+    layer_results: list[tuple[str, dict]] = []
     grand: defaultdict = defaultdict(int)
 
     for label, module, params in jobs:
