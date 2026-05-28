@@ -17,10 +17,11 @@ import subprocess
 import sys
 import time
 
+from nn.globals import LC_CAP
+
 sys.path.insert(0, os.getcwd())
 from nn.util import parse, total_cells, _fold, _base  # noqa: E402
 
-LC_CAP = 5280
 MODULE = "classifier_layer"
 
 FIXED = {

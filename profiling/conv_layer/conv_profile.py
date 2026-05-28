@@ -17,9 +17,7 @@ import math
 import os
 from pathlib import Path
 
-LC_CAP = 5280
-FF_CAP = 5280   # iCE40 UP5K: one FF per LC, same pool
-DSP_CAP = 8
+from nn.globals import LC_CAP, DSP_CAP   # iCE40 caps
 
 _LC: dict[tuple, tuple] = {}   # (ib, wb, dsp) -> (A, B, C, D, R2)
 _FF: dict[tuple, tuple] = {}
@@ -84,8 +82,8 @@ def predict_conv_layer(ic: int, oc: int, ib: int, wb: int,
     errors = []
     if lc > LC_CAP:
         errors.append(f"LC={lc:.0f} exceeds cap ({LC_CAP})")
-    if ff > FF_CAP:
-        errors.append(f"FF={ff:.0f} exceeds cap ({FF_CAP})")
+    if ff > LC_CAP:
+        errors.append(f"FF={ff:.0f} exceeds cap ({LC_CAP})")
     if errors:
         raise ValueError(
             f"IC={ic} OC={oc} IB={ib} WB={wb} DSP={dsp}: " + ", ".join(errors)

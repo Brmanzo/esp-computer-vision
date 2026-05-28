@@ -4,7 +4,7 @@
 import torch
 
 from nn.config   import NNConfig, ConvConfig, PoolConfig
-from nn.globals  import NN_CFG, BRAM_COUNT, DSP_COUNT, CLK_FREQ_HZ
+from nn.globals  import NN_CFG, BRAM_CAP, DSP_CAP, CLK_FREQ_HZ
 from nn.quantize import QuantConv2d, QuantizeActivation, LearnedShiftQuantizer
 
 class cnn(torch.nn.Module):
@@ -150,7 +150,7 @@ class cnn(torch.nn.Module):
         return 0
 
     def ram_utilization(self) -> None:
-        rams = BRAM_COUNT
+        rams = BRAM_CAP
         # MultiBufferRAM Usage
         for layer_cfg in self.config.layers:
             rams -= self.rams_per_layer_feature(layer_cfg.ConvLayer)
@@ -176,12 +176,12 @@ class cnn(torch.nn.Module):
             rams -= (roms_wide * roms_deep)
 
         assert rams >= 0, f"Network exceeds BRAM budget! Remaining: {rams}"
-        used = BRAM_COUNT - rams
-        utilization = (used / BRAM_COUNT) * 100
-        print(f"BRAMs: {rams} remaining / {BRAM_COUNT} total ({utilization:.1f}% utilization)")
+        used = BRAM_CAP - rams
+        utilization = (used / BRAM_CAP) * 100
+        print(f"BRAMs: {rams} remaining / {BRAM_CAP} total ({utilization:.1f}% utilization)")
     
     def dsp_utilization(self) -> None:
-        dsp = DSP_COUNT
+        dsp = DSP_CAP
         for layer_cfg in self.config.layers:
             if layer_cfg.ConvLayer._dsp_count > 0:
                 dsp -= min(layer_cfg.ConvLayer._dsp_count, layer_cfg.ConvLayer._out_ch)
@@ -191,9 +191,9 @@ class cnn(torch.nn.Module):
             dsp -= min(classifier._dsp_count, classifier._num_classes)
             
         assert dsp >= 0, f"Network exceeds DSP budget! Remaining: {dsp}"
-        used = DSP_COUNT - dsp
-        utilization = (used / DSP_COUNT) * 100
-        print(f"DSPs: {dsp} remaining / {DSP_COUNT} total ({utilization:.1f}% utilization)")
+        used = DSP_CAP - dsp
+        utilization = (used / DSP_CAP) * 100
+        print(f"DSPs: {dsp} remaining / {DSP_CAP} total ({utilization:.1f}% utilization)")
     
     def cycle_count(self) -> None:
         total_latency = 0

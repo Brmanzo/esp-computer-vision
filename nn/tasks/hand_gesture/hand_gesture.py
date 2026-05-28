@@ -18,7 +18,6 @@ def get_hand_gesture_cfg(num_classes: int = 4, img_h: int = 240, img_w: int = 32
         padding          = 1, # int or list
         stride           = 1, # int or list
         num_classes      = num_classes, # From dataset
-        bus_width        = 8, # Decision bit-width
         bias_bits        = [8, 16, 16, 32], # Layer 1 increased to 16-bit: saturating at 8-bit
         q_schedule = [QSchedule( 60, [5, 5, 5, 5, 10, 20], 8, 3),
                       QSchedule( 70, [5, 5, 5,  5, 30], 12, 8),   # 10→9→8, more time at 8

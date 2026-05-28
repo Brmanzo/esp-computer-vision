@@ -30,8 +30,7 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from nn.util import parse, total_cells, _fold, _base  # noqa: E402
 
-LC_CAP  = 5280
-DSP_CAP = 8         # iCE40 UP5K SB_MAC16 blocks
+from nn.globals import LC_CAP, DSP_CAP    # iCE40 UP5K SB_MAC16 blocks
 MODULE  = "conv_layer"
 KERNEL  = 3
 

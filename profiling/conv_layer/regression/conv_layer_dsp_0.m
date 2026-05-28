@@ -5,7 +5,6 @@
 % FF model per slice: A*OC*log2(IC) + B*OC + C*IC + D
 
 LC_CAP = 5280;
-FF_CAP = 3520;
 
 %% Load
 T = readtable('../profiles/sweep_conv_dsp_0.csv');

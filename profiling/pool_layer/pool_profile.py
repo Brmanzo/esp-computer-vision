@@ -12,8 +12,7 @@ Usage:
 import csv
 from pathlib import Path
 
-LC_CAP = 5280
-FF_CAP = 5280
+from nn.globals import LC_CAP    # iCE40 caps
 
 _TABLE: dict[tuple, tuple] = {}   # (ib, ic, mode) -> (lc, ff)
 
@@ -41,8 +40,8 @@ def predict_pool_layer(ib: int, ic: int, mode: int = 0) -> tuple[int, int]:
     errors = []
     if lc > LC_CAP:
         errors.append(f"LC={lc} exceeds cap ({LC_CAP})")
-    if ff > FF_CAP:
-        errors.append(f"FF={ff} exceeds cap ({FF_CAP})")
+    if ff > LC_CAP:
+        errors.append(f"FF={ff} exceeds cap ({LC_CAP})")
     if errors:
         raise ValueError(f"IB={ib} IC={ic} mode={mode}: " + ", ".join(errors))
     return lc, ff

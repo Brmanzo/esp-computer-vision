@@ -5,6 +5,7 @@ import math
 from   typing import List, Optional
 
 from nn.quantize import QSchedule
+from nn.constants import DSP_CAP, BUS_WIDTH
 
 class InputDimensions:
     '''Organizes spatial input dimensions, as well as term_count for the classifier.'''
@@ -155,8 +156,8 @@ class NNConfig:
     def __init__(self, input_dimensions: InputDimensions, in_channels: List[int], 
                  in_bits: List[int], kernels: List[List[int]], stride:  List[int] | int, 
                  padding: List[int] | int, bias_bits: List[int] | int,
-                 num_classes: int, bus_width: int, q_schedule: List[QSchedule],
-                 use_dsp: Optional[List[int]] = None):
+                 num_classes: int,  q_schedule: List[QSchedule],
+                 bus_width: int=BUS_WIDTH, use_dsp: Optional[List[int]] = None):
         
         self.num_classes = num_classes
         
@@ -177,7 +178,7 @@ class NNConfig:
         # Quantization schedule for each layer, used in training, and also to determine bit-widths for weights and activations
         self.q_schedule = q_schedule
         self.dsp_count  = use_dsp or ([0] * self.num_layers)
-
+        assert sum(self.dsp_count) <= DSP_CAP, f"Total DSPCount across all layers ({sum(self.dsp_count)}) cannot exceed DSP_CAP ({DSP_CAP})!"
         # --- Running State Variables ---
         # These track the dimensions and bit-widths as data flows through the network
         current_w = input_dimensions.width

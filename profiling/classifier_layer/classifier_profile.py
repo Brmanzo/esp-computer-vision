@@ -21,9 +21,7 @@ import sys
 from pathlib import Path
 from typing import Tuple
 
-LC_CAP  = 5280
-FF_CAP  = 5280
-DSP_CAP = 8
+from nn.globals import LC_CAP, DSP_CAP
 
 _LC: dict[tuple, tuple] = {}   # (tb, dsp) -> (A, B, C, D, R2)
 _FF: dict[tuple, tuple] = {}   # (tb, dsp) -> (A, B, C, D, R2)
@@ -100,8 +98,8 @@ def predict_classifier_layer(tb: int, ic: int, cc: int, wb: int, dsp: int = 0) -
     errors = []
     if lc > LC_CAP:
         errors.append(f"LC={lc:.0f} exceeds cap ({LC_CAP})")
-    if ff > FF_CAP:
-        errors.append(f"FF={ff:.0f} exceeds cap ({FF_CAP})")
+    if ff > LC_CAP:
+        errors.append(f"FF={ff:.0f} exceeds cap ({LC_CAP})")
     if errors:
         raise ValueError(f"TB={tb} IC={ic} CC={cc} WB={wb} DSP={dsp}: " + ", ".join(errors))
     return math.ceil(lc), math.ceil(ff)
@@ -293,7 +291,7 @@ if __name__ == "__main__":
         print(f"\nActual LC={actual}")
         if actual is not None:
             try:
-                pred = predict_classifier_layer(tb=args.tb, ic=args.ic, cc=args.cc, wb=args.wb, dsp=args.dsp)
+                pred, _ = predict_classifier_layer(tb=args.tb, ic=args.ic, cc=args.cc, wb=args.wb, dsp=args.dsp)
                 print(f"Predicted LC={pred}  err={pred - actual:+d}")
             except (KeyError, ValueError) as e:
                 print(f"Prediction failed: {e}")
@@ -335,7 +333,7 @@ if __name__ == "__main__":
             if args.dsp > 0 and cc % args.dsp != 0:
                 continue
             try:
-                pred = predict_classifier_layer(tb=tb, ic=ic, cc=cc, wb=wb, dsp=args.dsp)
+                pred, _ = predict_classifier_layer(tb=tb, ic=ic, cc=cc, wb=wb, dsp=args.dsp)
             except (KeyError, ValueError):
                 continue
             actual = _synthesize(repo, sources, tb, ic, cc, wb, args.dsp, args.yosys)

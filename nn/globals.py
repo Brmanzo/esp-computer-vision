@@ -3,7 +3,8 @@
 
 from pathlib import Path
 
-from nn.config import InputDimensions
+from nn.constants import (BRAM_CAP, DSP_CAP, LC_CAP, LC_HEADROOM,
+                           BUS_WIDTH, BAUD, CLK_FREQ_HZ)
 from nn.tasks.hand_gesture.hand_gesture import get_hand_gesture_cfg, GESTURE_CLASSES, GESTURE_NET_PATH
 from nn.tasks.hand_gesture.preprocess   import prepare_data as _prepare_data, get_transforms as _get_transforms
 from nn.tasks.mnist.mnist      import get_nn_cfg as _get_mnist_cfg, MNIST_NET_PATH, MNIST_CLASSES
@@ -12,12 +13,6 @@ from nn.tasks.mnist.preprocess import prepare_mnist_data as _prepare_mnist_data,
 # Default paths matching the training pipeline
 DATAPATH = Path("nn") / "data"
 ROMPATH  = DATAPATH / "roms" / "hex"
-
-BRAM_COUNT  = 30 - 1 # Subtract 1 for the Skid Buffer BRAM on deframer
-DSP_COUNT   = 8
-BAUD        = 115200  # 12 MHz / (prescale=13 * 8) ≈ 115385 baud (0.16% error)
-CLK_FREQ_HZ = 12_000_000  # 12 MHz Clock
-BUS_WIDTH   = 8
 
 CURRENT_TASK = "mnist"  # "mnist" or "hand_gesture"
 

@@ -25,12 +25,11 @@ import time
 from collections import defaultdict
 
 import numpy as np
+from nn.globals import DSP_CAP
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from nn.util import parse, total_cells, _fold, _base  # noqa: E402
 
-LC_CAP  = 5280
-DSP_CAP = 8
 MODULE  = "classifier_layer"
 
 FIXED = {
@@ -40,10 +39,8 @@ FIXED = {
     "ShiftBits": 0,
 }
 
-
 def valid_dsp_counts(cc: int) -> list[int]:
     return [d for d in range(1, min(cc, DSP_CAP) + 1) if cc % d == 0]
-
 
 def get_synth_sources(repo: str) -> list[str]:
     r = subprocess.run(

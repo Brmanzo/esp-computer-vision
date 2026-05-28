@@ -1,5 +1,6 @@
 from profiling.overhead.deframer.deframer_profile import predict, _ceil_ple
 
+# Fixed Overhead constants
 uart         = (82,35)
 class_framer = (19,4)
 skid_buffer  = (60,45)

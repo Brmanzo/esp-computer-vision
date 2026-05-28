@@ -21,7 +21,7 @@ import time
 sys.path.insert(0, os.getcwd())
 from nn.util import parse, total_cells, _fold, _base  # noqa: E402
 
-LC_CAP = 5280
+from nn.globals import LC_CAP    # iCE40 caps
 MODULE = "pool_layer"
 
 FIXED = {

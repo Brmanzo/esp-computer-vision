@@ -16,10 +16,8 @@ import sys
 import re
 import argparse
 from collections import defaultdict
-from typing import Tuple
 
 from nn.globals import NN_CFG
-from numpy import log2
 
 _ICE40 = {
     "SB_LUT4", "SB_CARRY",

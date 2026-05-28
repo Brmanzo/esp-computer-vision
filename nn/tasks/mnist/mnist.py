@@ -16,7 +16,6 @@ def get_nn_cfg(num_classes: int = 10, img_h: int = 28, img_w: int = 28) -> NNCon
         padding          = 1,
         stride           = 1,
         num_classes      = num_classes,
-        bus_width        = 8,
         bias_bits        = [8, 16, 16, 16],
         q_schedule = [QSchedule(25, [3, 3, 3, 3, 5, 10], 8, 3),   # L0:  25 warmup, drops 8→3
                       QSchedule(30, [3, 3, 3, 3, 15],  12, 8),  # L1:  30 warmup, drops 12→8

@@ -14,7 +14,7 @@ import csv
 import math
 from pathlib import Path
 
-LC_CAP = 5280
+from nn.globals import LC_CAP, BUS_WIDTH
 
 _data: dict[tuple, tuple] = {}   # (uw, pn, ple) -> (lc, ff)
 _ple_vals: list[int] = []        # sorted synthesized PLE values (powers of 2)
@@ -41,10 +41,10 @@ def predict(uw: int, pn: int, ple: int) -> tuple[int, int]:
     """
     Predict (LC, FF) for a deframer configuration.
     PacketLenElems is rounded up to the next synthesized power of 2.
-    Raises AssertionError if uw * pn != 8.
+    Raises AssertionError if uw * pn != BUS_WIDTH.
     Raises ValueError if ple exceeds the sweep range or LC exceeds cap.
     """
-    assert uw * pn == 8, f"UnpackedWidth={uw} * PackedNum={pn} must equal 8 (got {uw * pn})"
+    assert uw * pn == BUS_WIDTH, f"UnpackedWidth={uw} * PackedNum={pn} must equal 8 (got {uw * pn})"
     ple_key = _ceil_ple(ple)
     key = (uw, pn, ple_key)
     if key not in _data:

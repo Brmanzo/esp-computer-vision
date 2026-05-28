@@ -29,8 +29,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from nn.util import parse, total_cells, _fold, _base  # noqa: E402
 
-LC_CAP  = 5280
-DSP_CAP = 8
+from nn.globals import DSP_CAP    # iCE40 caps
 MODULE  = "conv_layer"
 KERNEL  = 3
 
