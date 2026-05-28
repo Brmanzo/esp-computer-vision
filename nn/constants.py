@@ -4,7 +4,7 @@
 BRAM_CAP    = 30 - 1   # subtract 1 for deframer skid buffer BRAM
 DSP_CAP     = 8
 LC_CAP      = 5280
-LC_HEADROOM = 280
+LC_HEADROOM = 180
 BUS_WIDTH   = 8
 
 BAUD        = 115200       # 12 MHz / (prescale=13 * 8) ≈ 115385 baud (0.16% error)

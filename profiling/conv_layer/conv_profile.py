@@ -155,9 +155,17 @@ def fill_corner(ib: int, dsp: int,
     if base_csv is None:
         base_csv = str(here / "profiles/sweep_conv_dsp_0.csv")
 
-    def _run(label: str, cmd: list[str], cwd: Path = repo) -> str:
+    def _run(label: str, cmd: list[str], cwd: Path = repo,
+             timeout: int = 300) -> str:
         print(f"[fill_corner] {label} ...", flush=True)
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               cwd=cwd, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                f"fill_corner: {label} timed out after {timeout}s — "
+                "if running MATLAB, sign in interactively first: matlab"
+            )
         if r.returncode != 0:
             print(r.stdout[-3000:])
             print(r.stderr[-3000:])

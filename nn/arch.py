@@ -196,52 +196,33 @@ class cnn(torch.nn.Module):
         print(f"DSPs: {dsp} remaining / {DSP_CAP} total ({utilization:.1f}% utilization)")
     
     def cycle_count(self) -> None:
-        total_latency = 0
-        max_effective_cycles = 0.0
-        pixel_decimation = 1 # Tracks how many camera pixels = 1 current layer pixel
-        
+        total_latency, max_effective_cycles = self.config.cycle_count()
+        decimation = 1
+
         print("\n--- PERFORMANCE ANALYSIS ---")
         for i, layer_cfg in enumerate(self.config.layers):
-            # Conv Layer
-            c_cycles = layer_cfg.ConvLayer._cycle_count
-            eff_c = c_cycles / pixel_decimation
-            dsp = layer_cfg.ConvLayer._dsp_count
-            out_ch = layer_cfg.ConvLayer._out_ch
-            dsps_used = min(dsp, out_ch) if dsp > 0 else 0
-            print(f"Layer {i} Conv: {c_cycles:>3} cycles ({eff_c:>5.1f} eff) DSPs Used: {dsps_used}")
-            
-            total_latency += c_cycles
-            max_effective_cycles = max(max_effective_cycles, eff_c)
-            
-            # Pool Layer
+            c_cycles  = layer_cfg.ConvLayer._cycle_count
+            dsp       = layer_cfg.ConvLayer._dsp_count
+            dsps_used = min(dsp, layer_cfg.ConvLayer._out_ch) if dsp > 0 else 0
+            print(f"Layer {i} Conv: {c_cycles:>3} cycles ({c_cycles/decimation:>5.1f} eff) DSPs Used: {dsps_used}")
+
             if layer_cfg.PoolLayer is not None:
                 p_cycles = layer_cfg.PoolLayer._cycle_count
-                eff_p = p_cycles / pixel_decimation
-                print(f"Layer {i} Pool: {p_cycles:>3} cycles ({eff_p:>5.1f} eff)")
-                
-                total_latency += p_cycles
-                pixel_decimation *= (layer_cfg.PoolLayer._kernel_width ** 2)
-                max_effective_cycles = max(max_effective_cycles, eff_p)
-        
-        cls = self.config.classifier_config
-        cls_cycles = cls._cycle_count
-        eff_cls = cls_cycles / pixel_decimation
-        dsp = cls._dsp_count
-        classes = cls._num_classes
-        dsps_used = min(dsp, classes) if dsp > 0 else 0
-        linear_cycles = cls._cycle_count - cls._term_count
-        print(f"Classifier  : {cls_cycles:>5} cycles ({eff_cls:>5.1f} eff) DSPs Used: {dsps_used}  [GlobalMax: {cls._term_count}, Linear: {linear_cycles}]")
-        
-        total_latency += cls_cycles
-        max_effective_cycles = max(max_effective_cycles, eff_cls)
-        
+                print(f"Layer {i} Pool: {p_cycles:>3} cycles ({p_cycles/decimation:>5.1f} eff)")
+                decimation *= layer_cfg.PoolLayer._kernel_width ** 2
+
+        cls         = self.config.classifier_config
+        cls_cycles  = cls._cycle_count
+        dsps_used   = min(cls._dsp_count, cls._num_classes) if cls._dsp_count > 0 else 0
+        linear_cyc  = cls_cycles - cls._term_count
+        print(f"Classifier  : {cls_cycles:>5} cycles ({cls_cycles/decimation:>5.1f} eff) DSPs Used: {dsps_used}  [GlobalMax: {cls._term_count}, Linear: {linear_cyc}]")
+
         print(f"\nTotal Pipeline Latency: {total_latency} cycles")
         print(f"Bottleneck (Cycles/Pixel): {max_effective_cycles:.1f}")
-        
-        if self.config.in_dims.height is not None and self.config.in_dims.width is not None and  max_effective_cycles > 0:
-            input_pixels = self.config.in_dims.width * self.config.in_dims.height
-            fps = CLK_FREQ_HZ / (max_effective_cycles * input_pixels)
-            print(f"Estimated Max Frame Rate: {fps:.2f} FPS")
+
+        if self.config.in_dims.height and self.config.in_dims.width and max_effective_cycles > 0:
+            pixels = self.config.in_dims.width * self.config.in_dims.height
+            print(f"Estimated Max Frame Rate: {CLK_FREQ_HZ / (max_effective_cycles * pixels):.2f} FPS")
 
 if __name__ == "__main__":
     network = cnn(NN_CFG)

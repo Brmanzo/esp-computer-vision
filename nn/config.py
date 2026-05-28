@@ -278,3 +278,30 @@ class NNConfig:
             # 7. Store Layer & Update State
             self.layers.append(LayerConfig(ConvLayer=conv_cfg, PoolLayer=pool_cfg))
             current_out_bits = c_out_bits
+
+    def cycle_count(self) -> tuple[int, float]:
+        """Return (total_pipeline_latency_cycles, bottleneck_cycles_per_input_pixel).
+
+        Bottleneck is the maximum effective cycles/pixel across all pipeline stages,
+        accounting for pixel decimation introduced by each pool layer.
+        """
+        total      = 0
+        bottleneck = 0.0
+        decimation = 1
+
+        for layer in self.layers:
+            c = layer.ConvLayer._cycle_count
+            total     += c
+            bottleneck = max(bottleneck, c / decimation)
+
+            if layer.PoolLayer is not None:
+                p = layer.PoolLayer._cycle_count
+                total     += p
+                bottleneck = max(bottleneck, p / decimation)
+                decimation *= layer.PoolLayer._kernel_width ** 2
+
+        cls_c      = self.classifier_config._cycle_count
+        total     += cls_c
+        bottleneck = max(bottleneck, cls_c / decimation)
+
+        return total, bottleneck
