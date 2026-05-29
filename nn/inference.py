@@ -114,13 +114,13 @@ def _signed_truncate(acc: np.ndarray, bits: int) -> np.ndarray:
     return np.where(acc >= half, acc - (1 << bits), acc)
 
 
-def _hw_integer_forward(pixels: list, config) -> int:
+def _hw_integer_forward(pixels: list, config, csv_path: Path | None = None, vh_path: Path | None = None) -> int:
     '''Core hardware-accurate integer forward pass shared by get_inference() and
     get_inference_from_pixels().  pixels is a flat list of binary {0,1} values.'''
 
     DATAPATH = Path(__file__).parent / "data"
-    CSV_PATH = DATAPATH / "hardware_weights.csv"
-    VH_PATH  = DATAPATH / "hardware_weights.vh"
+    CSV_PATH = csv_path if csv_path is not None else DATAPATH / "hardware_weights.csv"
+    VH_PATH  = vh_path if vh_path is not None else DATAPATH / "hardware_weights.vh"
 
     H = config.in_dims.height
     W = config.in_dims.width
@@ -220,48 +220,85 @@ def get_inference(sample_idx: int) -> int:
     return _hw_integer_forward(pixels, NN_CFG)
 
 
-def get_inference_from_pixels(pixels: list, config=None) -> int:
+def get_inference_from_pixels(pixels: list, config=None, csv_path: Path | None = None, vh_path: Path | None = None) -> int:
     '''Hardware-accurate inference on an explicit flat list of binary {0,1} pixels.'''
-    return _hw_integer_forward(pixels, config or NN_CFG)
+    return _hw_integer_forward(pixels, config or NN_CFG, csv_path=csv_path, vh_path=vh_path)
 
 
 def hw_eval(n_trials: int = 100) -> float:
-    '''Run hardware-accurate integer inference on n_trials test samples and report accuracy.'''
+    '''Run float and hardware-accurate integer inference on the same n_trials test samples.
 
+    Both models see identical binarized pixels so the comparison is apples-to-apples.
+    Returns hardware accuracy.
+    '''
     DATAPATH = Path(__file__).parent / "data"
     IMG_H, IMG_W = NN_CFG.in_dims.height, NN_CFG.in_dims.width
     assert IMG_H is not None and IMG_W is not None, "Input dimensions must be specified in config"
     _, test_loader, _ = prepare_data(DATAPATH, IMG_H, IMG_W, 1)
 
-    class_names = sorted(CLASSES)
-    correct = 0
-    total   = 0
-    per_class_correct = {name: 0 for name in class_names}
-    per_class_total   = {name: 0 for name in class_names}
+    # Load the float network once, with quantization active at q_min_bits.
+    from nn.quantize import QuantConv2d as _QC
+    float_net = cnn(config=NN_CFG)
+    if NET_PATH.exists():
+        float_net.load_state_dict(torch.load(NET_PATH, map_location="cpu", weights_only=True))
+    float_net.eval()
+    qidx = 0
+    for m in float_net.modules():
+        if isinstance(m, _QC):
+            m._quantize    = True
+            m._weight_bits = NN_CFG.q_schedule[qidx]._q_min_bits
+            qidx += 1
 
+    class_names = sorted(CLASSES)
+    hw_correct = float_correct = total = 0
+    per_class_hw    = {n: [0, 0] for n in class_names}  # [correct, total]
+    per_class_float = {n: [0, 0] for n in class_names}
+
+    import torch as _torch
     for img_t, label_t in test_loader:
         if total >= n_trials:
             break
         label  = int(label_t[0])
         pixels = (img_t[0].flatten() > 0.5).int().tolist()
-        pred   = _hw_integer_forward(pixels, NN_CFG)
+
+        hw_pred = _hw_integer_forward(pixels, NN_CFG)
+
+        x_raw = _torch.tensor(pixels, dtype=_torch.float32).reshape(1, 1, IMG_H, IMG_W)
+        
+        # 1. Map to hardware {-1, 1} domain
+        x_mapped = x_raw * 2.0 - 1.0 
+        
+        # 2. Run inference directly (cnn.py handles the padding now)
+        with _torch.no_grad():
+            fl_pred = int(float_net(x_mapped).argmax(1).item())
 
         name = class_names[label]
-        per_class_total[name]   += 1
-        per_class_correct[name] += int(pred == label)
-        correct += int(pred == label)
-        total   += 1
+        per_class_hw[name][0]    += int(hw_pred == label)
+        per_class_hw[name][1]    += 1
+        per_class_float[name][0] += int(fl_pred == label)
+        per_class_float[name][1] += 1
+        hw_correct    += int(hw_pred == label)
+        float_correct += int(fl_pred == label)
+        total         += 1
 
-        print(f"  [{total:>4}/{n_trials}]  gt={class_names[label]:<12} pred={class_names[pred]:<12} {'✓' if pred == label else '✗'}")
+        hw_mark = '✓' if hw_pred == label else '✗'
+        fl_mark = '✓' if fl_pred == label else '✗'
+        print(f"  [{total:>4}/{n_trials}]  gt={class_names[label]:<12}"
+              f"  float={class_names[fl_pred]:<12}{fl_mark}"
+              f"  hw={class_names[hw_pred]:<12}{hw_mark}")
 
-    acc = correct / total if total else 0.0
-    print(f"\nHW accuracy over {total} trials: {acc:.1%}")
-    print("\nPer-class accuracy:")
+    hw_acc    = hw_correct    / total if total else 0.0
+    float_acc = float_correct / total if total else 0.0
+    print(f"\nOver {total} trials:  float={float_acc:.1%}  hw={hw_acc:.1%}  gap={float_acc - hw_acc:.1%}")
+    print("\nPer-class accuracy (float / hw):")
     for name in class_names:
-        n = per_class_total[name]
-        c = per_class_correct[name]
-        print(f"  {name:<12} {c}/{n}  ({c/n:.1%})" if n else f"  {name:<12} no samples")
-    return acc
+        fc, ft = per_class_float[name]
+        hc, ht = per_class_hw[name]
+        if ft:
+            print(f"  {name:<12} float={fc}/{ft} ({fc/ft:.0%})  hw={hc}/{ht} ({hc/ht:.0%})")
+        else:
+            print(f"  {name:<12} no samples")
+    return hw_acc
 
 
 if __name__ == "__main__":

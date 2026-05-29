@@ -15,13 +15,13 @@ def get_transforms(img_h: int, img_w: int) -> Tuple[Callable, Callable]:
         transforms.RandomRotation(15, fill=0),
         transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), fill=0),
         transforms.ToTensor(),
-        transforms.Lambda(lambda x: (x > 0.5).float()),
+        transforms.Lambda(lambda x: (x > 0.5).float() * 2.0 - 1.0),
     ])
 
     test_tfm = transforms.Compose([
         transforms.Resize((img_h, img_w)),
         transforms.ToTensor(),
-        transforms.Lambda(lambda x: (x > 0.5).float()),
+        transforms.Lambda(lambda x: (x > 0.5).float() * 2.0 - 1.0),
     ])
 
     return train_tfm, test_tfm

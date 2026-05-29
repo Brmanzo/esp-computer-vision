@@ -93,7 +93,8 @@ def get_hardware_weights(fused_layer: QuantConv2d, previous_act_scale: float = 1
         qmax = (2 ** (target_bits - 1)) - 1
 
         max_abs = folded_w.abs().max()
-        w_scale = max_abs / qmax if max_abs > 0 else 1.0
+        raw_scale = max_abs / qmax if max_abs > 0 else 1.0
+        w_scale = 2.0 ** torch.round(torch.log2(raw_scale))
 
         q_weights = torch.round(folded_w / w_scale)
         q_weights = torch.clip(q_weights, qmin, qmax)
@@ -121,6 +122,18 @@ def export_nn_to_csv(nn_path: Path, config: NNConfig, output_csv: Path, random_w
     if not random_weights:
         state = torch.load(nn_path, map_location=device, weights_only=True)
         network.load_state_dict(state, strict=True)
+
+    # Activate quantization at q_min_bits for every conv layer so that
+    # get_hardware_weights sees the same quantized weights and BN statistics
+    # that the model used during the final [Q] plateau of training.
+    quant_idx = 0
+    from nn.quantize import QuantConv2d as _QC
+    for module in network.modules():
+        if isinstance(module, _QC):
+            module._quantize    = True
+            module._weight_bits = config.q_schedule[quant_idx]._q_min_bits
+            quant_idx += 1
+
     network.eval()
 
     all_hardware_data: list[dict[str, Any]] = []
@@ -172,43 +185,52 @@ def export_nn_to_csv(nn_path: Path, config: NNConfig, output_csv: Path, random_w
         elif isinstance(module, QuantizeActivation):
             if module.bits == 1:
                 # 1-bit activation in PyTorch is {-1, 1}.
-                # In hardware it is {0, 1}. 
+                # In hardware it is {0, 1}.
                 # The effective scale remains 1.0 because the weights/inputs
                 # are handled by XNOR logic which inherently maps {0, 1} back to {-1, 1}.
                 current_act_scale = 1.0
             else:
+                # Ternary/signed multi-bit: hardware emits sign(acc) ∈ {-1,0,+1} whose
+                # integer magnitude is 1, but the float training value is clip/qmax per step.
+                # Do NOT stamp layer_shift here — hardware uses sign(acc), not a right-shift,
+                # so layer_shift would be read by _layer_acc_bits as shift_override and would
+                # collapse the accumulator width to ~5 bits (0+ob+trunc_guard), wrapping
+                # a ~10-bit accumulator and producing garbage.
                 qmax = (2 ** (module.bits - 1)) - 1
                 if module.clip_val is not None:
                     clip = float(module.clip_val.abs().item())
                     current_act_scale = clip / qmax
                     print(f"  Detected Activation Scaling: {current_act_scale:.6f} (clip={clip:.3f}, qmax={qmax})")
                 else:
-                    # Handle fixed power-of-two scaling (shift)
                     current_act_scale = 2.0 ** module.shift
                     print(f"  Detected Activation Scaling: {current_act_scale:.6f} (Fixed Shift {module.shift})")
 
         elif isinstance(module, LearnedShiftQuantizer):
-            # Use act_scale (clip_val / qmax) for weight-compensation propagation.
+            # Derive shift from the ratio of the float-domain clip boundary to the
+            # integer accumulator scale.  last_w_scale captures the actual trained weight
+            # magnitude, which is far below the analytical worst-case; using the analytical
+            # hardware_shift (which ignores w_scale) overestimates the shift and crushes
+            # activations to zero.  Use _pow2_clip() for the clip value so it matches what
+            # the training forward pass used.
+            qmax_out        = (2 ** module._out_bits) - 1
+            clip_pow2_float = float(module._pow2_clip().item())
+            raw_shift       = math.log2(clip_pow2_float / (qmax_out * last_w_scale))
+            # floor() keeps more dynamic range; round() over-compresses when accumulations
+            # fall below the clip boundary.
+            shift_val       = max(0, math.floor(raw_shift))
+            # act_scale = clip_pow2/qmax is what the training forward pass (LearnedShiftQuantizer)
+            # maps each integer step to in float space; use it for the next layer's weight compensation.
             current_act_scale = module.act_scale
-            # Correct shift formula: shift = log2(clip_val / (qmax_out * w_scale))
-            qmax_out  = (2 ** module._out_bits) - 1
-            clip_abs  = float(module.clip_val.abs().clamp(min=1e-4).item())
-            raw_shift = math.log2(clip_abs / (qmax_out * last_w_scale))
-            # floor() keeps more dynamic range in integer inference; round() over-compresses
-            # when integer accumulations fall below the float clip boundary.
-            shift_val = max(0, math.floor(raw_shift))
 
             if all_hardware_data:
                 conv_idx = len(all_hardware_data) - 1
                 is_last_feature = (conv_idx == len(config.layers) - 1)
-                # Always stamp as layer_shift so LAYER_i_SHIFT is emitted to the vh file
                 all_hardware_data[-1]["layer_shift"] = shift_val
                 if is_last_feature:
-                    # Back-propagate into config so RTL render sees the trained value.
                     config.classifier_config._shift = shift_val
-                    print(f"  Learned Last-Layer Shift: {shift_val} (formula gave {raw_shift:.2f}, module.hardware_shift={module.hardware_shift})  act_scale={current_act_scale:.6f}  clip_val={clip_abs:.4f}")
+                    print(f"  Learned Last-Layer Shift: {shift_val} (formula={raw_shift:.2f})  act_scale={current_act_scale:.6f}  clip_pow2={clip_pow2_float:.4f}")
                 else:
-                    print(f"  Layer {conv_idx} Shift: {shift_val} (formula gave {raw_shift:.2f})  act_scale={current_act_scale:.6f}  clip_val={clip_abs:.4f}")
+                    print(f"  Layer {conv_idx} Shift: {shift_val} (formula={raw_shift:.2f})  act_scale={current_act_scale:.6f}  clip_pow2={clip_pow2_float:.4f}")
 
     # If no LearnedShiftQuantizer was encountered (e.g. random_weights path),
     # fall back to the analytically-derived shift on the last feature conv row (random_weights path)

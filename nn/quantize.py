@@ -66,7 +66,9 @@ class QuantizeWeight(torch.autograd.Function):
 
         # Compute symmetric scale from max abs weight
         max_abs = w.abs().max()
-        scale   = max_abs / qmax if max_abs > 0 else 1.0
+        raw_scale = max_abs / qmax if max_abs > 0 else 1.0
+        # Force scale to a power of two to match hardware shifts
+        scale = 2.0 ** torch.round(torch.log2(raw_scale))
 
         # Q(x; s, bits) = s * clip(round(x/s), -2^(bits-1), 2^(bits-1)-1)
         q   = torch.round(w / scale)
@@ -143,7 +145,9 @@ class QuantConv2d(nn.Conv2d):
             else:
                 qmax = float(2**(self._weight_bits - 1) - 1)
             max_abs = folded_w.abs().max()
-            w_scale = max_abs / qmax if max_abs > 0.0 else 1.0
+            raw_scale = max_abs / qmax if max_abs > 0.0 else 1.0
+            # Force scale to a power of two to match hardware shifts
+            w_scale = 2.0 ** torch.round(torch.log2(raw_scale))
 
             # Quantize weights
             w_q = cast(torch.Tensor, QuantizeWeight.apply(folded_w, self._weight_bits))
@@ -160,51 +164,63 @@ class QuantConv2d(nn.Conv2d):
         return F.conv2d(input, w_q, folded_b, self.stride, self.padding)
 
 class QuantizeActivationSTE(torch.autograd.Function):
-    '''Quantized Straight-Through Estimator for Activations.'''
+    '''Hybrid STE: Signed/Rounding for 1-2 bits, Unsigned/Flooring for 3+ bits.'''
     @staticmethod
     def forward(ctx, x, bits, clip_val=None, learnable=True, shift=0):
-        '''Clipped and quantized within an integer range, then cast back to floats during forward pass.'''
-        
         ctx.bits = bits
         ctx.save_for_backward(x, clip_val)
 
-        # 1-Bit Logic
-        if bits == 1:
-            return torch.where(x > 0, 1.0, -1.0)
-
-        # Multi-bit quantization
-        if bits == 2:
-            # Special case for ternary activations {-1, 0, 1}
+        # ==========================================
+        # PATH A: Signed / Symmetric (1 and 2-bit)
+        # Matches your hardware's 'sign' modules
+        # ==========================================
+        if bits == 1 or bits == 2:
+            if bits == 1:
+                return torch.where(x > 0, 1.0, -1.0)
+            
+            # 2-bit Ternary
             qmin, qmax = -1, 1
-        else:
-            qmin = -(2 ** (bits - 1))
-            qmax = (2 ** (bits - 1)) - 1
+            if not learnable:
+                scale = 2.0 ** shift
+                abs_clip = float(qmax) * scale
+            else:
+                raw_clip = clip_val.abs().clamp(min=1e-4)
+                raw_scale = raw_clip / qmax
+                pow2_scale = 2.0 ** torch.round(torch.log2(raw_scale))
+                abs_clip = raw_clip + (pow2_scale * qmax - raw_clip).detach()
+                scale = pow2_scale
+
+            # Signed clamping and Rounding
+            x_c = torch.clamp(x, -abs_clip, abs_clip)
+            q = torch.round(x_c / scale)
+            return q * scale
+
+        # ==========================================
+        # PATH B: Unsigned / ReLU (3+ bits)
+        # Matches your hardware's 'ReLU>>sh' modules
+        # ==========================================
+        qmin = 0
+        qmax = (2 ** bits) - 1  # Unsigned full range
 
         if not learnable:
-            # Use the provided power-of-two shift (bit-slicing)
             scale = 2.0 ** shift
             abs_clip = float(qmax) * scale
         else:
             if clip_val is None:
                 raise ValueError("clip_val must be provided when bits > 1 and learnable=True")
-            # Use the learned clip_val
-            abs_clip = clip_val.abs().clamp(min=1e-4)
-            scale = abs_clip / qmax
+            raw_clip = clip_val.abs().clamp(min=1e-4)
+            raw_scale = raw_clip / qmax
+            pow2_scale = 2.0 ** torch.round(torch.log2(raw_scale))
+            abs_clip = raw_clip + (pow2_scale * qmax - raw_clip).detach()
+            scale = pow2_scale
 
-        # Clamp inputs to the clipping range
-        x_c = torch.clamp(x, -abs_clip, abs_clip)
-
-        # Quantize (Simulates hardware integer representation)
-        q = torch.round(x_c / scale)
-        
-        # Dequantize (Scales back to float so PyTorch can continue training)
-        x_q = q * scale
-
-        return x_q
+        # Unsigned clamping (ReLU) and Flooring (Right-Shift)
+        x_c = torch.clamp(x, 0.0, abs_clip)
+        q = torch.floor(x_c / scale)
+        return q * scale
 
     @staticmethod
     def backward(ctx, *grad_outputs):
-        '''Blocks gradients for activations outside the learned clipping range, and calculates gradient for the clipping parameter.'''
         grad_output = grad_outputs[0]
         x, clip_val = ctx.saved_tensors
         bits = ctx.bits
@@ -212,7 +228,7 @@ class QuantizeActivationSTE(torch.autograd.Function):
         grad_x = grad_output.clone()
         grad_clip_val = None
 
-        # If binary or ternary activation, block gradients outside of [-1, 1]
+        # Backward for 1-bit and 2-bit (Original User Logic)
         if bits == 1 or bits == 2:
             grad_x[x.abs() > 1] = 0
             return grad_x, None, None, None, None
@@ -222,13 +238,11 @@ class QuantizeActivationSTE(torch.autograd.Function):
 
         abs_clip = clip_val.abs()
 
-        # Cancel gradients only for activations outside learned range
-        grad_x[x.abs() > abs_clip] = 0
+        # Backward for 3+ bits (Unsigned ReLU Logic)
+        grad_x[(x > abs_clip) | (x < 0)] = 0
         
-        # Calculate the gradient for learnable clipping parameter
         if clip_val is not None and ctx.needs_input_grad[2]:
-            grad_clip_val = torch.sum(grad_output * (x > abs_clip).float()) - \
-                            torch.sum(grad_output * (x < -abs_clip).float())
+            grad_clip_val = torch.sum(grad_output * (x > abs_clip).float())
 
         return grad_x, None, grad_clip_val, None, None
 
@@ -285,44 +299,47 @@ class LearnedShiftQuantizer(nn.Module):
         # gradients from being crushed on the first epoch.
         self.clip_val = nn.Parameter(torch.tensor(3.0))
 
+    def _pow2_clip(self) -> torch.Tensor:
+        '''Nearest power-of-2 clip value (STE-compatible tensor).
+        Rounding log2(clip_val) to the nearest integer constrains the clip boundary
+        to {…, 0.25, 0.5, 1, 2, 4, 8, …}, making hardware_shift an exact integer
+        and eliminating the floor-approximation error in the float→integer conversion.
+        '''
+        raw = self.clip_val.abs().clamp(min=1e-4)
+        pow2 = 2.0 ** torch.round(torch.log2(raw))
+        return raw + (pow2 - raw).detach()   # STE: pow2 in forward, gradient through raw
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         qmax     = float(2 ** self._out_bits - 1)   # unsigned: 15 for 4-bit
-        abs_clip = self.clip_val.abs().clamp(min=1e-4)
+        abs_clip = self._pow2_clip()
         scale    = abs_clip / qmax
 
         # --- Unsigned ReLU clamp [0, clip_val] ---
-        # Two chained clamps: torch.clamp requires min/max to be the same type
-        # (both scalar or both Tensor). Split so abs_clip stays a Tensor and
-        # clip_val continues to receive gradients via d(x_c)/d(abs_clip).
         x_c = x.clamp(min=0.0).clamp(max=abs_clip)
 
-        # --- Quantise with STE: round in forward, straight-through gradient ---
-        q     = torch.round(x_c / scale)
+        # --- Quantise with STE: floor in forward (matches hardware shift), straight-through gradient ---
+        q     = torch.floor(x_c / scale)
         x_out = x_c + (q * scale - x_c).detach()
         return x_out
 
     @property
     def act_scale(self) -> float:
-        '''Float-domain scale = clip_val / qmax.  Surfaced for export.py weight
-        compensation, mirroring how QuantizeActivation.clip_val is used.
-        '''
+        '''Float-domain scale = clip_pow2 / qmax, using the power-of-2 constrained clip.'''
         qmax = 2 ** self._out_bits - 1
-        return float(self.clip_val.abs().item()) / qmax
+        clip = float(self._pow2_clip().item())
+        return clip / qmax
 
     @property
     def hardware_shift(self) -> int:
-        '''Integer barrel-shift for RTL: acc >> hardware_shift.
+        '''Analytical barrel-shift estimate: acc_bits - out_bits adjusted by clip ratio.
 
-        A smaller clip_val means the network is using a tighter (higher) range
-        of the accumulator -> larger shift.  A larger clip_val means the network
-        is using a wider (lower) range -> smaller shift.
-
-            shift = acc_bits - out_bits - round(log2(clip_val / 3.0))
-
-        where 3.0 is the neutral init value matching the base analytical shift.
+        NOTE: this is an architectural estimate only — it ignores the actual trained
+        weight scale (w_scale).  Export uses the empirical formula
+        floor(log2(clip_pow2 / (qmax * w_scale))) instead, which accounts for the
+        real weight magnitudes.  Use this property only for display or rough checks.
         '''
         base_shift = self._acc_bits - self._out_bits
-        clip       = float(self.clip_val.abs().item())
+        clip       = float(self._pow2_clip().item())
         adjustment = round(math.log2(max(clip, 1e-4) / 3.0))
         s = base_shift - adjustment
         return max(self._min_shift, min(self._max_shift, s))

@@ -49,10 +49,10 @@ def _build_cfg(layers: list[tuple[int, int, int]], last_pool: bool = True) -> NN
         num_classes      = NUM_CLASSES,
         q_schedule       = [
             QSchedule(
-                q_start    = 25 + i * 5,
-                q_epochs   = [3, 3, 3, 3, 10 + i * 5],
+                q_start    = 15 + i * 3,
+                q_epochs   = [3 + i * 3] if dsp > 0 else [3, 3, 3, 3, 10 + i * 3],
                 q_min_bits = 8 if dsp > 0 else wb,
-                q_max_bits = (8 if dsp > 0 else wb) + 4,
+                q_max_bits = 8 if dsp > 0 else wb + 4,
             )
             for i, (_, wb, dsp) in enumerate(layers)
         ] + [QSchedule(q_start=0, q_epochs=[15], q_max_bits=4, q_min_bits=4)],
@@ -189,17 +189,34 @@ def _extend(
 
                 used_after_pool = used_after_conv + pool_lc
 
+                # Pool is only spatially valid when the post-conv dims fit the kernel.
+                # With padding=1 and kernel=3, post-conv width equals spatial width,
+                # so we need spatial >= POOL_KERNEL to avoid a 0-dim pool output.
+                can_pool = spatial[0] >= POOL_KERNEL and spatial[1] >= POOL_KERNEL
+
                 if class_lc is not None:
-                    total_with_pool = used_after_pool + class_lc + overhead_lc
-                    if total_with_pool <= LC_CAP:
-                        try:
-                            cfg = _build_cfg(new_layers, last_pool=True)
-                            results.append((total_with_pool, cfg))
-                            out.write(_fmt(total_with_pool, cfg) + "\n")
-                            out.flush()
-                        except Exception:
-                            pass
+                    if can_pool:
+                        total_with_pool = used_after_pool + class_lc + overhead_lc
+                        if total_with_pool <= LC_CAP:
+                            try:
+                                cfg = _build_cfg(new_layers, last_pool=True)
+                                results.append((total_with_pool, cfg))
+                                out.write(_fmt(total_with_pool, cfg) + "\n")
+                                out.flush()
+                            except Exception:
+                                pass
+                        else:
+                            total_no_pool = used_after_conv + class_lc + overhead_lc
+                            if total_no_pool <= LC_CAP:
+                                try:
+                                    cfg = _build_cfg(new_layers, last_pool=False)
+                                    results.append((total_no_pool, cfg))
+                                    out.write(_fmt(total_no_pool, cfg) + "\n")
+                                    out.flush()
+                                except Exception:
+                                    pass
                     else:
+                        # spatial too small to pool — connect conv directly to classifier
                         total_no_pool = used_after_conv + class_lc + overhead_lc
                         if total_no_pool <= LC_CAP:
                             try:

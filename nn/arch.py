@@ -2,6 +2,7 @@
 # Bradley Manzo 2026
 
 import torch
+import torch.nn.functional as F
 
 from nn.config   import NNConfig, ConvConfig, PoolConfig
 from nn.globals  import NN_CFG, BRAM_CAP, DSP_CAP, CLK_FREQ_HZ
@@ -13,22 +14,31 @@ class cnn(torch.nn.Module):
         super().__init__()
         self.config = config
         self._is_fine_tuning = False
+        
+        # Save the first layer's padding size so we can apply it manually in forward()
+        self.first_layer_pad = 0 
 
         # 1. Dynamically Build the Feature Extractor
         feature_layers: list[torch.nn.Module] = []
-        self.cls_input_shift_quantizer: LearnedShiftQuantizer  # set below
+        self.cls_input_shift_quantizer: LearnedShiftQuantizer  
 
-        # Iterate naturally over all feature layers in network config
         num_feature_layers = len(self.config.layers)
         for i, layer_cfg in enumerate(self.config.layers):
             conv = layer_cfg.ConvLayer
             pool = layer_cfg.PoolLayer
 
+            # --- PADDING FIX: Intercept the first layer's padding ---
+            if i == 0:
+                self.first_layer_pad = conv._padding
+                actual_padding = 0  # Turn off internal 0.0 padding for layer 0
+            else:
+                actual_padding = conv._padding
+
             feature_layers.append(QuantConv2d(
                 in_channels=conv._in_ch,
                 out_channels=conv._out_ch,
                 kernel_size=conv._kernel_width,
-                padding=conv._padding,
+                padding=actual_padding,  # Use the intercepted padding
                 weight_bits=conv._q_schedule._q_min_bits,
                 bias_bits=conv._bias_bits,
                 bias=False
@@ -93,18 +103,20 @@ class cnn(torch.nn.Module):
         render_verilog(self.config)
 
     def forward(self, x):
-        # Map 1-bit input from {0.0, 1.0} to {-1.0, 1.0} to match the hardware's 1-bit signed logic
-        x = 2.0 * x - 1.0
+        # Apply the hardware-accurate -1.0 padding before the first convolution
+        if self.first_layer_pad > 0:
+            p = self.first_layer_pad
+            x = F.pad(x, (p, p, p, p), value=-1.0)
+            
         x = self.features(x)           
         
         # Global Max
-        # Reduces (Batch, Channels, H, W) -> (Batch, Channels, 1, 1)
         x = torch.amax(x, dim=(2, 3), keepdim=True) 
         
         # Classifier
         x = self.classifier(x)         
         
-        # Flatten the final output to (Batch, Num_Classes)
+        # Flatten the final output
         x = torch.flatten(x, 1)
 
         return x
