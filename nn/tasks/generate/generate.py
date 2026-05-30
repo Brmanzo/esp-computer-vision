@@ -1,5 +1,6 @@
 
 from itertools import product
+from pathlib import Path
 
 from nn.config import NNConfig, InputDimensions
 from nn.quantize import QSchedule
@@ -9,6 +10,8 @@ from profiling.conv_layer.conv_profile             import predict_conv_layer, va
 from profiling.pool_layer.pool_profile             import predict_pool_layer
 from profiling.classifier_layer.classifier_profile import predict_classifier_layer
 from profiling.overhead.overhead_profile           import predict_overhead
+
+GENERATE_NET_PATHS = Path("nn") / "tasks" / "generate" / "checkpoints"
 
 # Design constants for task
 IMG_W, IMG_H   = 28, 28
@@ -244,7 +247,7 @@ def _extend(
 def generate_networks(
     oc_anchors: list[int] = OC_ANCHORS,
     wb_range: range = WB_RANGE,
-    out_path: str | None = "nn/tasks/generate/networks.txt",
+    out_path: str | None = str(Path(__file__).parent / "networks.txt"),
 ) -> list[tuple[int | float, NNConfig]]:
     """
     Enumerate all networks that fit on the FPGA, with DSP allocation.
@@ -332,7 +335,7 @@ def generate_networks(
     # Prune: require ≥75% LC utilization and at least 2 conv+pool layers
     final = [
         (lc, cfg) for lc, cfg in final
-        if lc >= 0.75 * LC_CAP and len(cfg.layers) >= 2 and lc <= LC_CAP - LC_HEADROOM
+        if len(cfg.layers) >= 2 and lc <= LC_CAP - LC_HEADROOM
     ]
 
     # Write deduplicated results to file

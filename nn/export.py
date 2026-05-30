@@ -189,6 +189,8 @@ def export_nn_to_csv(nn_path: Path, config: NNConfig, output_csv: Path, random_w
                 # The effective scale remains 1.0 because the weights/inputs
                 # are handled by XNOR logic which inherently maps {0, 1} back to {-1, 1}.
                 current_act_scale = 1.0
+                if all_hardware_data:
+                    all_hardware_data[-1]["layer_shift"] = 0
             else:
                 # Ternary/signed multi-bit: hardware emits sign(acc) ∈ {-1,0,+1} whose
                 # integer magnitude is 1, but the float training value is clip/qmax per step.
@@ -201,9 +203,13 @@ def export_nn_to_csv(nn_path: Path, config: NNConfig, output_csv: Path, random_w
                     clip = float(module.clip_val.abs().item())
                     current_act_scale = clip / qmax
                     print(f"  Detected Activation Scaling: {current_act_scale:.6f} (clip={clip:.3f}, qmax={qmax})")
+                    if all_hardware_data:
+                        all_hardware_data[-1]["layer_shift"] = 0
                 else:
                     current_act_scale = 2.0 ** module.shift
                     print(f"  Detected Activation Scaling: {current_act_scale:.6f} (Fixed Shift {module.shift})")
+                    if all_hardware_data:
+                        all_hardware_data[-1]["layer_shift"] = module.shift
 
         elif isinstance(module, LearnedShiftQuantizer):
             # Derive shift from the ratio of the float-domain clip boundary to the

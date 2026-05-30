@@ -150,8 +150,7 @@ def render_conv_layer(cfg: ConvConfig, is_last_feature: bool = False):
         f"    ,.Unsigned    ({1 if cfg._in_bits > 2 else 0})",
         f"    ,.TruncGuard  (LAYER_{cfg._layer_num}_MIN_TRUNC_GUARD)"
     ]
-    if is_last_feature or cfg._out_bits > 2:
-        lines.append(f"    ,.ShiftBits   (LAYER_{cfg._layer_num}_SHIFT)")
+    lines.append(f"    ,.ShiftBits   (LAYER_{cfg._layer_num}_SHIFT)")
     if cfg._dsp_count == 0:
         lines.append(f"    ,.Weights     (LAYER_{cfg._layer_num}_WEIGHTS)")
     else:

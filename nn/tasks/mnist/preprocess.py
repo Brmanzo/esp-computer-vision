@@ -9,18 +9,20 @@ from torch.utils.data       import DataLoader
 from torchvision            import datasets, transforms
 
 def get_transforms(img_h: int, img_w: int) -> Tuple[Callable, Callable]:
-    '''Returns train and test transforms for MNIST.'''
+    '''Returns train and test transforms for MNIST mapped to HW domain {-1.0, 1.0}.'''
     train_tfm = transforms.Compose([
         transforms.Resize((img_h, img_w)),
-        transforms.RandomRotation(15, fill=0),
+        transforms.RandomRotation(15, fill=0),  # 0 is black in PIL
         transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), fill=0),
-        transforms.ToTensor(),
+        transforms.ToTensor(), # Converts to [0.0, 1.0]
+        # FIX: Map binary {0, 1} to {-1.0, 1.0} to match the FPGA exactly
         transforms.Lambda(lambda x: (x > 0.5).float() * 2.0 - 1.0),
     ])
 
     test_tfm = transforms.Compose([
         transforms.Resize((img_h, img_w)),
         transforms.ToTensor(),
+        # FIX: Map binary {0, 1} to {-1.0, 1.0} to match the FPGA exactly
         transforms.Lambda(lambda x: (x > 0.5).float() * 2.0 - 1.0),
     ])
 

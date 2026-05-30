@@ -42,7 +42,16 @@ def run_trial(ser: serial.Serial, pixels: list) -> int | None:
         ser.write(build_frame(pixels))
 
     def consumer():
-        raw = bytes(ser.read(3)) + bytes(ser.read(1))
+        from nn.uart import TAIL
+        raw = bytearray()
+        while True:
+            b = ser.read(1)
+            if not b:
+                break
+            raw.extend(b)
+            if len(raw) >= 2 and raw[-2:] == TAIL:
+                break
+                
         print(f"  Raw bytes: {' '.join(f'{x:02x}' for x in raw)}")
         try:
             hw_result[0] = parse_response(raw)

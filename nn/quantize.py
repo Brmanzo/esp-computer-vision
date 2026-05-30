@@ -178,21 +178,18 @@ class QuantizeActivationSTE(torch.autograd.Function):
             if bits == 1:
                 return torch.where(x > 0, 1.0, -1.0)
             
-            # 2-bit Ternary
+            # 2-bit Ternary (Matches HW sign(acc) without deadzone)
             qmin, qmax = -1, 1
             if not learnable:
                 scale = 2.0 ** shift
-                abs_clip = float(qmax) * scale
             else:
                 raw_clip = clip_val.abs().clamp(min=1e-4)
                 raw_scale = raw_clip / qmax
                 pow2_scale = 2.0 ** torch.round(torch.log2(raw_scale))
-                abs_clip = raw_clip + (pow2_scale * qmax - raw_clip).detach()
                 scale = pow2_scale
 
-            # Signed clamping and Rounding
-            x_c = torch.clamp(x, -abs_clip, abs_clip)
-            q = torch.round(x_c / scale)
+            # Hardware does sign(acc), which maps positive to 1, negative to -1, zero to 0
+            q = torch.sign(x)
             return q * scale
 
         # ==========================================

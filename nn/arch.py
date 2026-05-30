@@ -108,8 +108,13 @@ class cnn(torch.nn.Module):
             p = self.first_layer_pad
             x = F.pad(x, (p, p, p, p), value=-1.0)
             
-        x = self.features(x)           
-        
+        last_w_scale = 1.0
+        for m in self.features:
+            x = m(x)
+            if hasattr(m, 'last_w_scale'): # QuantConv2d sets this during its forward
+                last_w_scale = m.last_w_scale
+            elif hasattr(m, 'w_scale'):    # QuantizeActivation needs this for ternary
+                m.w_scale = last_w_scale
         # Global Max
         x = torch.amax(x, dim=(2, 3), keepdim=True) 
         

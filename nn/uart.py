@@ -32,17 +32,12 @@ def parse_response(raw: bytes) -> int:
 
     Raises ValueError on malformed or truncated input.
     """
-    i = 0
-    while i < len(raw) and raw[i] == WAKEUP:
-        i += 1
-    if i + 3 > len(raw):
-        raise ValueError(
-            f"Not enough bytes after wakeup skip (need 3, have {len(raw) - i}): {list(raw)}"
-        )
-    class_id = raw[i]
-    tail_got = bytes(raw[i + 1 : i + 3])
+    if len(raw) < 3:
+        raise ValueError(f"Response too short (need at least 3 bytes): {list(raw)}")
+    
+    tail_got = bytes(raw[-2:])
     if tail_got != TAIL:
-        raise ValueError(
-            f"Tail mismatch: expected {list(TAIL)}, got {list(tail_got)}"
-        )
+        raise ValueError(f"Tail mismatch: expected {list(TAIL)}, got {list(tail_got)}")
+        
+    class_id = raw[-3]
     return class_id
