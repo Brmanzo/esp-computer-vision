@@ -252,6 +252,9 @@ def test_full(inject_pixels: str = "") -> None:
     os.environ["CHECK_INFERENCE"] = os.environ.get("CHECK_INFERENCE", "1")
     os.environ["SAMPLE_IDX"]      = os.environ.get("SAMPLE_IDX", "10")
 
+    params.pop("FileName", None)
+    params.pop("FileName_hi", None)
+
     runner(
         simulator=simulator,
         timescale="1ps/1ps",

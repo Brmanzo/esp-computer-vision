@@ -57,8 +57,8 @@ module conv_layer #(
 
    ,localparam int unsigned PaddedWidth  = LineWidthPx + (2 * Padding)
    ,localparam int unsigned PaddedHeight = LineCountPx + (2 * Padding)
-   ,localparam int XBits = (LineWidthPx <= 1) ? 1 : $clog2(PaddedWidth + 1)
-   ,localparam int YBits = (LineCountPx <= 1) ? 1 : $clog2(PaddedHeight + 1)
+   ,localparam int XBits = $clog2(PaddedWidth + 1)
+   ,localparam int YBits = $clog2(PaddedHeight + 1)
 
    ,localparam int unsigned WeightIndex = InChannels * KernelArea * WeightBits
    ,parameter logic signed [OutChannels*InChannels*KernelWidth*KernelWidth*WeightBits-1:0] Weights = '0

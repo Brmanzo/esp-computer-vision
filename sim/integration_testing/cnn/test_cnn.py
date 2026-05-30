@@ -221,7 +221,12 @@ def test_full(inject_pixels: str = "") -> None:
     # 4. Run simulator
     os.environ["CHECK_INFERENCE"] = os.environ.get("CHECK_INFERENCE", "1")
     os.environ["SAMPLE_IDX"]      = os.environ.get("SAMPLE_IDX", "10")
-    
+
+    # Remove the single-layer fallback keys added by inject_weights_and_biases;
+    # cnn.sv only has FileName_0…FileName_N, not plain FileName / FileName_hi.
+    params.pop("FileName", None)
+    params.pop("FileName_hi", None)
+
     runner(
         simulator=simulator,
         timescale="1ps/1ps",

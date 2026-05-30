@@ -203,7 +203,10 @@ class CNNModel:
 
         # Return flattened results (e.g. [class_id1, class_id2, ...])
         # For classifier, res item is (class_id, logits)
-        return [item[0] for item in current_burst]
+        final_res = [item[0] for item in current_burst]
+        if final_res:
+            print("DEBUG CNNModel step returned:", final_res)
+        return final_res
 
     def consume(self):
         """Standard ModelRunner interface for top-level DUT."""
@@ -211,7 +214,17 @@ class CNNModel:
         packed = int(self._dut.data_i.value.integer)
         is_unsigned = self._InBits > 2
         raw_val = unpack_terms(packed, self._InBits, self._InChannels, signed=not is_unsigned)
-        return self.step(raw_val)
+        
+        if not hasattr(self, '_consume_count'):
+            self._consume_count = 0
+        self._consume_count += 1
+        
+        res = self.step(raw_val)
+        if res is not None:
+            print(f"DEBUG: CNNModel.consume() produced {res} on call {self._consume_count}")
+        elif self._consume_count == 784:
+            print(f"DEBUG: CNNModel.consume() produced None on call 784!!!")
+        return res
 
     def produce(self, expected):
         """Standard ModelRunner interface for top-level DUT."""

@@ -7,10 +7,10 @@ module cnn_framed #(
   parameter int unsigned BusBits = 8
   ,parameter              FileName_0    = "nn/data/roms/hex/zeros.hex"
   ,parameter              FileName_1    = "nn/data/roms/hex/zeros.hex"
-  ,parameter              FileName_1_hi = "nn/data/roms/hex/zeros.hex"
   ,parameter              FileName_2    = "nn/data/roms/hex/zeros.hex"
-  ,parameter              FileName_2_hi = "nn/data/roms/hex/zeros.hex"
   ,parameter              FileName_3    = "nn/data/roms/hex/zeros.hex"
+  ,parameter              FileName_4    = "nn/data/roms/hex/zeros.hex"
+  ,parameter              FileName_5    = "nn/data/roms/hex/zeros.hex"
 
   ,parameter  int unsigned WidthIn   = 320
   ,parameter  int unsigned HeightIn  = 240
@@ -61,10 +61,10 @@ module cnn_framed #(
      .BusBits      (BusBits)
     ,.FileName_0   (FileName_0)
     ,.FileName_1   (FileName_1)
-    ,.FileName_1_hi(FileName_1_hi)
     ,.FileName_2   (FileName_2)
-    ,.FileName_2_hi(FileName_2_hi)
     ,.FileName_3   (FileName_3)
+    ,.FileName_4   (FileName_4)
+    ,.FileName_5   (FileName_5)
   ) dut (
      .clk_i   (clk_i)
     ,.rst_i   (rst_i)

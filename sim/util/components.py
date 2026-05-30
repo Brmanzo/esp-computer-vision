@@ -100,22 +100,24 @@ class ModelRunner:
             if self._rst_i.value.is_resolvable and int(self._rst_i.value) == 1:
                 continue
 
-            # Evaluate Input Handshake
             v = self._valid_i.value == 1 if self._valid_i is not None else True
             r = self._ready_o.value == 1 if self._ready_o is not None else True
             
-            if not (v and r):
-                continue
-
-            expected = self._model.consume()
-
-            # Restore backward compatibility for single items vs lists
-            if expected is not None:
-                if isinstance(expected, (list, tuple)):
-                    for item in expected:
-                        self._events.put(item)
-                else:
-                    self._events.put(expected)
+            if not hasattr(self, '_run_input_calls'):
+                self._run_input_calls = 0
+            
+            if v and r:
+                self._run_input_calls += 1
+                if self._run_input_calls % 100 == 0 or self._run_input_calls == 1 or self._run_input_calls >= 780:
+                    print(f"DEBUG: ModelRunner v and r is True on call {self._run_input_calls}")
+                
+                expected = self._model.consume()
+                if expected is not None:
+                    if isinstance(expected, (list, tuple)):
+                        for item in expected:
+                            self._events.put(item)
+                    else:
+                        self._events.put(expected)
 
     async def _run_output(self):
         from decimal import Decimal
