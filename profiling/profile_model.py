@@ -11,45 +11,45 @@ from profiling.classifier_layer.classifier_profile import predict_classifier_lay
 from profiling.overhead.overhead_profile           import predict_overhead
 
 def profile_model(cfg: NNConfig):
-    LC, FF = 0, 0
+    LUT4, FF = 0, 0
     for layer in cfg.layers:
-        lc, ff = predict_conv_layer(
+        lut4, ff = predict_conv_layer(
             ic=layer.ConvLayer._in_ch,
             oc=layer.ConvLayer._out_ch,
             ib=layer.ConvLayer._in_bits,
             wb=layer.ConvLayer._q_schedule._q_min_bits,
             dsp=layer.ConvLayer._dsp_count,
         )
-        LC += lc
+        LUT4 += lut4
         FF += ff
 
         if layer.PoolLayer is not None:
-            lc, ff = predict_pool_layer(
+            lut4, ff = predict_pool_layer(
                 ib=layer.PoolLayer._in_bits,
                 ic=layer.PoolLayer._in_ch,
                 mode=layer.PoolLayer._mode,
             )
-            LC += lc
+            LUT4 += lut4
             FF += ff
     
 
     cl = cfg.classifier_config
-    lc, ff = predict_classifier_layer(
+    lut4, ff = predict_classifier_layer(
         tb=cl._in_bits,
         ic=cl._in_ch,
         cc=cl._num_classes,
         wb=cl._q_schedule._q_min_bits,
         dsp=cl._dsp_count,
     )
-    LC += lc
+    LUT4 += lut4
     FF += ff
 
-    lc, ff = predict_overhead(uw=cfg.layers[0].ConvLayer._in_bits, pn=cfg._bus_width, ple=cfg.in_dims.term_count)
-    LC += lc
+    lut4, ff = predict_overhead(uw=cfg.layers[0].ConvLayer._in_bits, pn=cfg._bus_width, ple=cfg.in_dims.term_count)
+    LUT4 += lut4
     FF += ff
 
-    return LC, FF
+    return LUT4, FF
 
 if __name__ == "__main__":
-    LC, FF = profile_model(NN_CFG)
-    print(f"LC: {LC}, FF: {FF}")
+    LUT4, FF = profile_model(NN_CFG)
+    print(f"LUT4: {LUT4}, FF: {FF}")

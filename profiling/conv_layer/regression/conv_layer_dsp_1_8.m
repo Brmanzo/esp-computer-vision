@@ -6,12 +6,12 @@ T = readtable('../profiles/sweep_conv_dsp_1-8.csv');
 
 % Only DSP > 0 rows have a meaningful savings value
 T = T(T.DSPCount > 0, :);
-T.savings     = T.LC_dsp0 - T.LC;
+T.savings     = T.LUT4_dsp0 - T.LUT4;
 T.savings_per_dsp = T.savings ./ T.DSPCount;
 
-% Group by (IB, DSPCount) only — WB does not affect LC in DSP mode
+% Group by (IB, DSPCount) only — WB does not affect LUT4 in DSP mode
 % (weights are in ROM; SB_MAC16 width is fixed hardware)
-T.savings_per_dsp = (T.LC_dsp0 - T.LC) ./ T.DSPCount;
+T.savings_per_dsp = (T.LUT4_dsp0 - T.LUT4) ./ T.DSPCount;
 
 ib_vals  = unique(T.InBits)';
 dsp_vals = unique(T.DSPCount(T.DSPCount > 0))';
@@ -22,26 +22,26 @@ for i = ib_vals
   for d = dsp_vals
     mask = T.InBits==i & T.DSPCount==d;
     if sum(mask) < 4, continue; end
-    oc_s = T.OutCh(mask); ic_s = T.InCh(mask); lc_s = T.LC(mask);
+    oc_s = T.OutCh(mask); ic_s = T.InCh(mask); lut4_s = T.LUT4(mask);
     X = [oc_s.*ic_s, oc_s, ic_s, ones(sum(mask),1)];
 
     if rank(X) < size(X, 2)
         % Rank-deficient: drop OC·IC interaction term
         X = [oc_s, ic_s, ones(sum(mask),1)];
-        c_full = [0; X \ lc_s];
+        c_full = [0; X \ lut4_s];
         flag = '*';
     else
-        c_full = X \ lc_s;
+        c_full = X \ lut4_s;
         flag = '';
     end
 
-    r2 = 1 - sum((lc_s - X*c_full(end-size(X,2)+1:end)).^2) / ...
-             sum((lc_s - mean(lc_s)).^2);
-    fprintf('IB=%d DSP=%d%s  LC=%.2f·OC·IC + %.2f·OC + %.2f·IC + %.2f  R²=%.3f  (N=%d)\n', ...
+    r2 = 1 - sum((lut4_s - X*c_full(end-size(X,2)+1:end)).^2) / ...
+             sum((lut4_s - mean(lut4_s)).^2);
+    fprintf('IB=%d DSP=%d%s  LUT4=%.2f·OC·IC + %.2f·OC + %.2f·IC + %.2f  R²=%.3f  (N=%d)\n', ...
         i, d, flag, c_full(1), c_full(2), c_full(3), c_full(4), r2, sum(mask));
     % Store WB=-1 as sentinel: profile.py must look up DSP>0 corners by (IB, -1, DSP)
     row_idx = row_idx + 1;
-    dsp_rows{row_idx} = {i, -1, d, 'LC', c_full(1), c_full(2), c_full(3), c_full(4), r2};
+    dsp_rows{row_idx} = {i, -1, d, 'LUT4', c_full(1), c_full(2), c_full(3), c_full(4), r2};
   end
 end
 
@@ -64,17 +64,17 @@ writetable(combined, coeffs_path);
 fprintf('Written %d DSP>0 corners; total %d rows in profile_coeffs.csv\n', ...
     height(dsp_T), height(combined));
 
-%% Plot 1: LC vs OutChannels/DSPCount (aggregated trend)
+%% Plot 1: LUT4 vs OutChannels/DSPCount (aggregated trend)
 figure(1); clf;
 T.oc_per_dsp = T.OutCh ./ T.DSPCount;
 
-scatter(T.oc_per_dsp, T.LC, 20, T.InCh, 'filled');
+scatter(T.oc_per_dsp, T.LUT4, 20, T.InCh, 'filled');
 xlabel('OutChannels / DSPCount');
-ylabel('LC');
-title('LC vs output channels per DSP block');
+ylabel('LUT4');
+title('LUT4 vs output channels per DSP block');
 colorbar; cb = colorbar; cb.Label.String = 'InCh';
 
-%% Plot 2: FF vs OutChannels/DSPCount (aggregated trend, same scale as LC)
+%% Plot 2: FF vs OutChannels/DSPCount (aggregated trend, same scale as LUT4)
 figure(2); clf;
 
 scatter(T.oc_per_dsp, T.FF, 20, T.InCh, 'filled');
@@ -82,34 +82,34 @@ xlabel('OutChannels / DSPCount');
 ylabel('FF');
 title('FF vs output channels per DSP block');
 colorbar; cb = colorbar; cb.Label.String = 'InCh';
-ylim([0, 5280]);   % match LC axis — shows FF is well under the bottleneck
+ylim([0, 5280]);   % match LUT4 axis — shows FF is well under the bottleneck
 
-%% Plot 3: LC vs DSPCount, one line per OutCh
+%% Plot 3: LUT4 vs DSPCount, one line per OutCh
 % Average across (IC, IB, WB) within each (OC, DSPCount) slice
 figure(3); clf; hold on;
 T2 = T(T.InBits==4 & T.WeightBits==4, :);
-T2.lc_frac = T2.LC ./ T2.LC_dsp0;   % 1.0 = no savings, lower = more savings
+T2.lut4_frac = T2.LUT4 ./ T2.LUT4_dsp0;   % 1.0 = no savings, lower = more savings
 
 colors = lines(DSP_CAP);
 for d = 1:DSP_CAP
     mask = T2.DSPCount == d;
     if sum(mask) < 2, continue; end
     [ratio, idx] = sort(T2.OutCh(mask) ./ d);
-    frac = T2.lc_frac(mask); frac = frac(idx);
+    frac = T2.lut4_frac(mask); frac = frac(idx);
     plot(ratio, frac, '-o', 'Color', colors(d,:), 'DisplayName', sprintf('DSP=%d', d));
 end
 
 xlabel('OutChannels / DSPCount');
-ylabel('LC / LC_{DSP=0}  (1.0 = no savings)');
-title('Fractional LC vs OC/DSP ratio  (IB=4 WB=4, all IC)');
+ylabel('LUT4 / LC_{DSP=0}  (1.0 = no savings)');
+title('Fractional LUT4 vs OC/DSP ratio  (IB=4 WB=4, all IC)');
 yline(1.0, 'k--');
 legend('Location','best');
 
 
 
 %% Summary
-fprintf('Global mean savings/DSP : %.2f LC\n', mean(T.savings_per_dsp));
-fprintf('Std deviation           : %.2f LC  (%.1f%%)\n', ...
+fprintf('Global mean savings/DSP : %.2f LUT4\n', mean(T.savings_per_dsp));
+fprintf('Std deviation           : %.2f LUT4  (%.1f%%)\n', ...
     std(T.savings_per_dsp), 100*std(T.savings_per_dsp)/mean(T.savings_per_dsp));
-fprintf('Min / Max               : %.1f / %.1f LC\n', ...
+fprintf('Min / Max               : %.1f / %.1f LUT4\n', ...
     min(T.savings_per_dsp), max(T.savings_per_dsp));

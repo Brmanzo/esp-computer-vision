@@ -1,16 +1,17 @@
 """
-classifier_profile.py — LC and FF predictor for classifier_layer on iCE40 UP5K.
+classifier_profile.py — LUT4 and FF predictor for classifier_layer on iCE40 UP5K.
 
 Loads regression coefficients from profiles/classifier_coeffs.csv.
 Models per (TermBits, DSPCount) corner:
-    DSP=0:  LC = A*IC*CC*WB + B*IC + C*log2(CC) + D
-    DSP>0:  LC = A*IC*CC    + B*IC + C*log2(CC) + D  (WB fixed by hardware)
-    FF:     FF = A*IC*CC*WB + B*IC + C*log2(CC) + D  (DSP=0 only)
+    DSP=0:  LUT4 = A*IC*CC*WB + B*IC + C*log2(CC) + D
+    DSP>0:  LUT4 = A*IC*CC    + B*IC + C*log2(CC) + D  (WB fixed by hardware)
+    FF DSP=0:  FF = B*IC + D           (A=C=0; no CC·WB or log2(CC) dependence)
+    FF DSP>0:  FF = A*IC + B*CC + C*DSP + D  (single model per TB, DSPCount=-1 sentinel in CSV)
 
 Usage:
     from classifier_profile import predict, feasible
-    lc, ff = predict_classifier_layer(tb=4, ic=8, cc=4, wb=4)
-    lc, ff = predict_classifier_layer(tb=4, ic=8, cc=4, wb=4, dsp=2)
+    lut4, ff = predict_classifier_layer(tb=4, ic=8, cc=4, wb=4)
+    lut4, ff = predict_classifier_layer(tb=4, ic=8, cc=4, wb=4, dsp=2)
 """
 
 import csv
@@ -23,7 +24,7 @@ from typing import Tuple
 
 from nn.globals import LC_CAP, DSP_CAP
 
-_LC: dict[tuple, tuple] = {}   # (tb, dsp) -> (A, B, C, D, R2)
+_LUT4: dict[tuple, tuple] = {}   # (tb, dsp) -> (A, B, C, D, R2)
 _FF: dict[tuple, tuple] = {}   # (tb, dsp) -> (A, B, C, D, R2)
 
 
@@ -37,14 +38,14 @@ def _load(path: Path = Path(__file__).parent / "profiles/classifier_coeffs.csv")
                 float(row["A"]), float(row["B"]),
                 float(row["C"]), float(row["D"]), float(row["R2"]),
             )
-            if row["Model"] == "LC":
-                _LC[key] = coeffs
+            if row["Model"] == "LUT4":
+                _LUT4[key] = coeffs
             elif row["Model"] == "FF":
                 _FF[key] = coeffs
 
 
 def _ff(tb: int, ic: int, cc: int, wb: int, dsp: int) -> float:
-    key = (tb, dsp)
+    key = (tb, 0) if dsp == 0 else (tb, -1)
     if key not in _FF:
         raise KeyError(
             f"No FF model for TermBits={tb} DSPCount={dsp} — "
@@ -52,21 +53,21 @@ def _ff(tb: int, ic: int, cc: int, wb: int, dsp: int) -> float:
         )
     A, B, C, D, _ = _FF[key]
     if dsp == 0:
-        return A*ic*cc*wb + B*ic + C*math.log2(max(cc, 1)) + D
+        return A*ic*cc*wb + B*ic + C*math.log2(max(cc, 1)) + D  # simplifies to B*ic + D (A=C=0)
     else:
-        return A*ic*cc    + B*ic + C*math.log2(max(cc, 1)) + D
+        return A*ic + B*cc + C*dsp + D
 
 
 def _lc(tb: int, ic: int, cc: int, wb: int, dsp: int) -> float:
     key = (tb, dsp)
-    if key not in _LC:
+    if key not in _LUT4:
         if dsp > 0:
             raise KeyError(
-                f"No LC model for TermBits={tb} DSPCount={dsp} — "
+                f"No LUT4 model for TermBits={tb} DSPCount={dsp} — "
                 f"run fill_corner(tb={tb}, dsp={dsp}) to synthesize it"
             )
-        raise KeyError(f"No LC model for TermBits={tb}")
-    A, B, C, D, _ = _LC[key]
+        raise KeyError(f"No LUT4 model for TermBits={tb}")
+    A, B, C, D, _ = _LUT4[key]
     if dsp == 0:
         return A*ic*cc*wb + B*ic + C*math.log2(max(cc, 1)) + D
     else:
@@ -75,7 +76,7 @@ def _lc(tb: int, ic: int, cc: int, wb: int, dsp: int) -> float:
 
 def predict_classifier_layer(tb: int, ic: int, cc: int, wb: int, dsp: int = 0) -> Tuple[int, int]:
     """
-    Predict_classifier_layer (LC, FF) for a classifier_layer configuration.
+    Predict_classifier_layer (LUT4, FF) for a classifier_layer configuration.
     Raises KeyError if the (TermBits, DSPCount) corner is missing.
     Raises ValueError if cc % dsp != 0 or either resource exceeds the iCE40 UP5K cap.
     """
@@ -83,12 +84,12 @@ def predict_classifier_layer(tb: int, ic: int, cc: int, wb: int, dsp: int = 0) -
         raise ValueError(f"DSPCount={dsp} does not divide ClassCount={cc}")
 
     try:
-        lc = _lc(tb, ic, cc, wb, dsp)
+        lut4 = _lc(tb, ic, cc, wb, dsp)
     except KeyError:
         if dsp == 0:
             raise
         fill_corner(tb=tb, dsp=dsp)
-        lc = _lc(tb, ic, cc, wb, dsp)
+        lut4 = _lc(tb, ic, cc, wb, dsp)
 
     try:
         ff = _ff(tb, ic, cc, wb, dsp)
@@ -96,17 +97,17 @@ def predict_classifier_layer(tb: int, ic: int, cc: int, wb: int, dsp: int = 0) -
         ff = 0
 
     errors = []
-    if lc > LC_CAP:
-        errors.append(f"LC={lc:.0f} exceeds cap ({LC_CAP})")
+    if lut4 > LC_CAP:
+        errors.append(f"LUT4={lut4:.0f} exceeds cap ({LC_CAP})")
     if ff > LC_CAP:
         errors.append(f"FF={ff:.0f} exceeds cap ({LC_CAP})")
     if errors:
         raise ValueError(f"TB={tb} IC={ic} CC={cc} WB={wb} DSP={dsp}: " + ", ".join(errors))
-    return math.ceil(lc), math.ceil(ff)
+    return math.ceil(lut4), math.ceil(ff)
 
 
 def feasible(tb: int, ic: int, cc: int, wb: int, dsp: int = 0) -> bool:
-    """Return True if the configuration fits within the LC cap."""
+    """Return True if the configuration fits within the LUT4 cap."""
     try:
         predict_classifier_layer(tb, ic, cc, wb, dsp)
         return True
@@ -132,7 +133,7 @@ def fill_corner(tb: int, dsp: int,
                 samples: int = 8,
                 yosys: str = "yosys") -> None:
     """
-    Synthesize a missing (tb, dsp) LC corner, refit the regression, and reload.
+    Synthesize a missing (tb, dsp) LUT4 corner, refit the regression, and reload.
 
     Appends new synthesis rows to profiles/classifier_dsp_chars.csv, reruns the
     MATLAB regression to overwrite profiles/classifier_coeffs.csv, then reloads
@@ -191,15 +192,15 @@ def fill_corner(tb: int, dsp: int,
         if any(w in line.lower() for w in ("corner", "exported", "written")):
             print(f"[fill_corner] MATLAB: {line.strip()}")
 
-    _LC.clear()
+    _LUT4.clear()
     _FF.clear()
     _load()
     key = (tb, dsp)
-    if key in _LC:
+    if key in _LUT4:
         print(f"[fill_corner] Done — corner {key} loaded successfully")
     else:
         print(f"[fill_corner] Corner {key} still missing after refit.")
-        print(f"[fill_corner] Available LC corners: {sorted(_LC)}")
+        print(f"[fill_corner] Available LUT4 corners: {sorted(_LUT4)}")
 
 
 _FIXED = {"TermCount": 32, "BusBits": 8, "BiasBits": 8, "ShiftBits": 0}
@@ -238,38 +239,38 @@ def _synthesize(repo: Path, sources: list[str],
     if top_key is None:
         return None
     tot = _fold(dict(total_cells(top_key, mods, {})))
-    return tot.get("LC", 0)
+    return tot.get("LUT4", 0)
 
 
 _load()
 
 
 def _report() -> None:
-    print(f"Corners loaded — LC: {len(_LC)}  FF: {len(_FF)}")
-    for tb, dsp in sorted(_LC):
-        A, B, C, D, r2 = _LC[(tb, dsp)]
+    print(f"Corners loaded — LUT4: {len(_LUT4)}  FF: {len(_FF)}")
+    for tb, dsp in sorted(_LUT4):
+        A, B, C, D, r2 = _LUT4[(tb, dsp)]
         if dsp == 0:
-            print(f"  LC  TB={tb} DSP=0   {A:.3f}·IC·CC·WB + {B:.3f}·IC + {C:.3f}·log2(CC) + {D:.3f}  R²={r2:.3f}")
+            print(f"  LUT4  TB={tb} DSP=0   {A:.3f}·IC·CC·WB + {B:.3f}·IC + {C:.3f}·log2(CC) + {D:.3f}  R²={r2:.3f}")
         else:
-            print(f"  LC  TB={tb} DSP={dsp}  {A:.3f}·IC·CC    + {B:.3f}·IC + {C:.3f}·log2(CC) + {D:.3f}  R²={r2:.3f}")
+            print(f"  LUT4  TB={tb} DSP={dsp}  {A:.3f}·IC·CC    + {B:.3f}·IC + {C:.3f}·log2(CC) + {D:.3f}  R²={r2:.3f}")
     for tb, dsp in sorted(_FF):
         A, B, C, D, r2 = _FF[(tb, dsp)]
         if dsp == 0:
-            print(f"  FF  TB={tb} DSP=0   {A:.3f}·IC·CC·WB + {B:.3f}·IC + {C:.3f}·log2(CC) + {D:.3f}  R²={r2:.3f}")
+            print(f"  FF  TB={tb} DSP=0    {B:.3f}·IC + {D:.3f}  R²={r2:.3f}")
         else:
-            print(f"  FF  TB={tb} DSP={dsp}  {A:.3f}·IC·CC    + {B:.3f}·IC + {C:.3f}·log2(CC) + {D:.3f}  R²={r2:.3f}")
+            print(f"  FF  TB={tb} DSP>0   {A:.3f}·IC + {B:.3f}·CC + {C:.3f}·DSP + {D:.3f}  R²={r2:.3f}")
 
 
 if __name__ == "__main__":
     import argparse
     import random
-    ap = argparse.ArgumentParser(description="Query or fill classifier_layer LC models")
+    ap = argparse.ArgumentParser(description="Query or fill classifier_layer LUT4 models")
     ap.add_argument("--tb",      type=int, help="TermBits")
     ap.add_argument("--ic",      type=int, help="InChannels")
     ap.add_argument("--cc",      type=int, help="ClassCount")
     ap.add_argument("--wb",      type=int, help="WeightBits")
     ap.add_argument("--dsp",     type=int, default=0, help="DSPCount (default 0)")
-    ap.add_argument("--predict", action="store_true", help="Predict LC for --tb --ic --cc --wb --dsp")
+    ap.add_argument("--predict", action="store_true", help="Predict LUT4 for --tb --ic --cc --wb --dsp")
     ap.add_argument("--fill",    action="store_true", help="Synthesize and fit a missing DSP corner for --tb --dsp")
     ap.add_argument("--samples", type=int, default=8,
                     help="Sample points per corner when filling (default: 8)")
@@ -288,11 +289,11 @@ if __name__ == "__main__":
         sources = _get_synth_sources(repo)
         actual  = _synthesize(repo, sources, args.tb, args.ic, args.cc, args.wb, args.dsp,
                                args.yosys, verbose=True)
-        print(f"\nActual LC={actual}")
+        print(f"\nActual LUT4={actual}")
         if actual is not None:
             try:
                 pred, _ = predict_classifier_layer(tb=args.tb, ic=args.ic, cc=args.cc, wb=args.wb, dsp=args.dsp)
-                print(f"Predicted LC={pred}  err={pred - actual:+d}")
+                print(f"Predicted LUT4={pred}  err={pred - actual:+d}")
             except (KeyError, ValueError) as e:
                 print(f"Prediction failed: {e}")
 
@@ -306,8 +307,8 @@ if __name__ == "__main__":
             ap.error("--predict requires --tb --ic --cc --wb (and optionally --dsp)")
         tb, ic, cc, wb, dsp = args.tb, args.ic, args.cc, args.wb, args.dsp
         try:
-            lc = predict_classifier_layer(tb=tb, ic=ic, cc=cc, wb=wb, dsp=dsp)
-            print(f"predict(tb={tb}, ic={ic}, cc={cc}, wb={wb}, dsp={dsp})  =>  LC={lc}")
+            lut4 = predict_classifier_layer(tb=tb, ic=ic, cc=cc, wb=wb, dsp=dsp)
+            print(f"predict(tb={tb}, ic={ic}, cc={cc}, wb={wb}, dsp={dsp})  =>  LUT4={lut4}")
         except (ValueError, KeyError) as e:
             print(f"predict_classifier_layer(tb={tb}, ic={ic}, cc={cc}, wb={wb}, dsp={dsp})  =>  {e}")
     elif args.trials:
@@ -318,7 +319,7 @@ if __name__ == "__main__":
             sys.exit(1)
 
         rng = random.Random(args.seed)
-        tb_pool = [tb for tb, dsp in _LC if dsp == args.dsp]
+        tb_pool = [tb for tb, dsp in _LUT4 if dsp == args.dsp]
         if not tb_pool:
             print(f"ERROR: no corners loaded for DSP={args.dsp}", file=sys.stderr)
             sys.exit(1)
@@ -349,8 +350,8 @@ if __name__ == "__main__":
 
         if abs_errors:
             print(f"\nTrials : {n}")
-            print(f"Mean |err| : {sum(abs_errors)/n:.1f} LC  ({sum(pct_errors)/n:.1f}%)")
-            print(f"Max  |err| : {max(abs_errors)} LC  ({max(pct_errors):.1f}%)")
-            print(f"Std        : {(sum((e - sum(abs_errors)/n)**2 for e in abs_errors)/n)**0.5:.1f} LC")
+            print(f"Mean |err| : {sum(abs_errors)/n:.1f} LUT4  ({sum(pct_errors)/n:.1f}%)")
+            print(f"Max  |err| : {max(abs_errors)} LUT4  ({max(pct_errors):.1f}%)")
+            print(f"Std        : {(sum((e - sum(abs_errors)/n)**2 for e in abs_errors)/n)**0.5:.1f} LUT4")
     elif not args.fill:
         _report()

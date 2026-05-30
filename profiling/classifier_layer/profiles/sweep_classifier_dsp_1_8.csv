@@ -1,4 +1,4 @@
-TermBits,InChannels,ClassCount,WeightBits,DSPCount,LC,FF,LC_dsp0
+TermBits,InChannels,ClassCount,WeightBits,DSPCount,LUT4,FF,LUT4_dsp0
 1,1,1,2,0,22,10,22
 1,1,1,2,1,75,51,22
 1,4,21,2,0,1039,19,1039

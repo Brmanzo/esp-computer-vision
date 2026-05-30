@@ -32,14 +32,14 @@ _FF_TYPES = {
 
 
 def _fold(d: dict) -> dict:
-    """Fold DFF subtypes → 'FF' and collapse SB_LUT4/SB_CARRY → 'LC' ceiling."""
+    """Fold DFF subtypes → 'FF' and collapse SB_LUT4/SB_CARRY → 'LUT4' ceiling."""
     result: defaultdict = defaultdict(int)
     for t, n in d.items():
         if t in _FF_TYPES:
             result["FF"] += n
         elif t not in ("SB_LUT4", "SB_CARRY"):
             result[t] += n
-    result["LC"] = max(d.get("SB_LUT4", 0), d.get("SB_CARRY", 0))
+    result["LUT4"] = max(d.get("SB_LUT4", 0), d.get("SB_CARRY", 0))
     return result
 
 def _base(name: str) -> str:
@@ -300,9 +300,9 @@ def design_stat(args: argparse.Namespace) -> None:
             ram = tot.get("SB_RAM40_4K", 0)
             dsp = tot.get("SB_MAC16", 0)
             if args.fold:
-                lc  = tot.get("LC", 0)
+                lc  = tot.get("LUT4", 0)
                 ffs = tot.get("FF", 0)
-                print(f"  {label:<{col_w}}  LC={lc:>5}  FF={ffs:>5}  RAM={ram}  DSP={dsp}")
+                print(f"  {label:<{col_w}}  LUT4={lc:>5}  FF={ffs:>5}  RAM={ram}  DSP={dsp}")
             else:
                 luts  = tot.get("SB_LUT4", 0)
                 ffs   = sum(tot.get(t, 0) for t in _FF_TYPES)
@@ -312,7 +312,7 @@ def design_stat(args: argparse.Namespace) -> None:
         ram = grand.get("SB_RAM40_4K", 0)
         dsp = grand.get("SB_MAC16", 0)
         if args.fold:
-            print(f"  TOTAL  LC={grand.get('LC',0)}  FF={grand.get('FF',0)}  RAM={ram}  DSP={dsp}")
+            print(f"  TOTAL  LUT4={grand.get('LUT4',0)}  FF={grand.get('FF',0)}  RAM={ram}  DSP={dsp}")
         else:
             luts  = grand.get("SB_LUT4", 0)
             ffs   = sum(grand.get(t, 0) for t in _FF_TYPES)
@@ -328,7 +328,7 @@ def main() -> None:
     ap.add_argument("--csv", action="store_true",
                     help="Emit comma-separated output instead of formatted tables")
     ap.add_argument("--fold", action="store_true",
-                    help="Fold DFF subtypes → FF and SB_LUT4/SB_CARRY → LC ceiling")
+                    help="Fold DFF subtypes → FF and SB_LUT4/SB_CARRY → LUT4 ceiling")
     ap.add_argument("--label", metavar="KEY=VAL",
                     help="Prepend KEY=VAL as first column of every CSV row (use with --csv)")
     ap.add_argument("--design", action="store_true",
@@ -406,7 +406,7 @@ def main() -> None:
                 tot = _fold(dict(tot))
                 for base in sub_order:
                     sub_groups[base]["cells"] = _fold(sub_groups[base]["cells"])
-                _display = (_ICE40 - _FF_TYPES - {"SB_LUT4", "SB_CARRY"}) | {"FF", "LC"}
+                _display = (_ICE40 - _FF_TYPES - {"SB_LUT4", "SB_CARRY"}) | {"FF", "LUT4"}
                 ice_types = sorted({t for t in list(loc) + list(tot) if t in _display})
 
             if csv_mode:
@@ -470,9 +470,9 @@ def main() -> None:
                 ram = tot.get("SB_RAM40_4K", 0)
                 dsp = tot.get("SB_MAC16", 0)
                 if args.fold:
-                    lc  = tot.get("LC", 0)
+                    lc  = tot.get("LUT4", 0)
                     ffs = tot.get("FF", 0)
-                    print(f"\n  ► LC={lc}  FF={ffs}  RAM={ram}  DSP={dsp}")
+                    print(f"\n  ► LUT4={lc}  FF={ffs}  RAM={ram}  DSP={dsp}")
                 else:
                     luts  = tot.get("SB_LUT4", 0)
                     ffs   = sum(tot.get(t, 0) for t in _FF_TYPES)
@@ -494,7 +494,7 @@ def main() -> None:
             if args.fold:
                 top_tot = _fold(dict(top_tot))
                 rep_tot = _fold(rep_tot)
-                all_ice = sorted({t for t in top_tot if t in (_ICE40 - _FF_TYPES - {"SB_LUT4", "SB_CARRY"}) | {"FF", "LC"}})
+                all_ice = sorted({t for t in top_tot if t in (_ICE40 - _FF_TYPES - {"SB_LUT4", "SB_CARRY"}) | {"FF", "LUT4"}})
 
             if csv_mode:
                 csv_rows.append(["module", "layer", "cell_type", "reported", "overhead", "total"])
@@ -527,9 +527,9 @@ def main() -> None:
                 ram = top_tot.get("SB_RAM40_4K", 0)
                 dsp = top_tot.get("SB_MAC16", 0)
                 if args.fold:
-                    lc  = top_tot.get("LC", 0)
+                    lc  = top_tot.get("LUT4", 0)
                     ffs = top_tot.get("FF", 0)
-                    print(f"\n  ► LC={lc}  FF={ffs}  RAM={ram}  DSP={dsp}")
+                    print(f"\n  ► LUT4={lc}  FF={ffs}  RAM={ram}  DSP={dsp}")
                 else:
                     luts  = top_tot.get("SB_LUT4", 0)
                     ffs   = sum(top_tot.get(t, 0) for t in _FF_TYPES)

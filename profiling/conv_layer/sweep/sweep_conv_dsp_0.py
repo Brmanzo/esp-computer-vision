@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 sweep_conv.py — Synthesize conv_layer across the parameter space and stop each
-OutCh sweep as soon as the actual LC count exceeds the iCE40 UP5K cap.
+OutCh sweep as soon as the actual LUT4 count exceeds the iCE40 UP5K cap.
 
 DSPCount=0 mode (default): sweeps InCh, OutCh, InBits, OutBits, WeightBits.
 DSP mode (--dsp):          sweeps the same space but for each OutCh inserts
                            synthesis runs for every valid DSPCount, i.e. the
                            divisors of OutCh that are <= DSP_CAP (8).
                            Early-break on OutCh uses the max valid DSPCount
-                           (minimum possible LC) as the probe.
+                           (minimum possible LUT4) as the probe.
 
 Fixed params: Stride=1, Padding=1, ShiftBits=0, KernelWidth=3,
               BiasBits=8, LineWidthPx=28, LineCountPx=28
@@ -59,7 +59,7 @@ def get_synth_sources(repo: str) -> list[str]:
 
 
 def synthesize(repo, sources, ic, oc, ib, wb, ob, dsp, yosys) -> tuple[int | None, int | None]:
-    """Run one yosys synthesis and return (LC, FF). Returns (None, None) on error."""
+    """Run one yosys synthesis and return (LUT4, FF). Returns (None, None) on error."""
     # Weights and Biases are intentionally omitted: chparam on a vector whose
     # width depends on other parameters causes a yosys segfault.  The default
     # Weights='0 does not collapse the multiplier tree because the weights_i
@@ -86,7 +86,7 @@ def synthesize(repo, sources, ic, oc, ib, wb, ob, dsp, yosys) -> tuple[int | Non
     if top_key is None:
         return None, None
     tot = _fold(dict(total_cells(top_key, mods, {})))
-    return tot.get("LC", 0), tot.get("FF", 0)
+    return tot.get("LUT4", 0), tot.get("FF", 0)
 
 
 def _range(s: str) -> range:
@@ -124,7 +124,7 @@ def main() -> None:
 
     with open(args.out, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["InCh", "OutCh", "InBits", "WeightBits", "OutBits", "DSPCount", "LC", "FF"])
+        writer.writerow(["InCh", "OutCh", "InBits", "WeightBits", "OutBits", "DSPCount", "LUT4", "FF"])
 
         for ib in ib_range:
           for wb in wb_range:
@@ -132,21 +132,21 @@ def main() -> None:
               for ic in ic_range:
 
                 # Probe OC=1, DSP=1 (only valid count for OC=1).
-                # LC is monotone in InCh so break the IC loop if this fails.
-                lc, ff = synthesize(repo, sources, ic, 1, ib, wb, ob, 1 if args.dsp else 0, args.yosys)
+                # LUT4 is monotone in InCh so break the IC loop if this fails.
+                lut4, ff = synthesize(repo, sources, ic, 1, ib, wb, ob, 1 if args.dsp else 0, args.yosys)
                 runs += 1
                 elapsed = time.time() - t0
                 rate    = runs / elapsed if elapsed > 0 else 0
                 print(f"  IC={ic:2d} OC= 1 DSP={1 if args.dsp else 0}"
                       f"  IB={ib} WB={wb} OB={ob}"
-                      f"  LC={lc}  FF={ff}"
+                      f"  LUT4={lut4}  FF={ff}"
                       f"  [{runs} runs, {rate:.1f}/s]",
                       flush=True)
 
-                if lc is None or lc > LC_CAP:
+                if lut4 is None or lut4 > LC_CAP:
                     break  # InCh break: all larger InCh also infeasible
 
-                writer.writerow([ic, 1, ib, wb, ob, 1 if args.dsp else 0, lc, ff])
+                writer.writerow([ic, 1, ib, wb, ob, 1 if args.dsp else 0, lut4, ff])
                 f.flush()
 
                 for oc in oc_range:
@@ -156,39 +156,39 @@ def main() -> None:
                     dsps = valid_dsp_counts(oc) if args.dsp else [0]
 
                     if not args.dsp:
-                        # DSPCount=0: LC is monotone in OC, safe to break early.
-                        lc, ff = synthesize(repo, sources, ic, oc, ib, wb, ob, 0, args.yosys)
+                        # DSPCount=0: LUT4 is monotone in OC, safe to break early.
+                        lut4, ff = synthesize(repo, sources, ic, oc, ib, wb, ob, 0, args.yosys)
                         runs += 1
                         elapsed = time.time() - t0
                         rate    = runs / elapsed if elapsed > 0 else 0
                         print(f"  IC={ic:2d} OC={oc:2d} DSP=0"
                               f"  IB={ib} WB={wb} OB={ob}"
-                              f"  LC={lc}  FF={ff}"
+                              f"  LUT4={lut4}  FF={ff}"
                               f"  [{runs} runs, {rate:.1f}/s]",
                               flush=True)
 
-                        if lc is None or lc > LC_CAP:
+                        if lut4 is None or lut4 > LC_CAP:
                             break  # monotone: no larger OC can fit
 
-                        writer.writerow([ic, oc, ib, wb, ob, 0, lc, ff])
+                        writer.writerow([ic, oc, ib, wb, ob, 0, lut4, ff])
                         f.flush()
                     else:
                         # DSP mode: max valid DSPCount varies with OC (e.g. OC=13
-                        # only gets DSP=1 but OC=16 gets DSP=8), so LC is NOT
+                        # only gets DSP=1 but OC=16 gets DSP=8), so LUT4 is NOT
                         # monotone in OC.  No early break — sweep all OC values.
                         for dsp in dsps:
-                            lc, ff = synthesize(repo, sources, ic, oc, ib, wb, ob, dsp, args.yosys)
+                            lut4, ff = synthesize(repo, sources, ic, oc, ib, wb, ob, dsp, args.yosys)
                             runs += 1
                             elapsed = time.time() - t0
                             rate    = runs / elapsed if elapsed > 0 else 0
                             print(f"  IC={ic:2d} OC={oc:2d} DSP={dsp}"
                                   f"  IB={ib} WB={wb} OB={ob}"
-                                  f"  LC={lc}  FF={ff}"
+                                  f"  LUT4={lut4}  FF={ff}"
                                   f"  [{runs} runs, {rate:.1f}/s]",
                                   flush=True)
 
-                            if lc is not None and lc <= LC_CAP:
-                                writer.writerow([ic, oc, ib, wb, ob, dsp, lc, ff])
+                            if lut4 is not None and lut4 <= LC_CAP:
+                                writer.writerow([ic, oc, ib, wb, ob, dsp, lut4, ff])
                         f.flush()
 
     elapsed = time.time() - t0

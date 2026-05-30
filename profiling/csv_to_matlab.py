@@ -8,7 +8,7 @@ Usage:
     python3 nn/csv_to_matlab.py sweep.csv > sweep.m
 
 Reads labelled CSV produced by stat-sweep (--fold --csv --label) and emits
-MATLAB column-vector assignments for the sweep variable, FF, and LC totals.
+MATLAB column-vector assignments for the sweep variable, FF, and LUT4 totals.
 Each repeated header row is silently skipped.
 """
 import sys
@@ -22,7 +22,7 @@ def main() -> None:
         rows = list(csv.reader(src))
 
     label_key: str | None = None
-    # ordered dict: label_val → {"FF": str, "LC": str}
+    # ordered dict: label_val → {"FF": str, "LUT4": str}
     data: OrderedDict[str, dict[str, str]] = OrderedDict()
 
     for row in rows:
@@ -40,7 +40,7 @@ def main() -> None:
         cell_type = row[3]
         total     = row[-1]
 
-        if cell_type not in ("FF", "LC"):
+        if cell_type not in ("FF", "LUT4"):
             continue
 
         if label_val not in data:
@@ -48,7 +48,7 @@ def main() -> None:
         data[label_val][cell_type] = total
 
     if not data:
-        sys.exit("No FF/LC rows found — pipe stat-sweep output or pass a CSV file.")
+        sys.exit("No FF/LUT4 rows found — pipe stat-sweep output or pass a CSV file.")
 
     label_key = label_key or "x"
     labels = list(data.keys())
@@ -58,7 +58,7 @@ def main() -> None:
 
     print(f"{label_key} = {vec(labels)};")
     print(f"FF = {vec([data[v].get('FF', '0') for v in labels])};")
-    print(f"LC = {vec([data[v].get('LC', '0') for v in labels])};")
+    print(f"LUT4 = {vec([data[v].get('LUT4', '0') for v in labels])};")
 
 
 if __name__ == "__main__":

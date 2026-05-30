@@ -1,4 +1,4 @@
-InCh,OutCh,InBits,WeightBits,OutBits,DSPCount,LC,FF,LC_dsp0
+InCh,OutCh,InBits,WeightBits,OutBits,DSPCount,LUT4,FF,LUT4_dsp0
 1,1,1,2,4,0,204,90,204
 1,1,1,2,4,1,279,161,204
 1,14,1,2,4,0,1173,155,1173

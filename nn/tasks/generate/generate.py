@@ -1,4 +1,3 @@
-
 from itertools import product
 from pathlib import Path
 
@@ -30,9 +29,16 @@ CLASSIFIER_DSP = 1
 DSP_CONV_MAX   = DSP_CAP - CLASSIFIER_DSP   # DSPs available for conv layers
 
 # Search space — ob is always tied to wb (clipping activation width == weight width)
-OC_ANCHORS = [2, 4, 6, 8, 9, 10, 12]   # DSP-friendly channel counts
-WB_RANGE   = range(2, 6)               # 2–5 bits; ob = wb throughout
 
+# OutputBits = WeightBits
+# --------------------------------- constraints ---------------------------------
+WB_RANGE   = range(2, 6)               # 2–5 bits; ob = wb throughout
+def grow_weight_bits(w, last_wb) -> bool: return (w >= last_wb)
+def tie_outbits_with_weightbits(w): return w
+
+OC_ANCHORS = [2, 4, 6, 8, 9, 10, 12]   # DSP-divisible channel counts
+def grow_channels(c, last_oc) -> bool: return (c > last_oc)
+# --------------------------------------------------------------------------------
 
 def _build_cfg(layers: list[tuple[int, int, int]], last_pool: bool = True) -> NNConfig:
     """Build an NNConfig from a list of (oc, wb, dsp) conv+pool layer params.
@@ -116,7 +122,7 @@ def generate_base_cases(
     for oc, wb in product(oc_anchors, wb_range):
         try:
             conv_lc, _ = predict_conv_layer(ic=INPUT_CHANNELS, oc=oc, ib=INPUT_BITS, wb=wb, dsp=0)
-            pool_lc, _ = predict_pool_layer(ib=wb, ic=oc, mode=0)
+            pool_lc, _ = predict_pool_layer(ib=tie_outbits_with_weightbits(wb), ic=oc, mode=0)
         except (KeyError, ValueError):
             continue
 
@@ -160,12 +166,12 @@ def _extend(
     results = []
     last_oc, last_wb, _ = layers[-1]
 
-    for oc in [c for c in oc_anchors if c > last_oc]:
+    for oc in [c for c in oc_anchors if grow_channels(c, last_oc)]:
         dsp_options = sorted(
             [0] + [d for d in valid_dsp_counts(oc) if d <= dsp_remaining],
             reverse=True,   # max DSP first → lower LC explored first
         )
-        for wb in [w for w in wb_range if w >= last_wb]:
+        for wb in [w for w in wb_range if grow_weight_bits(w, last_wb)]:
             for dsp in dsp_options:
                 try:
                     conv_lc, _ = predict_conv_layer(ic=last_oc, oc=oc, ib=last_wb, wb=wb, dsp=dsp)
@@ -186,7 +192,7 @@ def _extend(
                     class_lc = None
 
                 try:
-                    pool_lc, _ = predict_pool_layer(ib=wb, ic=oc, mode=0)
+                    pool_lc, _ = predict_pool_layer(ib=tie_outbits_with_weightbits(wb), ic=oc, mode=0)
                 except (KeyError, ValueError):
                     continue
 
@@ -284,7 +290,7 @@ def generate_networks(
                     conv_lc, _ = predict_conv_layer(
                         ic=INPUT_CHANNELS, oc=oc0, ib=INPUT_BITS, wb=wb0, dsp=dsp0
                     )
-                    pool_lc, _ = predict_pool_layer(ib=wb0, ic=oc0, mode=0)
+                    pool_lc, _ = predict_pool_layer(ib=tie_outbits_with_weightbits(wb0), ic=oc0, mode=0)
                 except (KeyError, ValueError):
                     continue
 
@@ -347,53 +353,9 @@ def generate_networks(
     return final
 
 
-def plot_networks(
-    configs: list[tuple[int | float, NNConfig]],
-    out_html: str = "nn/tasks/generate/networks_plot.html",
-) -> None:
-    """Scatter plot of LC vs FPS for all enumerated networks.
-    Hover over a point to see its index and layer architecture."""
-    import plotly.graph_objects as go
-
-    lcs, fpss, hover = [], [], []
-    for i, (lc, cfg) in enumerate(configs):
-        _, bottleneck = cfg.cycle_count()
-        fps = CLK_FREQ_HZ / (bottleneck * IMG_W * IMG_H) if bottleneck > 0 else 0.0
-
-        layer_str = "<br>".join(
-            "  " + (
-                f"conv({c.ConvLayer._out_ch}ch {c.ConvLayer._out_bits}b"
-                + (f" w{c.ConvLayer._q_schedule._q_min_bits}" if c.ConvLayer._q_schedule._q_min_bits != c.ConvLayer._out_bits else "")
-                + (f" d{c.ConvLayer._dsp_count}" if c.ConvLayer._dsp_count > 0 else "")
-                + ("+p" if c.PoolLayer is not None else "")
-                + ")"
-            )
-            for c in cfg.layers
-        )
-
-        lcs.append(int(lc))
-        fpss.append(round(fps, 2))
-        hover.append(f"<b>#{i}</b>  [{int(lc)} LC  {fps:.1f} fps]<br>{layer_str}")
-
-    fig = go.Figure(go.Scatter(
-        x=lcs, y=fpss,
-        mode="markers",
-        text=hover,
-        hoverinfo="text",
-        marker=dict(size=6, opacity=0.75, color=lcs, colorscale="Viridis",
-                    colorbar=dict(title="LC")),
-    ))
-    fig.update_layout(
-        title="Feasible Networks: LC Utilization vs FPS",
-        xaxis=dict(title="LC Utilization", range=[0.75*LC_CAP, LC_CAP]),
-        yaxis=dict(title="FPS"),
-        hovermode="closest",
-    )
-    fig.write_html(out_html)
-    print(f"Plot saved → {out_html}")
-
-
 if __name__ == "__main__":
+    from nn.tasks.generate.plot import plot_networks, plot_accuracy
     configs = generate_networks()
     print(f"\n{len(configs)} feasible networks (deduplicated)")
     plot_networks(configs)
+    plot_accuracy()

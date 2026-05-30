@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-sweep_classifier.py — Sweep LC/FF usage for classifier_layer on iCE40 UP5K.
+sweep_classifier.py — Sweep LUT4/FF usage for classifier_layer on iCE40 UP5K.
 
 Sweeps TermBits, InChannels, ClassCount, WeightBits with DSPCount=0.
 Fixed: TermCount=32, BusBits=8, BiasBits=8, ShiftBits=0.
@@ -61,7 +61,7 @@ def synthesize(sources: list[str], tb: int, ic: int, cc: int, wb: int, dsp: int,
     if top_key is None:
         return None, None
     tot = _fold(dict(total_cells(top_key, mods, {})))
-    return tot.get("LC", 0), tot.get("FF", 0)
+    return tot.get("LUT4", 0), tot.get("FF", 0)
 
 
 def _range(s: str) -> range:
@@ -96,30 +96,30 @@ def main():
 
     with open(args.out, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["TermBits", "InChannels", "ClassCount", "WeightBits", "DSPCount", "LC", "FF"])
+        writer.writerow(["TermBits", "InChannels", "ClassCount", "WeightBits", "DSPCount", "LUT4", "FF"])
 
         for tb in _range(args.tb):
             for wb in _range(args.wb):
                 for dsp in _range(args.dsp):
                     for ic in _range(args.ic):
                         for cc in _range(args.cc):
-                            lc, ff = synthesize(sources, tb, ic, cc, wb, dsp, args.yosys)
+                            lut4, ff = synthesize(sources, tb, ic, cc, wb, dsp, args.yosys)
                             runs  += 1
                             elapsed = time.time() - t0
                             rate    = runs / elapsed if elapsed > 0 else 0
                             print(f"  TB={tb} WB={wb} DSP={dsp} IC={ic:2d} CC={cc:2d}"
-                                  f"  LC={lc}  FF={ff}"
+                                  f"  LUT4={lut4}  FF={ff}"
                                   f"  [{runs} runs, {rate:.1f}/s]",
                                   flush=True)
 
-                            if lc is None:
+                            if lut4 is None:
                                 continue
 
-                            writer.writerow([tb, ic, cc, wb, dsp, lc, ff])
+                            writer.writerow([tb, ic, cc, wb, dsp, lut4, ff])
                             f.flush()
 
-                            if lc > LC_CAP:
-                                print(f"  (LC cap at CC={cc}, stopping TB={tb} WB={wb} DSP={dsp} IC={ic})")
+                            if lut4 > LC_CAP:
+                                print(f"  (LUT4 cap at CC={cc}, stopping TB={tb} WB={wb} DSP={dsp} IC={ic})")
                                 break
 
     elapsed = time.time() - t0

@@ -24,7 +24,7 @@ from nn.tasks.generate.generate import NUM_CLASSES, generate_networks, _fmt, IMG
 from nn.tasks.mnist.preprocess  import prepare_mnist_data
 
 RANDOM_CHANCE = 1.0 / NUM_CLASSES       # baseline for 10-class random classifier
-ABORT_EPOCH   = 10              # survival check after this many epochs
+ABORT_EPOCH   = 5              # survival check after this many epochs
 BATCH_SIZE    = 512
 LR            = 2e-4
 WEIGHT_DECAY  = 1e-5

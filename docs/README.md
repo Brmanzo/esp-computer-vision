@@ -25,6 +25,9 @@ RTL designed and tested on icebreaker V1.1a FPGA for hardware acceleration.
   - [Verification](#verification)
     - [Unit Testing](#unit-testing)
     - [Integration Testing](#integration-testing)
+    - [Behavioral Testing](#behavioral-testing)
+  - [Profiling](#profiling)
+    - [Profiling HW Costs](#profiling-hw-costs)
   - [Credits](#credits)
   - [License](#license)
 
@@ -124,17 +127,18 @@ idf.py build flash monitor
 ```
 
 ## Hardware Installation
-| Component              | Version              |
-| ---------------------- | -------------------- |
-| Yosys                  | 0.57 (git 3aca86049) |
-| nextpnr-ice40          | 0.6-3build5          |
-| Verilator              | 5.020                |
-| Icarus Verilog         | 12.0                 |
-| Verible                | v0.0-4051-g9fdb      |
-| cocotb                 | 1.9.1                |
-| Python                 | 3.12.3               |
-| Netlistsvg             | 1.0.2                |
-| librsvg (rsvg-convert) | 2.58.0               |
+| Component              | Version                 |
+| ---------------------- | ----------------------- |
+| Yosys                  | 0.57 (git 3aca86049)    |
+| nextpnr-ice40          | 0.6-3build5             |
+| Verilator              | 5.020                   |
+| Icarus Verilog         | 12.0                    |
+| Verible                | v0.0-4051-g9fdb         |
+| cocotb                 | 1.9.1                   |
+| Python                 | 3.12.3                  |
+| Netlistsvg             | 1.0.2                   |
+| librsvg (rsvg-convert) | 2.58.0                  |
+| MATLAB                 | 26.1.0.3251617 (R2026a) |   
 
 ```bash
 # Within a Python virtual environment run
@@ -344,6 +348,25 @@ cd sim/integration_testing/cnn/ && make test <SAMPLE_IDX=#> VERBOSE=1
 
 # To verify cnn within deframer, framer pipeline
 cd sim/integration_testing/cnn/ && make test <SAMPLE_IDX=#> VERBOSE=1
+```
+### Behavioral Testing
+```bash
+# To verify accuracy of pytorch integer model
+cnn.py fpga inference hw-eval trials [N]
+
+# To verify fpga matches pytorch integer model
+cnn.py fpga <sample_idx> [ttyUSBx] [--trials N]
+```
+
+## Profiling
+### Profiling HW Costs
+```bash
+# To sweep a module over a multivariate range of parameter values run
+make stat-sweep MOD=<MODULE_NAME> SWEEP=<PARAMETER_TO_SWEEP>=<START:END> PARAMS="P1=V1 P2=V2"
+
+# To regress each swept corner and produce coefficients
+cd profiling/[module]/regression && matlab -batch [regression_script]
+
 ```
 
 ## Credits

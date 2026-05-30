@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-sweep_dsp.py — Characterise DSPCount LC savings using existing DSP=0 data.
+sweep_dsp.py — Characterise DSPCount LUT4 savings using existing DSP=0 data.
 
 Loads a completed sweep_conv.csv state exploration (DSPCount=0 runs),
 selects a few representative (IC, OC) sample points per (IB, WB) corner at 
-evenly-spaced LC percentiles, then synthesises those points with every 
+evenly-spaced LUT4 percentiles, then synthesises those points with every 
 valid DSPCount (divisors of OC <= 8).
 
 The DSP=0 baseline is re-used directly from the CSV — no re-synthesis needed.
@@ -78,29 +78,29 @@ def synthesize(repo, sources, ic, oc, ib, wb, ob, dsp, yosys):
     if top_key is None:
         return None, None
     tot = _fold(dict(total_cells(top_key, mods, {})))
-    return tot.get("LC", 0), tot.get("FF", 0)
+    return tot.get("LUT4", 0), tot.get("FF", 0)
 
 
 def load_baseline(path: str) -> dict:
-    """Load DSP=0 CSV. Returns {(ic,oc,ib,wb,ob): (lc,ff)}."""
+    """Load DSP=0 CSV. Returns {(ic,oc,ib,wb,ob): (lut4,ff)}."""
     baseline = {}
     with open(path, newline="") as f:
         for row in csv.DictReader(f):
             key = (int(row["InCh"]), int(row["OutCh"]),
                    int(row["InBits"]), int(row["WeightBits"]), int(row["OutBits"]))
-            baseline[key] = (int(row["LC"]), int(row["FF"]))
+            baseline[key] = (int(row["LUT4"]), int(row["FF"]))
     return baseline
 
 
-def select_samples(points: list[tuple], lc_vals: list[int], n: int) -> list[tuple]:
-    """Pick n points at evenly-spaced LC percentiles."""
+def select_samples(points: list[tuple], lut4_vals: list[int], n: int) -> list[tuple]:
+    """Pick n points at evenly-spaced LUT4 percentiles."""
     if len(points) <= n:
         return points
-    lc_arr = np.array(lc_vals, dtype=float)
-    targets = np.linspace(lc_arr.min(), lc_arr.max(), n)
+    lut4_arr = np.array(lut4_vals, dtype=float)
+    targets = np.linspace(lut4_arr.min(), lut4_arr.max(), n)
     chosen = set()
     for t in targets:
-        idx = int(np.argmin(np.abs(lc_arr - t)))
+        idx = int(np.argmin(np.abs(lut4_arr - t)))
         chosen.add(idx)
     return [points[i] for i in sorted(chosen)]
 
@@ -129,12 +129,12 @@ def main():
 
     # Group baseline points by (IB, WB, OB) corner
     corners: dict[tuple, list] = defaultdict(list)
-    for (ic, oc, ib, wb, ob), (lc, ff) in baseline.items():
+    for (ic, oc, ib, wb, ob), (lut4, ff) in baseline.items():
         if args.ob  is not None and ob  != args.ob:
             continue
         if args.ib  is not None and ib  != args.ib:
             continue
-        corners[(ib, wb, ob)].append((ic, oc, lc, ff))
+        corners[(ib, wb, ob)].append((ic, oc, lut4, ff))
 
     runs = 0
     t0   = time.time()
@@ -145,7 +145,7 @@ def main():
         writer = csv.writer(f)
         if not append:
             writer.writerow(["InCh", "OutCh", "InBits", "WeightBits", "OutBits",
-                             "DSPCount", "LC", "FF", "LC_dsp0"])
+                             "DSPCount", "LUT4", "FF", "LUT4_dsp0"])
 
         for (ib, wb, ob), pts in sorted(corners.items()):
             # When targeting a specific DSP, restrict to OC values it can divide
@@ -154,34 +154,34 @@ def main():
             if not pts:
                 print(f"  (no OC values divisible by DSP={args.dsp} in this corner, skipping)")
                 continue
-            lc_vals = [p[2] for p in pts]
-            samples = select_samples(pts, lc_vals, args.samples)
+            lut4_vals = [p[2] for p in pts]
+            samples = select_samples(pts, lut4_vals, args.samples)
 
             print(f"\n--- IB={ib} WB={wb} OB={ob}  "
                   f"({len(pts)} baseline pts, {len(samples)} sampled) ---")
 
-            for ic, oc, lc_dsp0, ff_dsp0 in samples:
+            for ic, oc, lut4_dsp0, ff_dsp0 in samples:
                 if not append:
                     # Write DSP=0 baseline row only in fresh mode; already present when appending
-                    writer.writerow([ic, oc, ib, wb, ob, 0, lc_dsp0, ff_dsp0, lc_dsp0])
+                    writer.writerow([ic, oc, ib, wb, ob, 0, lut4_dsp0, ff_dsp0, lut4_dsp0])
 
                 for dsp in valid_dsp_counts(oc):
                     if dsp == 0:
                         continue
                     if args.dsp is not None and dsp != args.dsp:
                         continue
-                    lc, ff = synthesize(repo, sources, ic, oc, ib, wb, ob, dsp, args.yosys)
+                    lut4, ff = synthesize(repo, sources, ic, oc, ib, wb, ob, dsp, args.yosys)
                     runs += 1
                     elapsed = time.time() - t0
                     rate    = runs / elapsed if elapsed > 0 else 0
-                    savings = (lc_dsp0 - lc) if lc is not None else None
+                    savings = (lut4_dsp0 - lut4) if lut4 is not None else None
                     print(f"  IC={ic:2d} OC={oc:2d} DSP={dsp}"
-                          f"  LC={lc}  savings={savings}"
+                          f"  LUT4={lut4}  savings={savings}"
                           f"  [{runs} runs, {rate:.1f}/s]",
                           flush=True)
 
-                    if lc is not None:
-                        writer.writerow([ic, oc, ib, wb, ob, dsp, lc, ff, lc_dsp0])
+                    if lut4 is not None:
+                        writer.writerow([ic, oc, ib, wb, ob, dsp, lut4, ff, lut4_dsp0])
                 f.flush()
 
     elapsed = time.time() - t0

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-sweep_pool.py — Sweep LC/FF usage for pool_layer on iCE40 UP5K.
+sweep_pool.py — Sweep LUT4/FF usage for pool_layer on iCE40 UP5K.
 
 Sweeps InBits (1-8), InChannels (1-32), and PoolMode (0=max, 1=avg).
 InChannels == OutChannels and InBits == OutBits always.
@@ -60,7 +60,7 @@ def synthesize(sources: list[str], ic: int, ib: int, mode: int, yosys: str) -> t
     if top_key is None:
         return None, None
     tot = _fold(dict(total_cells(top_key, mods, {})))
-    return tot.get("LC", 0), tot.get("FF", 0)
+    return tot.get("LUT4", 0), tot.get("FF", 0)
 
 
 def _range(s: str) -> range:
@@ -98,29 +98,29 @@ def main():
 
     with open(args.out, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["InBits", "InChannels", "PoolMode", "LC", "FF"])
+        writer.writerow(["InBits", "InChannels", "PoolMode", "LUT4", "FF"])
 
         for ib in ib_range:
             for mode in mode_range:
                 mode_str = "max" if mode == 0 else "avg"
                 for ic in ic_range:
-                    lc, ff = synthesize(sources, ic, ib, mode, args.yosys)
+                    lut4, ff = synthesize(sources, ic, ib, mode, args.yosys)
                     runs  += 1
                     elapsed = time.time() - t0
                     rate    = runs / elapsed if elapsed > 0 else 0
                     print(f"  IB={ib} IC={ic:2d} mode={mode_str}"
-                          f"  LC={lc}  FF={ff}"
+                          f"  LUT4={lut4}  FF={ff}"
                           f"  [{runs} runs, {rate:.1f}/s]",
                           flush=True)
 
-                    if lc is None:
+                    if lut4 is None:
                         continue
 
-                    writer.writerow([ib, ic, mode, lc, ff])
+                    writer.writerow([ib, ic, mode, lut4, ff])
                     f.flush()
 
-                    if lc > LC_CAP:
-                        print(f"  (LC cap reached, stopping IB={ib} mode={mode_str})")
+                    if lut4 > LC_CAP:
+                        print(f"  (LUT4 cap reached, stopping IB={ib} mode={mode_str})")
                         break
 
     elapsed = time.time() - t0

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-sweep_deframer.py — Sweep LC/FF usage for deframer on iCE40 UP5K.
+sweep_deframer.py — Sweep LUT4/FF usage for deframer on iCE40 UP5K.
 
 Sweeps PacketLenElems over powers of 2 for every valid (UnpackedWidth, PackedNum) pair.
 Fixed constraint: UnpackedWidth * PackedNum == 8 (bus width).
@@ -50,7 +50,7 @@ def synthesize(sources: list[str], uw: int, pn: int, ple: int, yosys: str) -> tu
     if top_key is None:
         return None, None
     tot = _fold(dict(total_cells(top_key, mods, {})))
-    return tot.get("LC", 0), tot.get("FF", 0)
+    return tot.get("LUT4", 0), tot.get("FF", 0)
 
 
 def _range(s: str) -> range:
@@ -87,27 +87,27 @@ def main():
 
     with open(args.out, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["UnpackedWidth", "PackedNum", "PacketLenElems", "LC", "FF"])
+        writer.writerow(["UnpackedWidth", "PackedNum", "PacketLenElems", "LUT4", "FF"])
 
         for valid_uw, valid_pn in valid_uw_pn:
             for valid_ple in ple_full_range:
-                lc, ff = synthesize(sources, valid_uw, valid_pn, valid_ple, args.yosys)
+                lut4, ff = synthesize(sources, valid_uw, valid_pn, valid_ple, args.yosys)
                 runs  += 1
                 elapsed = time.time() - t0
                 rate    = runs / elapsed if elapsed > 0 else 0
                 print(f"  UnpackedWidth={valid_uw} PackedNum={valid_pn} PacketLenElems={valid_ple}"
-                        f"  LC={lc}  FF={ff}"
+                        f"  LUT4={lut4}  FF={ff}"
                         f"  [{runs} runs, {rate:.1f}/s]",
                         flush=True)
 
-                if lc is None:
+                if lut4 is None:
                     continue
 
-                writer.writerow([valid_uw, valid_pn, valid_ple, lc, ff])
+                writer.writerow([valid_uw, valid_pn, valid_ple, lut4, ff])
                 f.flush()
 
-                if lc > LC_CAP:
-                    print(f"  (LC cap reached, stopping UnpackedWidth={valid_uw} PackedNum={valid_pn} PacketLenElems={valid_ple})")
+                if lut4 > LC_CAP:
+                    print(f"  (LUT4 cap reached, stopping UnpackedWidth={valid_uw} PackedNum={valid_pn} PacketLenElems={valid_ple})")
                     break
 
     elapsed = time.time() - t0
