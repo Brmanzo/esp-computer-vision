@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-sweep_classifier.py — Sweep LUT4/FF usage for classifier_layer on iCE40 UP5K.
+sweep_classifier.py — Sweep LUT4/FF usage for classifier_layer on iCE40 Icebreaker V1.1a.
 
 Sweeps TermBits, InChannels, ClassCount, WeightBits with DSPCount=0.
 Fixed: TermCount=32, BusBits=8, BiasBits=8, ShiftBits=0.

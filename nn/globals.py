@@ -33,7 +33,7 @@ elif CURRENT_TASK == "mnist":
 
     # To load a generated network from the sweep, set SWEEP_IDX to its index (e.g., 30)
     # To use the default MNIST architecture, set SWEEP_IDX to None
-    SWEEP_IDX = None
+    SWEEP_IDX = 239
 
     if SWEEP_IDX is not None:
         from nn.tasks.generate.generate import generate_networks

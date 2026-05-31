@@ -1,4 +1,4 @@
-# nn.constants.py — iCE40 UP5K board constraints
+# nn.constants.py — iCE40 Icebreaker V1.1a board constraints
 # Kept separate from nn.globals to avoid circular imports with nn.config.
 
 BRAM_CAP    = 30 - 1   # subtract 1 for deframer skid buffer BRAM

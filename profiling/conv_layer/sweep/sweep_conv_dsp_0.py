@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 sweep_conv.py — Synthesize conv_layer across the parameter space and stop each
-OutCh sweep as soon as the actual LUT4 count exceeds the iCE40 UP5K cap.
+OutCh sweep as soon as the actual LUT4 count exceeds the iCE40 Icebreaker V1.1a cap.
 
 DSPCount=0 mode (default): sweeps InCh, OutCh, InBits, OutBits, WeightBits.
 DSP mode (--dsp):          sweeps the same space but for each OutCh inserts
@@ -30,7 +30,7 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from nn.util import parse, total_cells, _fold, _base  # noqa: E402
 
-from nn.globals import LC_CAP, DSP_CAP    # iCE40 UP5K SB_MAC16 blocks
+from nn.globals import LC_CAP, DSP_CAP    # iCE40 Icebreaker V1.1a SB_MAC16 blocks
 MODULE  = "conv_layer"
 KERNEL  = 3
 

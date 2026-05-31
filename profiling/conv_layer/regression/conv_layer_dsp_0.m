@@ -1,6 +1,6 @@
 %% conv_layer_dsp_0.m — Fit LUT4 and FF models from conv_layer_dsp_0.csv per (InBits, WeightBits) slice
 %% and extrapolate to predict the combinational (DSP=0) case, which is too large to synthesize in many corners of the parameter space.
-% iCE40 UP5K caps: 5280 LUT4, 3520 FF
+% iCE40 Icebreaker V1.1a caps: 5280 LUT4, 3520 FF
 % LUT4 model per slice: A*OC*IC + B*OC + C*IC + D
 % FF model per slice: A*OC*log2(IC) + B*OC + C*IC + D
 

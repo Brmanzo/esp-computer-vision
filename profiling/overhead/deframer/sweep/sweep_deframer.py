@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-sweep_deframer.py — Sweep LUT4/FF usage for deframer on iCE40 UP5K.
+sweep_deframer.py — Sweep LUT4/FF usage for deframer on iCE40 Icebreaker V1.1a.
 
 Sweeps PacketLenElems over powers of 2 for every valid (UnpackedWidth, PackedNum) pair.
 Fixed constraint: UnpackedWidth * PackedNum == 8 (bus width).

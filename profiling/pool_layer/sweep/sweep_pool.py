@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-sweep_pool.py — Sweep LUT4/FF usage for pool_layer on iCE40 UP5K.
+sweep_pool.py — Sweep LUT4/FF usage for pool_layer on iCE40 Icebreaker V1.1a.
 
 Sweeps InBits (1-8), InChannels (1-32), and PoolMode (0=max, 1=avg).
 InChannels == OutChannels and InBits == OutBits always.

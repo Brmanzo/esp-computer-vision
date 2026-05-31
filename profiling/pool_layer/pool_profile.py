@@ -1,5 +1,5 @@
 """
-pool_profile.py — LUT4 and FF lookup for pool_layer on iCE40 UP5K.
+pool_profile.py — LUT4 and FF lookup for pool_layer on iCE40 Icebreaker V1.1a.
 
 Loads measured synthesis results from profiles/sweep_pool.csv.
 Keys are (InBits, InChannels, PoolMode); values are exact (LUT4, FF) counts.
@@ -28,7 +28,7 @@ def predict_pool_layer(ib: int, ic: int, mode: int = 0) -> tuple[int, int]:
     """
     Return (LUT4, FF) for a pool_layer configuration.
     Raises KeyError if the configuration was not in the sweep.
-    Raises ValueError if either resource exceeds the iCE40 UP5K cap.
+    Raises ValueError if either resource exceeds the iCE40 Icebreaker V1.1a cap.
     """
     key = (ib, ic, mode)
     if key not in _TABLE:

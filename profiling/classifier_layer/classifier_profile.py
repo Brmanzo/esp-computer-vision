@@ -1,5 +1,5 @@
 """
-classifier_profile.py — LUT4 and FF predictor for classifier_layer on iCE40 UP5K.
+classifier_profile.py — LUT4 and FF predictor for classifier_layer on iCE40 Icebreaker V1.1a.
 
 Loads regression coefficients from profiles/classifier_coeffs.csv.
 Models per (TermBits, DSPCount) corner:
@@ -78,7 +78,7 @@ def predict_classifier_layer(tb: int, ic: int, cc: int, wb: int, dsp: int = 0) -
     """
     Predict_classifier_layer (LUT4, FF) for a classifier_layer configuration.
     Raises KeyError if the (TermBits, DSPCount) corner is missing.
-    Raises ValueError if cc % dsp != 0 or either resource exceeds the iCE40 UP5K cap.
+    Raises ValueError if cc % dsp != 0 or either resource exceeds the iCE40 Icebreaker V1.1a cap.
     """
     if dsp > 0 and cc % dsp != 0:
         raise ValueError(f"DSPCount={dsp} does not divide ClassCount={cc}")

@@ -1,5 +1,5 @@
 """
-conv_profile.py — LUT4 and FF cost predictor for conv_layer on iCE40 UP5K.
+conv_profile.py — LUT4 and FF cost predictor for conv_layer on iCE40 Icebreaker V1.1a.
 
 Loads regression coefficients from profile_coeffs.csv (exported from MATLAB).
 Models per (InBits, WeightBits, DSPCount) corner:
@@ -64,7 +64,7 @@ def predict_conv_layer(ic: int, oc: int, ib: int, wb: int,
     """
     Predict (LUT4, FF) for a conv_layer configuration.
     If the (ib, dsp) corner is missing, synthesizes it automatically then retries.
-    Raises ValueError if either resource exceeds the iCE40 UP5K cap.
+    Raises ValueError if either resource exceeds the iCE40 Icebreaker V1.1a cap.
     """
     if dsp > 0 and oc % dsp != 0:
         raise ValueError(f"DSPCount={dsp} does not divide OutChannels={oc}")

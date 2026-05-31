@@ -1,5 +1,5 @@
 """
-deframer_profile.py — LUT4/FF predictor for deframer on iCE40 UP5K.
+deframer_profile.py — LUT4/FF predictor for deframer on iCE40 Icebreaker V1.1a.
 
 Loads measured synthesis results from profiles/sweep_deframer.csv.
 Queries round up PacketLenElems to the next synthesized power of 2,
