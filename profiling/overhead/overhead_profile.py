@@ -1,9 +1,10 @@
 from profiling.overhead.deframer.deframer_profile import predict, _ceil_ple
 
-# Fixed Overhead constants
-uart         = (82,35)
-class_framer = (19,4)
-skid_buffer  = (60,45)
+# Fixed overhead constants — measured via `make stat-modules MOD=uart_cnn`
+# (SB_LUT4 / total SB_DFF* counts for each sub-module, ESP=1 context)
+uart         = (186, 79)   # uart_rx + uart_tx + uart top; was (82,35) — badly underestimated
+class_framer = ( 19,  4)
+skid_buffer  = ( 61, 45)   # updated from 60 → 61 to match measurement
 
 def predict_overhead(uw: int, pn: int, ple: int) -> tuple[int, int]:
     LUT4, FF = predict(uw, pn, ple)

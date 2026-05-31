@@ -110,8 +110,8 @@ def plot_networks(
                     colorbar=dict(title="LC")),
     ))
     fig.update_layout(
-        title="Feasible Networks: LC Utilization vs FPS",
-        xaxis=dict(title="LC Utilization", range=[0.75 * LC_CAP, LC_CAP]),
+        title="Feasible Networks: LUT4 Utilization vs FPS",
+        xaxis=dict(title="LUT4 Utilization", range=[0.75 * LC_CAP, LC_CAP]),
         yaxis=dict(title="FPS"),
         hovermode="closest",
     )
@@ -167,8 +167,8 @@ def plot_accuracy(
         ),
     ))
     fig.update_layout(
-        title="Trained Networks: LC Utilization vs Hardware Accuracy",
-        xaxis=dict(title="LC Utilization"),
+        title="Trained Networks: LUT4 Utilization vs Hardware Accuracy",
+        xaxis=dict(title="LUT4 Utilization"),
         yaxis=dict(title="Hardware Accuracy", tickformat=".0%"),
         hovermode="closest",
     )
@@ -239,8 +239,8 @@ def plot_accuracy_by_bits(
             ))
 
     fig.update_layout(
-        title="Hardware Accuracy vs LC Utilization by Activation Bit-Width Sequence",
-        xaxis=dict(title="LC Utilization"),
+        title="Hardware Accuracy vs LUT4 Utilization by Activation Bit-Width Sequence",
+        xaxis=dict(title="LUT4 Utilization"),
         yaxis=dict(title="Hardware Accuracy", tickformat=".0%"),
         hovermode="closest",
         legend=dict(title="wb sequence (click to isolate)"),
