@@ -51,10 +51,15 @@ def export_features():
         final_conv_ib = bits[-2]
         classifier_ib = bits[-1]
         
-        valid_data.append(f"{idx},{depth},{growth_rate:.4f},{total_channels},{final_conv_ib},{classifier_ib},{float_acc:.4f}\n")
+        in_bits_list = [1] + bits[:-1]  # MNIST input is 1 bit
+        channel_bits = sum(c * b for c, b in zip(channels, in_bits_list))
+        
+        pct_ternary = sum(1 for b in bits if b == 2) / len(bits)
+        
+        valid_data.append(f"{idx},{depth},{growth_rate:.4f},{total_channels},{final_conv_ib},{classifier_ib},{channel_bits},{pct_ternary:.4f},{float_acc:.4f}\n")
         
     with open(CSV_PATH, "w", encoding="utf-8") as f:
-        f.write("idx,depth,growth_rate,total_channels,final_conv_ib,classifier_ib,float_acc\n")
+        f.write("idx,depth,growth_rate,total_channels,final_conv_ib,classifier_ib,channel_bits,pct_ternary,float_acc\n")
         f.writelines(valid_data)
         
     print(f"Exported {len(valid_data)} networks to {CSV_PATH}")

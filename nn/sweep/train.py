@@ -23,8 +23,8 @@ from nn.inference import get_inference_from_pixels
 from nn.sweep.generate import generate_networks, _fmt
 
 NUM_CLASSES   = len(CLASSES)
-IMG_W         = NN_CFG.input_dimensions.w
-IMG_H         = NN_CFG.input_dimensions.h
+IMG_W         = NN_CFG.in_dims.width
+IMG_H         = NN_CFG.in_dims.height
 
 RANDOM_CHANCE = 1.0 / NUM_CLASSES       # baseline for random classifier
 ABORT_EPOCH   = 5              # survival check after this many epochs

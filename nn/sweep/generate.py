@@ -35,11 +35,14 @@ DSP_CONV_MAX   = DSP_CAP - CLASSIFIER_DSP   # DSPs available for conv layers
 # --------------------------------- constraints ---------------------------------
 WB_RANGE   = range(2, 6)               # 2–5 bits; ob = wb throughout
 def grow_weight_bits(w, last_wb) -> bool: return (w >= last_wb)
-def tie_outbits_with_weightbits(w): return w
+
 
 OC_ANCHORS = [2, 4, 6, 8, 9, 10, 12]   # DSP-divisible channel counts
 LAYER_0_DSP_0 = 0
 DSP_1_ONLY = 1
+L0_DSP_0_WB = [4]
+DSP_0_WB = 4
+DSP_1_WB = 8
 def grow_channels(c, last_oc) -> bool: return (c > last_oc)
 # --------------------------------------------------------------------------------
 
@@ -54,21 +57,20 @@ def _lc_ok(total_ff: float, total_lc: float, any_conv_dsp: bool) -> bool:
     return total_lc <= LC_CAP
 # --------------------------------------------------------------------------------
 
-def _build_cfg(layers: list[tuple[int, int, int]], last_pool: bool = True) -> NNConfig:
-    """Build an NNConfig from a list of (oc, wb, dsp) conv+pool layer params.
-    ob = wb always. If last_pool=False the final feature layer feeds the classifier directly."""
+def _build_cfg(layers: list[tuple[int, int, int, int]], last_pool: bool = True) -> NNConfig:
+    """Build an NNConfig from a list of (oc, wb, ob, dsp) conv+pool layer params."""
     if last_pool:
         kernels = [[CONV_KERNEL, POOL_KERNEL] for _ in layers] + [[1]]
     else:
         kernels = [[CONV_KERNEL, POOL_KERNEL] for _ in layers[:-1]] + [[CONV_KERNEL]] + [[1]]
     return NNConfig(
         input_dimensions = InputDimensions(IMG_W, IMG_H),
-        in_channels      = [INPUT_CHANNELS] + [oc for oc, _,  _   in layers],
-        in_bits          = [INPUT_BITS]     + [wb for _,  wb, _   in layers],
+        in_channels      = [INPUT_CHANNELS] + [oc for oc, _, _, _   in layers],
+        in_bits          = [INPUT_BITS]     + [ob for _, _, ob, _   in layers],
         kernels          = kernels,
         stride           = STRIDE,
         padding          = PADDING,
-        bias_bits        = [16 if dsp > 0 else 8 for _, _, dsp in layers] + [16],
+        bias_bits        = [16 if dsp > 0 else 8 for _, _, _, dsp in layers] + [16],
         num_classes      = NUM_CLASSES,
         q_schedule       = [
             QSchedule(
@@ -77,9 +79,9 @@ def _build_cfg(layers: list[tuple[int, int, int]], last_pool: bool = True) -> NN
                 q_min_bits = 8 if dsp > 0 else wb,
                 q_max_bits = 8 if dsp > 0 else wb + 4,
             )
-            for i, (_, wb, dsp) in enumerate(layers)
+            for i, (_, wb, _, dsp) in enumerate(layers)
         ] + [QSchedule(q_start=15 + len(layers) * 3, q_epochs=[3], q_max_bits=8, q_min_bits=8)],
-        use_dsp = [dsp for _, _, dsp in layers] + [CLASSIFIER_DSP],
+        use_dsp = [dsp for _, _, _, dsp in layers] + [CLASSIFIER_DSP],
     )
 
 
@@ -94,7 +96,9 @@ def _post_pool_dims(w: int, h: int) -> tuple[int, int]:
 
 def _fmt(lc: int | float, cfg: NNConfig) -> str:
     _, bottleneck = cfg.cycle_count()
-    fps = CLK_FREQ_HZ / (bottleneck * IMG_W * IMG_H) if bottleneck > 0 else 0.0
+    assert bottleneck is not None, "Cycle count must be computable for formatting"
+    assert IMG_W is not None and IMG_H is not None, "Image dimensions must be set for formatting"
+    fps = CLK_FREQ_HZ / (int(bottleneck) * IMG_W * IMG_H) if bottleneck > 0 else 0.0
 
     parts = []
     for c in cfg.layers:
@@ -110,10 +114,10 @@ def _fmt(lc: int | float, cfg: NNConfig) -> str:
 
 
 def _arch_key(cfg: NNConfig) -> tuple:
-    """Deduplication key: (oc, wb) sequence + whether the last feature layer has a pool.
+    """Deduplication key: (oc, wb, ob) sequence + whether the last feature layer has a pool.
     DSP allocation is excluded — it is a hardware detail, not an architectural one."""
     arch = tuple(
-        (c.ConvLayer._out_ch, c.ConvLayer._q_schedule._q_min_bits)
+        (c.ConvLayer._out_ch, c.ConvLayer._q_schedule._q_min_bits, c.ConvLayer._out_bits)
         for c in cfg.layers
     )
     last_pool = cfg.layers[-1].PoolLayer is not None
@@ -127,34 +131,35 @@ def generate_base_cases(
     """
     Enumerate all feasible first-layer (conv + pool) configurations with dsp=0.
 
-    Fixed: ic=INPUT_CHANNELS=1, ib=INPUT_BITS=1, dsp=0, pool_mode=max, ob=wb.
+    Fixed: ic=INPUT_CHANNELS=1, ib=INPUT_BITS=1, dsp=0, pool_mode=max.
     Returns (conv+pool lc, NNConfig) tuples sorted by LC ascending.
     Does not account for classifier, overhead, or DSP — use generate_networks for that.
     """
     results = []
 
-    for oc, wb in product(oc_anchors, wb_range):
-        try:
-            conv_lc, _ = predict_conv_layer(ic=INPUT_CHANNELS, oc=oc, ib=INPUT_BITS, wb=wb, dsp=0)
-            pool_lc, _ = predict_pool_layer(ib=tie_outbits_with_weightbits(wb), ic=oc, mode=0)
-        except (KeyError, ValueError):
-            continue
+    for oc, ob in product(oc_anchors, wb_range):
+        for wb in L0_DSP_0_WB:
+            try:
+                conv_lc, _ = predict_conv_layer(ic=INPUT_CHANNELS, oc=oc, ib=INPUT_BITS, wb=wb, dsp=0)
+                pool_lc, _ = predict_pool_layer(ib=ob, ic=oc, mode=0)
+            except (KeyError, ValueError):
+                continue
 
-        if conv_lc + pool_lc > LC_CAP:
-            continue
+            if conv_lc + pool_lc > LC_CAP:
+                continue
 
-        try:
-            cfg = _build_cfg([(oc, wb, 0)])
-        except (AssertionError, Exception):
-            continue
+            try:
+                cfg = _build_cfg([(oc, wb, ob, 0)])
+            except (AssertionError, Exception):
+                continue
 
-        results.append((conv_lc + pool_lc, cfg))
+            results.append((conv_lc + pool_lc, cfg))
 
     return sorted(results, key=lambda x: x[0])
 
 
 def _extend(
-    layers: list[tuple[int, int, int]],   # (oc, wb, dsp) per layer
+    layers: list[tuple[int, int, int, int]],   # (oc, wb, ob, dsp) per layer
     spatial: tuple[int, int],             # dims after the last pool in the current stack
     used_lc: int,
     used_ff: int,
@@ -165,35 +170,21 @@ def _extend(
     wb_range: range,
     out,
 ) -> list[tuple[int, NNConfig]]:
-    """
-    Recursively extend the current layer stack with one more conv block.
-
-    For each candidate (oc, wb), all valid DSP allocations are tried (descending,
-    so lower-LC allocations are found first). At each depth two termination paths
-    are tried before recursing:
-      1. conv + pool → classifier  (preferred)
-      2. conv (no pool) → classifier  (fallback if path 1 exceeds LC_CAP)
-    Recursion only follows path 1 (further layers require a pool).
-
-    Constraints: oc strictly greater than previous, wb >= previous wb, ob = wb.
-    All valid configs are written to out immediately for progress monitoring.
-    Deduplication on (oc, wb) architecture is done in generate_networks after collection.
-    """
     results = []
-    last_oc, last_wb, _ = layers[-1]
+    last_oc, _, last_ob, _ = layers[-1]
 
     for oc in [c for c in oc_anchors if grow_channels(c, last_oc)]:
-        # Constrain all subsequent layers to use exactly dsp=1 (to test routing penalty theory)
         dsp_options = [DSP_1_ONLY] if dsp_remaining >= 1 and 1 in valid_dsp_counts(oc) else []
-        for wb in [w for w in wb_range if grow_weight_bits(w, last_wb)]:
+        for ob in [w for w in wb_range if grow_weight_bits(w, last_ob)]:
+            wb = DSP_0_WB
             for dsp in dsp_options:
                 try:
-                    conv_lc, conv_ff = predict_conv_layer(ic=last_oc, oc=oc, ib=last_wb, wb=wb, dsp=dsp)
+                    conv_lc, conv_ff = predict_conv_layer(ic=last_oc, oc=oc, ib=last_ob, wb=wb, dsp=dsp)
                 except (KeyError, ValueError):
                     continue
 
-                new_layers          = layers + [(oc, wb, dsp)]
-                has_dsp             = any(d > 0 for _, _, d in new_layers)
+                new_layers          = layers + [(oc, wb, ob, dsp)]
+                has_dsp             = any(d > 0 for _, _, _, d in new_layers)
                 used_after_conv     = used_lc + conv_lc
                 used_ff_after_conv  = used_ff + conv_ff
                 if not _lc_ok(used_ff_after_conv, used_after_conv, has_dsp):
@@ -201,22 +192,19 @@ def _extend(
 
                 try:
                     class_lc, class_ff = predict_classifier_layer(
-                        tb=wb, ic=oc, cc=NUM_CLASSES, wb=CLASSIFIER_WB, dsp=CLASSIFIER_DSP
+                        tb=ob, ic=oc, cc=NUM_CLASSES, wb=CLASSIFIER_WB, dsp=CLASSIFIER_DSP
                     )
                 except (KeyError, ValueError, AssertionError, Exception):
                     class_lc, class_ff = None, None
 
                 try:
-                    pool_lc, pool_ff = predict_pool_layer(ib=tie_outbits_with_weightbits(wb), ic=oc, mode=0)
+                    pool_lc, pool_ff = predict_pool_layer(ib=ob, ic=oc, mode=0)
                 except (KeyError, ValueError):
                     continue
 
                 used_after_pool    = used_after_conv    + pool_lc
                 used_ff_after_pool = used_ff_after_conv + pool_ff
 
-                # Pool is only spatially valid when the post-conv dims fit the kernel.
-                # With padding=1 and kernel=3, post-conv width equals spatial width,
-                # so we need spatial >= POOL_KERNEL to avoid a 0-dim pool output.
                 can_pool = spatial[0] >= POOL_KERNEL and spatial[1] >= POOL_KERNEL
 
                 if class_lc is not None:
@@ -246,7 +234,6 @@ def _extend(
                                 except Exception:
                                     pass
                     else:
-                        # spatial too small to pool — connect conv directly to classifier
                         total_ff_nopool = used_ff_after_conv + _cff + overhead_ff
                         total_lc_nopool = used_after_conv    + class_lc + overhead_lc
                         if _lc_ok(total_ff_nopool, total_lc_nopool, has_dsp):
@@ -301,12 +288,13 @@ def generate_networks(
         base_cfg = NN_CFG
 
     global IMG_W, IMG_H, INPUT_BITS, INPUT_CHANNELS, NUM_CLASSES
-    IMG_W = base_cfg.input_dimensions.w
-    IMG_H = base_cfg.input_dimensions.h
-    INPUT_BITS = base_cfg.in_bits[0]
-    INPUT_CHANNELS = base_cfg.in_channels[0]
+    IMG_W = base_cfg.in_dims.width
+    IMG_H = base_cfg.in_dims.height
+    INPUT_BITS = base_cfg.layers[0].ConvLayer._in_bits
+    INPUT_CHANNELS = base_cfg.layers[0].ConvLayer._in_ch
     NUM_CLASSES = base_cfg.num_classes
 
+    assert IMG_W is not None and IMG_H is not None
     overhead_lc, overhead_ff = predict_overhead(
         uw=INPUT_BITS,
         pn=BUS_WIDTH // INPUT_BITS,
@@ -317,33 +305,34 @@ def generate_networks(
     all_results: list[tuple[int | float, NNConfig]] = []
 
     with open("/dev/null", "w") as null:
-        for oc0, wb0 in product(oc_anchors, wb_range):
-            # Constrain Layer 0 to ALWAYS use dsp=0
-            dsp_options = [0]
-            for dsp0 in dsp_options:
-                try:
-                    conv_lc, conv_ff = predict_conv_layer(
-                        ic=INPUT_CHANNELS, oc=oc0, ib=INPUT_BITS, wb=wb0, dsp=dsp0
-                    )
-                    pool_lc, pool_ff = predict_pool_layer(ib=tie_outbits_with_weightbits(wb0), ic=oc0, mode=0)
-                except (KeyError, ValueError):
-                    continue
+        for oc0, ob0 in product(oc_anchors, wb_range):
+            for wb0 in L0_DSP_0_WB:
+                # Constrain Layer 0 to ALWAYS use dsp=0
+                dsp_options = [0]
+                for dsp0 in dsp_options:
+                    try:
+                        conv_lc, conv_ff = predict_conv_layer(
+                            ic=INPUT_CHANNELS, oc=oc0, ib=INPUT_BITS, wb=wb0, dsp=dsp0
+                        )
+                        pool_lc, pool_ff = predict_pool_layer(ib=ob0, ic=oc0, mode=0)
+                    except (KeyError, ValueError):
+                        continue
 
-                base_lc  = conv_lc  + pool_lc
-                base_ff  = conv_ff  + pool_ff
-                has_dsp0 = dsp0 > 0
-                if not _lc_ok(base_ff, base_lc, has_dsp0):
-                    continue
+                    base_lc  = conv_lc  + pool_lc
+                    base_ff  = conv_ff  + pool_ff
+                    has_dsp0 = dsp0 > 0
+                    if not _lc_ok(base_ff, base_lc, has_dsp0):
+                        continue
 
-                dsp_remaining = DSP_CONV_MAX - dsp0
-                layers0 = [(oc0, wb0, dsp0)]
+                    dsp_remaining = DSP_CONV_MAX - dsp0
+                    layers0 = [(oc0, wb0, ob0, dsp0)]
 
-                try:
-                    class_lc, class_ff = predict_classifier_layer(
-                        tb=wb0, ic=oc0, cc=NUM_CLASSES, wb=CLASSIFIER_WB, dsp=CLASSIFIER_DSP
-                    )
-                except (KeyError, ValueError):
-                    class_lc, class_ff = None, None
+                    try:
+                        class_lc, class_ff = predict_classifier_layer(
+                            tb=ob0, ic=oc0, cc=NUM_CLASSES, wb=CLASSIFIER_WB, dsp=CLASSIFIER_DSP
+                        )
+                    except (KeyError, ValueError):
+                        class_lc, class_ff = None, None
 
                 if class_lc is not None:
                     _cff = class_ff or 0
@@ -398,7 +387,7 @@ def generate_networks(
 
 
 if __name__ == "__main__":
-    from nn.tasks.generate.plot import plot_networks, plot_accuracy
+    from nn.sweep.plot import plot_networks, plot_accuracy
     configs = generate_networks()
     print(f"\n{len(configs)} feasible networks (deduplicated)")
     plot_networks(configs)

@@ -10,8 +10,8 @@ from nn.sweep.generate import generate_networks
 
 RESULTS_PATH  = Path("profiling") / "nn_acc_pred" / "profiles" / "results.txt"
 
-IMG_W = NN_CFG.input_dimensions.w
-IMG_H = NN_CFG.input_dimensions.h
+IMG_W = NN_CFG.in_dims.width
+IMG_H = NN_CFG.in_dims.height
 PLOT_HTML     = Path("nn") / "sweep" / "networks_plot.html"
 ACCURACY_HTML = Path("nn") / "sweep" / "accuracy_plot.html"
 BITS_HTML     = Path("nn") / "sweep" / "bits_plot.html"
@@ -284,9 +284,140 @@ def plot_accuracy_by_bits(
     print(f"Bits plot saved → {out_html}  ({len(seqs)} sequences)")
 
 
+def plot_accuracy_by_bandwidth(
+    results_path: str = str(RESULTS_PATH),
+    out_html: str = str(Path("nn") / "sweep" / "bandwidth_plot.html"),
+) -> None:
+    """Scatter plot of total (channels * in_bits) vs float accuracy."""
+    records = _parse_results(results_path)
+    
+    first_in_bits = NN_CFG.layers[0].ConvLayer._in_bits if hasattr(NN_CFG, "layers") and len(NN_CFG.layers) > 0 else 1
+
+    # Calculate total channels * in_bits for each record and assign 10% acc to aborted
+    for r in records:
+        arch_str = r["arch"]
+        channels = [int(x) for x in re.findall(r'(\d+)ch', arch_str)]
+        bits = [int(x) for x in re.findall(r'(\d+)b', arch_str)]
+        
+        in_bits_list = [first_in_bits] + bits[:-1]
+        r["bandwidth"] = sum(c * b for c, b in zip(channels, in_bits_list))
+
+        if r["aborted"]:
+            r["plot_acc"] = 0.10
+        else:
+            r["plot_acc"] = r["float_acc"]
+
+    trained = [r for r in records if not r["aborted"]]
+    aborted = [r for r in records if r["aborted"]]
+
+    fig = go.Figure()
+    
+    if aborted:
+        fig.add_trace(go.Scatter(
+            x=[r["bandwidth"] for r in aborted],
+            y=[r["plot_acc"] for r in aborted],
+            mode="markers",
+            name="aborted",
+            text=[
+                f"<b>{r['bandwidth']} Bandwidth (Ch*Bits)</b><br>"
+                f"acc=10% (random chance)<br>{r['arch']}"
+                for r in aborted
+            ],
+            hoverinfo="text",
+            marker=dict(size=6, symbol="x", opacity=0.45, color="red"),
+        ))
+        
+    if trained:
+        fig.add_trace(go.Scatter(
+            x=[r["bandwidth"] for r in trained],
+            y=[r["plot_acc"] for r in trained],
+            mode="markers",
+            name="trained",
+            text=[
+                f"<b>{r['bandwidth']} Bandwidth (Ch*Bits)</b><br>"
+                f"float_acc={r['plot_acc']:.4f}<br>{r['arch']}"
+                for r in trained
+            ],
+            hoverinfo="text",
+            marker=dict(size=8, opacity=0.85, color="blue"),
+        ))
+
+    fig.update_layout(
+        title="Accuracy vs Total Bandwidth",
+        xaxis=dict(title="Σ (Output Channels × Input Bits)"),
+        yaxis=dict(title="Float Accuracy", tickformat=".0%"),
+        hovermode="closest",
+    )
+    fig.write_html(out_html)
+    print(f"Bandwidth plot saved → {out_html}")
+
+def plot_accuracy_by_ternary(
+    results_path: str = str(RESULTS_PATH),
+    out_html: str = str(Path("nn") / "sweep" / "ternary_plot.html"),
+) -> None:
+    """Scatter plot of % ternary datapath vs float accuracy."""
+    records = _parse_results(results_path)
+    
+    for r in records:
+        arch_str = r["arch"]
+        bits = [int(x) for x in re.findall(r'(\d+)b', arch_str)]
+        
+        r["pct_ternary"] = sum(1 for b in bits if b == 2) / len(bits)
+
+        if r["aborted"]:
+            r["plot_acc"] = 0.10
+        else:
+            r["plot_acc"] = r["float_acc"]
+
+    trained = [r for r in records if not r["aborted"]]
+    aborted = [r for r in records if r["aborted"]]
+
+    fig = go.Figure()
+    
+    if aborted:
+        fig.add_trace(go.Scatter(
+            x=[r["pct_ternary"] for r in aborted],
+            y=[r["plot_acc"] for r in aborted],
+            mode="markers",
+            name="aborted",
+            text=[
+                f"<b>{r['pct_ternary']:.1%} Ternary Layers</b><br>"
+                f"acc=10% (random chance)<br>{r['arch']}"
+                for r in aborted
+            ],
+            hoverinfo="text",
+            marker=dict(size=6, symbol="x", opacity=0.45, color="red"),
+        ))
+        
+    if trained:
+        fig.add_trace(go.Scatter(
+            x=[r["pct_ternary"] for r in trained],
+            y=[r["plot_acc"] for r in trained],
+            mode="markers",
+            name="trained",
+            text=[
+                f"<b>{r['pct_ternary']:.1%} Ternary Layers</b><br>"
+                f"float_acc={r['plot_acc']:.4f}<br>{r['arch']}"
+                for r in trained
+            ],
+            hoverinfo="text",
+            marker=dict(size=8, opacity=0.85, color="blue"),
+        ))
+
+    fig.update_layout(
+        title="Accuracy vs % Ternary Datapath",
+        xaxis=dict(title="% of Feature Layers using 2-bit Output", tickformat=".0%"),
+        yaxis=dict(title="Float Accuracy", tickformat=".0%"),
+        hovermode="closest",
+    )
+    fig.write_html(out_html)
+    print(f"Ternary plot saved → {out_html}")
+
 if __name__ == "__main__":
-    from nn.tasks.generate.generate import generate_networks
+    from nn.sweep.generate import generate_networks
     configs = generate_networks()
     plot_networks(configs)
     plot_accuracy()
     plot_accuracy_by_bits()
+    plot_accuracy_by_bandwidth()
+    plot_accuracy_by_ternary()

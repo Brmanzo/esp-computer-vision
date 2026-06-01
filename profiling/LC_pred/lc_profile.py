@@ -29,7 +29,7 @@ _B: float = 0.0
 _R2: float = 0.0
 
 
-def _load(path: Path = Path(__file__).parent / "profiles/interconnect_coeffs.csv") -> None:
+def _load(path: Path = Path(__file__).parent / "profiles/lc_coeffs.csv") -> None:
     global _A, _B, _R2
     with open(path, newline="") as f:
         for row in csv.DictReader(f):
