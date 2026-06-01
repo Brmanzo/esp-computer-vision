@@ -9,8 +9,7 @@ from nn.tasks.hand_gesture.hand_gesture import get_hand_gesture_cfg, GESTURE_CLA
 from nn.tasks.hand_gesture.preprocess   import prepare_data as _prepare_data, get_transforms as _get_transforms
 from nn.tasks.mnist.mnist      import get_nn_cfg as _get_mnist_cfg, MNIST_NET_PATH, MNIST_CLASSES
 from nn.tasks.mnist.preprocess import prepare_mnist_data as _prepare_mnist_data, get_transforms as _get_mnist_transforms
-from nn.tasks.generate.generate import GENERATE_NET_PATHS
-
+from nn.sweep.generate import GENERATE_NET_PATHS
 
 # Default paths matching the training pipeline
 DATAPATH = Path("nn") / "data"
@@ -18,29 +17,30 @@ ROMPATH  = DATAPATH / "roms" / "hex"
 
 CURRENT_TASK = "mnist"  # "mnist" or "hand_gesture"
 
+# To load a generated network from the sweep, set SWEEP_IDX to its index (e.g., 308)
+# To use the default custom architecture for the CURRENT_TASK, set SWEEP_IDX to None
+SWEEP_IDX = 308
+
 if CURRENT_TASK == "hand_gesture":
     # Hand Gesture Task
-    NET_PATH       = GESTURE_NET_PATH
     CLASSES        = GESTURE_CLASSES
-    NN_CFG         = get_hand_gesture_cfg()
     prepare_data   = _prepare_data
     get_transforms = _get_transforms
+    _BASE_CFG      = get_hand_gesture_cfg()
+    _DEFAULT_PATH  = GESTURE_NET_PATH
 elif CURRENT_TASK == "mnist":
     # MNIST Task
     CLASSES        = MNIST_CLASSES
     prepare_data   = _prepare_mnist_data
     get_transforms = _get_mnist_transforms
+    _BASE_CFG      = _get_mnist_cfg()
+    _DEFAULT_PATH  = MNIST_NET_PATH
 
-    # To load a generated network from the sweep, set SWEEP_IDX to its index (e.g., 30)
-    # To load a generated network from the sweep, set SWEEP_IDX to its index (e.g., 30)
-    # To use the default MNIST architecture, set SWEEP_IDX to None
-    SWEEP_IDX = 308
-
-    if SWEEP_IDX is not None:
-        from nn.tasks.generate.generate import generate_networks
-        configs = generate_networks()
-        NN_CFG = configs[SWEEP_IDX][1]
-        NET_PATH = Path("nn") / "tasks" / "generate" / "checkpoints" / f"network_{SWEEP_IDX:04d}.pth"
-    else:
-        NN_CFG   = _get_mnist_cfg()
-        NET_PATH = MNIST_NET_PATH
+if SWEEP_IDX is not None:
+    from nn.sweep.generate import generate_networks
+    configs = generate_networks(_BASE_CFG)
+    NN_CFG = configs[SWEEP_IDX][1]
+    NET_PATH = GENERATE_NET_PATHS / f"network_{SWEEP_IDX:04d}.pth"
+else:
+    NN_CFG   = _BASE_CFG
+    NET_PATH = _DEFAULT_PATH

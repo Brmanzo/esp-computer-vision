@@ -68,7 +68,7 @@ class QuantizeWeight(torch.autograd.Function):
         max_abs = w.abs().max()
         raw_scale = max_abs / qmax if max_abs > 0 else 1.0
         # Force scale to a power of two to match hardware shifts
-        scale = 2.0 ** torch.round(torch.log2(raw_scale))
+        scale = 2.0 ** torch.round(torch.log2(torch.as_tensor(raw_scale, device=w.device, dtype=w.dtype)))
 
         # Q(x; s, bits) = s * clip(round(x/s), -2^(bits-1), 2^(bits-1)-1)
         q   = torch.round(w / scale)
@@ -147,7 +147,8 @@ class QuantConv2d(nn.Conv2d):
             max_abs = folded_w.abs().max()
             raw_scale = max_abs / qmax if max_abs > 0.0 else 1.0
             # Force scale to a power of two to match hardware shifts
-            w_scale = 2.0 ** torch.round(torch.log2(raw_scale))
+            raw_scale_t = torch.as_tensor(raw_scale, device=folded_w.device, dtype=folded_w.dtype)
+            w_scale = 2.0 ** torch.round(torch.log2(raw_scale_t))
 
             # Quantize weights
             w_q = cast(torch.Tensor, QuantizeWeight.apply(folded_w, self._weight_bits))
@@ -183,6 +184,8 @@ class QuantizeActivationSTE(torch.autograd.Function):
             if not learnable:
                 scale = 2.0 ** shift
             else:
+                if clip_val is None:
+                    raise ValueError("clip_val must be provided when bits==2 and learnable=True")
                 raw_clip = clip_val.abs().clamp(min=1e-4)
                 raw_scale = raw_clip / qmax
                 pow2_scale = 2.0 ** torch.round(torch.log2(raw_scale))

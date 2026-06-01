@@ -5,11 +5,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from nn.config  import NNConfig
 from nn.globals import NN_CFG
 
-from profiling.conv_layer.conv_profile                    import predict_conv_layer
-from profiling.pool_layer.pool_profile                    import predict_pool_layer
-from profiling.classifier_layer.classifier_profile        import predict_classifier_layer
-from profiling.overhead.overhead_profile                  import predict_overhead
-from profiling.overhead.interconnect.interconnect_profile import predict_lc, FF_CAP   
+from profiling.LUT4_FF_pred.conv_layer.conv_profile             import predict_conv_layer
+from profiling.LUT4_FF_pred.pool_layer.pool_profile             import predict_pool_layer
+from profiling.LUT4_FF_pred.classifier_layer.classifier_profile import predict_classifier_layer
+from profiling.LUT4_FF_pred.overhead.overhead_profile           import predict_overhead
+from profiling.LC_pred.lc_profile                               import predict_lc, FF_CAP   
 
 def profile_model(cfg: NNConfig):
     LUT4, FF = 0, 0

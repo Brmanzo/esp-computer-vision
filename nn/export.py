@@ -94,7 +94,7 @@ def get_hardware_weights(fused_layer: QuantConv2d, previous_act_scale: float = 1
 
         max_abs = folded_w.abs().max()
         raw_scale = max_abs / qmax if max_abs > 0 else 1.0
-        w_scale = 2.0 ** torch.round(torch.log2(raw_scale))
+        w_scale = 2.0 ** torch.round(torch.log2(torch.as_tensor(raw_scale, device=folded_w.device)))
 
         q_weights = torch.round(folded_w / w_scale)
         q_weights = torch.clip(q_weights, qmin, qmax)

@@ -124,10 +124,8 @@ wire [0:0] uart_tx;
     ,.BusBits    (8)
     ,.InBits     (1)
     ,.FileName_0    ("nn/data/roms/hex/layer_0_weights.hex")
-    ,.FileName_1    ("nn/data/roms/hex/layer_1_weights_lo.hex")
-    ,.FileName_1_hi ("nn/data/roms/hex/layer_1_weights_hi.hex")
-    ,.FileName_2    ("nn/data/roms/hex/layer_2_weights_lo.hex")
-    ,.FileName_2_hi ("nn/data/roms/hex/layer_2_weights_hi.hex")
+    ,.FileName_1    ("nn/data/roms/hex/layer_1_weights.hex")
+    ,.FileName_2    ("nn/data/roms/hex/layer_2_weights.hex")
     ,.FileName_3    ("nn/data/roms/hex/layer_3_weights.hex")
   ) uart_cnn_inst (
      .clk_i      (clk_12mhz_o)
