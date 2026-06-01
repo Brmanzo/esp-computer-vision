@@ -18,10 +18,12 @@ Run from repo root:
 """
 
 import argparse
+import math
 import os
 import re
 import signal
 import subprocess
+import statistics
 from pathlib import Path
 
 from nn.config  import NNConfig
@@ -115,23 +117,26 @@ def sweep(start_from: int = 0) -> None:
     aborted = _load_aborted(TRAIN_RESULTS_PATH)
     print(f"\n{total} networks to sweep ({len(aborted)} aborted in results.txt, starting from #{start_from})\n")
 
+    lc_errors = []
+
     _HEX_DIR.mkdir(parents=True, exist_ok=True)
 
     HDR = (f"{'idx':>4}  {'pred_lut4':>9}  {'act_lut4':>8}  {'lut4_err':>8}  "
-           f"{'pred_ff':>7}  {'act_ff':>6}  {'ff_err':>7}  {'act_lc':>6}  "
+           f"{'pred_ff':>7}  {'act_ff':>6}  {'ff_err':>7}  "
+           f"{'pred_lc':>7}  {'act_lc':>6}  {'lc_err':>7}  "
            f"{'status':<16}  arch\n")
 
     file_mode = "a" if start_from > 0 else "w"
     with open(RESULTS_PATH, file_mode, buffering=1) as f:
         if start_from == 0:
             f.write(HDR)
-            f.write("─" * 160 + "\n")
+            f.write("─" * 180 + "\n")
 
-        for i, (pred_lc, cfg) in enumerate(configs):
+        for i, (pred_lc_gen, cfg) in enumerate(configs):
             if i < start_from:
                 continue
 
-            header = _fmt(pred_lc, cfg)
+            header = _fmt(pred_lc_gen, cfg)
             print(f"\n[{i:3d}/{total-1}] {header}", flush=True)
 
             # ── skip conditions ──────────────────────────────────────────────
@@ -146,16 +151,16 @@ def sweep(start_from: int = 0) -> None:
                 _write_skip(f, i, cfg, "no_ckpt", header)
                 continue
 
-            # ── compute predicted LUT4 / FF ──────────────────────────────────
+            # ── compute predicted LUT4 / FF / LC ─────────────────────────────
             try:
-                pred_lut4, pred_ff = profile_model(cfg)
+                pred_lut4, pred_ff, pred_lc = profile_model(cfg)
             except Exception as e:
                 print(f"  [warn] prediction failed: {e}", flush=True)
-                pred_lut4, pred_ff = int(pred_lc), 0
+                pred_lut4, pred_ff, pred_lc = int(pred_lc_gen), 0, int(pred_lc_gen)
 
-            if abs(pred_lut4 - pred_lc) > 1:
-                print(f"  [warn] profile_model LUT4={pred_lut4} differs from generate pred_lc={int(pred_lc)} "
-                      f"(Δ={pred_lut4 - int(pred_lc):+.1f}) — prediction mismatch", flush=True)
+            if abs(pred_lc - pred_lc_gen) > 1:
+                print(f"  [warn] profile_model LC={pred_lc} differs from generate pred_lc={int(pred_lc_gen)} "
+                      f"(Δ={pred_lc - int(pred_lc_gen):+.1f}) — prediction mismatch", flush=True)
 
             # ── 1. export ────────────────────────────────────────────────────
             print("  → export ...", flush=True)
@@ -164,7 +169,7 @@ def sweep(start_from: int = 0) -> None:
                 export_csv_to_hex(_CSV_PATH, _VH_PATH, _HEX_DIR, cfg)
             except Exception as e:
                 print(f"  [error] export: {e}", flush=True)
-                _write_row(f, i, pred_lut4, None, pred_ff, None, None, "export_err", header)
+                _write_row(f, i, pred_lut4, None, pred_ff, None, pred_lc, None, "export_err", header)
                 continue
 
             # ── 2. verilog ───────────────────────────────────────────────────
@@ -173,7 +178,7 @@ def sweep(start_from: int = 0) -> None:
                 render_verilog(cfg)
             except Exception as e:
                 print(f"  [error] verilog: {e}", flush=True)
-                _write_row(f, i, pred_lut4, None, pred_ff, None, None, "verilog_err", header)
+                _write_row(f, i, pred_lut4, None, pred_ff, None, pred_lc, None, "verilog_err", header)
                 continue
 
             # ── 3. bitstream ─────────────────────────────────────────────────
@@ -182,7 +187,7 @@ def sweep(start_from: int = 0) -> None:
                 r = _make("bitstream", timeout=60, ESP=0)
             except subprocess.TimeoutExpired:
                 print("  [error] timed out after 60s — nextpnr hung", flush=True)
-                _write_row(f, i, pred_lut4, None, pred_ff, None, None, "timeout", header)
+                _write_row(f, i, pred_lut4, None, pred_ff, None, pred_lc, None, "timeout", header)
                 continue
             if r.returncode != 0:
                 combined = r.stdout + r.stderr
@@ -196,7 +201,7 @@ def sweep(start_from: int = 0) -> None:
                 tail = combined[-600:].strip()
                 if tail:
                     print(f"  {tail}", flush=True)
-                _write_row(f, i, pred_lut4, None, pred_ff, None, None, status, header)
+                _write_row(f, i, pred_lut4, None, pred_ff, None, pred_lc, None, status, header)
                 continue
 
             # ── 4. actual counts ─────────────────────────────────────────────
@@ -209,14 +214,31 @@ def sweep(start_from: int = 0) -> None:
             over_cap = actual_lc is not None and actual_lc > LC_CAP
             status   = "lc_cap_exceeded" if over_cap else "ok"
 
+            if actual_lc is not None and actual_lc > 0:
+                lc_errors.append(100 * (actual_lc - pred_lc) / actual_lc)
+
             print(
                 f"  → lut4: pred={pred_lut4}  act={act_lut4}  err={_err_pct(act_lut4, pred_lut4).strip()}\n"
                 f"     ff:  pred={pred_ff}  act={act_ff}  err={_err_pct(act_ff, pred_ff).strip()}\n"
-                f"     lc:  act={actual_lc}"
+                f"     lc:  pred={pred_lc}  act={actual_lc}  err={_err_pct(actual_lc, pred_lc).strip()}"
                 + ("  ← EXCEEDS CAP" if over_cap else ""),
                 flush=True,
             )
-            _write_row(f, i, pred_lut4, act_lut4, pred_ff, act_ff, actual_lc, status, header)
+            _write_row(f, i, pred_lut4, act_lut4, pred_ff, act_ff, pred_lc, actual_lc, status, header)
+
+    if lc_errors:
+        avg_err = statistics.mean(lc_errors)
+        std_err = statistics.stdev(lc_errors) if len(lc_errors) > 1 else 0.0
+        min_err = min(lc_errors)
+        max_err = max(lc_errors)
+        
+        summary_str = (
+            f"{'─' * 180}\n"
+            f"LC Error Stats:  Min: {min_err:+.1f}%  |  Max: {max_err:+.1f}%  |  Avg: {avg_err:+.1f}%  |  StdDev: {std_err:.1f}%\n"
+        )
+        with open(RESULTS_PATH, "a") as f:
+            f.write(summary_str)
+        print("\n" + summary_str.strip())
 
     print(f"\nResults written to {RESULTS_PATH}")
 
@@ -225,17 +247,17 @@ def sweep(start_from: int = 0) -> None:
 
 def _write_skip(f, i: int, cfg: NNConfig, status: str, header: str) -> None:
     try:
-        pred_lut4, pred_ff = profile_model(cfg)
+        pred_lut4, pred_ff, pred_lc = profile_model(cfg)
     except Exception:
-        pred_lut4, pred_ff = 0, 0
-    _write_row(f, i, pred_lut4, None, pred_ff, None, None, status, header)
+        pred_lut4, pred_ff, pred_lc = 0, 0, 0
+    _write_row(f, i, pred_lut4, None, pred_ff, None, pred_lc, None, status, header)
 
 
 def _write_row(
     f, i: int,
     pred_lut4: float | int, act_lut4: int | None,
     pred_ff: float | int,   act_ff:   int | None,
-    act_lc:   int | None,
+    pred_lc: float | int,   act_lc:   int | None,
     status: str, header: str,
 ) -> None:
     def _fmt_int(v: int | None) -> str:
@@ -244,7 +266,8 @@ def _write_row(
     f.write(
         f"{i:4d}  {pred_lut4:>9}  {_fmt_int(act_lut4)}  {_err_pct(act_lut4, pred_lut4):>8}  "
         f"{pred_ff:>7}  {_fmt_int(act_ff):>6}  {_err_pct(act_ff, pred_ff):>7}  "
-        f"{_fmt_int(act_lc):>6}  {status:<16}  {header}\n"
+        f"{math.ceil(pred_lc):>7}  {_fmt_int(act_lc):>6}  {_err_pct(act_lc, pred_lc):>7}  "
+        f"{status:<16}  {header}\n"
     )
 
 

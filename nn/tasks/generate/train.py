@@ -150,8 +150,8 @@ def _train_one(
         print(f"    e{epoch:02d}{tag}  acc={acc:.4f}{saved}", flush=True)
 
         if is_abort_epoch:
-            if acc <= RANDOM_CHANCE * 1.5:
-                print(f"    → aborted (acc={acc:.4f} ≤ {RANDOM_CHANCE:.2f})", flush=True)
+            if acc <= RANDOM_CHANCE * 1.4:
+                print(f"    → aborted (acc={acc:.4f} ≤ {(RANDOM_CHANCE * 1.4):.2f})", flush=True)
                 return None
             print(f"    → survived, best_acc tracking starts at epoch {tracking_epoch}", flush=True)
 
@@ -202,12 +202,14 @@ def sweep(
     out_path: Path = RESULTS_PATH,
     hw_trials: int = 100,
     start_from: int = 0,
+    indices: list[int] | None = None,
 ) -> None:
     """Run the training sweep.
 
     start_from: skip networks with index < this value and append to an existing
                 results file rather than overwriting it. Use this to resume after
                 an interrupted run (e.g. start_from=32 to continue after network 31).
+    indices: train only a specific list of indices. Appends to existing results.
     """
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device}")
@@ -222,16 +224,22 @@ def sweep(
 
     configs = generate_networks()
     total   = len(configs)
-    print(f"\n{total} networks to evaluate (starting from #{start_from})\n")
+    
+    if indices is not None:
+        print(f"\nEvaluating {len(indices)} specific networks out of {total}\n")
+    else:
+        print(f"\n{total} networks to evaluate (starting from #{start_from})\n")
 
-    file_mode = "a" if start_from > 0 else "w"
+    file_mode = "a" if (start_from > 0 or indices is not None) else "w"
     with open(out_path, file_mode, buffering=1) as f:
-        if start_from == 0:
+        if start_from == 0 and indices is None:
             f.write(f"{'idx':>4}  {'float_acc':>9}  {'hw_acc':>6}  arch\n")
             f.write("─" * 110 + "\n")
 
         for i, (lc, cfg) in enumerate(configs):
-            if i < start_from:
+            if indices is not None and i not in indices:
+                continue
+            if indices is None and i < start_from:
                 continue
 
             header = _fmt(lc, cfg)
@@ -258,6 +266,13 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--start-from", type=int, default=0,
                     help="Resume from this network index (appends to existing results.txt)")
+    ap.add_argument("--indices", type=str, default=None,
+                    help="Comma-separated list of network indices to train (e.g. 0,5,10). Appends to results.txt")
     ap.add_argument("--hw-trials", type=int, default=100)
     args = ap.parse_args()
-    sweep(start_from=args.start_from, hw_trials=args.hw_trials)
+    
+    indices_list = None
+    if args.indices:
+        indices_list = [int(x.strip()) for x in args.indices.split(",")]
+
+    sweep(start_from=args.start_from, hw_trials=args.hw_trials, indices=indices_list)
