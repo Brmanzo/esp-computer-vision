@@ -19,7 +19,7 @@ CURRENT_TASK = "mnist"  # "mnist" or "hand_gesture"
 
 # To load a generated network from the sweep, set SWEEP_IDX to its index (e.g., 308)
 # To use the default custom architecture for the CURRENT_TASK, set SWEEP_IDX to None
-SWEEP_IDX = 308
+SWEEP_IDX = 962
 
 if CURRENT_TASK == "hand_gesture":
     # Hand Gesture Task

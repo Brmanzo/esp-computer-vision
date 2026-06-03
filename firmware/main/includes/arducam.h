@@ -57,8 +57,8 @@ struct camera_operate{
     void  (*cameraInit) (void);
     void (*setJpegSize)(uint8_t size);
 };
-#define QVGA_WIDTH   320
-#define QVGA_HEIGHT  240
+#define QVGA_WIDTH   160
+#define QVGA_HEIGHT  120
 #define res_160x120 		0	//160x120
 #define res_176x144 		1	//176x144
 #define res_320x240 		2	//320x240

@@ -113,7 +113,7 @@ bool singleCapture(void) {
 
   static uint8_t capture_num = 0;
   static uint8_t adaptive_th = 0;
-  uint8_t downsample_factor = 1;
+  uint8_t downsample_factor = 4; // Produces a 40x30 image from QVGA (160x120)
 
   const uint16_t W = QVGA_WIDTH / downsample_factor;
   const uint16_t H = QVGA_HEIGHT / downsample_factor;
@@ -129,7 +129,12 @@ bool singleCapture(void) {
   arducam_reset_fifo();
   arducam_start_capture();
   capture_num++;
-  // Poll Arducam and stop capture when done
+  // If the external button (GPIO_RECALIBRATE) is pressed, force a recalibration
+  
+  if (gpio_get_level(GPIO_RECALIBRATE) == 1) {
+    capture_num = RECALIBRATE_INTERVAL;
+  }
+
   const TickType_t t0 = xTaskGetTickCount();
   while (!spi_get_bit(ARDUCHIP_TRIG, CAP_DONE_MASK)) {
     // Spin without sleep for precision, or very short sleep

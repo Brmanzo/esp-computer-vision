@@ -6,7 +6,7 @@ from nn.config import NNConfig, InputDimensions
 from nn.quantize import QSchedule
 
 
-def get_nn_cfg(num_classes: int = 10, img_h: int = 28, img_w: int = 28) -> NNConfig:
+def get_nn_cfg(num_classes: int = 10, img_h: int = 30, img_w: int = 40) -> NNConfig:
     '''Returns the hardware-aware NNConfig for MNIST digit classification.'''
     return NNConfig(
         input_dimensions = InputDimensions(img_w, img_h),

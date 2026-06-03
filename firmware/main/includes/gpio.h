@@ -4,7 +4,7 @@
 // Free                     GPIO_NUM_0
 #define UART_RTS_PIN        GPIO_NUM_1
 #define GPIO_RESET_FPGA     GPIO_NUM_2
-#define GPIO_BYPASS_FPGA    GPIO_NUM_3
+#define GPIO_RECALIBRATE    GPIO_NUM_3
 
 #define PIN_SCK             GPIO_NUM_4
 #define PIN_MISO            GPIO_NUM_5

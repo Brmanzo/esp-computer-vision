@@ -72,7 +72,7 @@ void ov2640Init(void){
     i2c_write_regs(OV2640_YUV422);
 
     // Load Resolution
-    i2c_write_regs(OV2640_320x240_JPEG);
+    i2c_write_regs(OV2640_160x120_JPEG);
 
     // Force DSP to Output RAW YUV422 (Y first)
     i2c_write_reg(0xFF, 0x00); // Select Bank 0 (DSP)
@@ -260,8 +260,8 @@ esp_err_t arducam_read_and_pack_stream(uint8_t *out, size_t out_cap, uint8_t* ad
                 // YUV422: Bytes 0,2,4... are Y (Luma)
                 if (global_byte_idx % 2 == 0) {
                     
-                    // DOWNSCALE LOGIC: Check scale using simple counters
-                    if ((curr_row % scale == 0) && (curr_col % scale == 0)) {
+                    // DOWNSCALE LOGIC: Sample the center pixel of the block instead of the top-left
+                    if ((curr_row % scale == (scale / 2)) && (curr_col % scale == (scale / 2))) {
                         acc |= (luma_to_bit(tmp[i], *adaptive_th) << bitpos);
                         if (++bitpos == 8) {
                             if (out_i < total_len) out[out_i++] = acc;

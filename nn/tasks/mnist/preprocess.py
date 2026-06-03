@@ -11,8 +11,10 @@ from torchvision            import datasets, transforms
 def get_transforms(img_h: int, img_w: int) -> Tuple[Callable, Callable]:
     '''Returns train and test transforms for MNIST mapped to HW domain {-1.0, 1.0}.'''
     train_tfm = transforms.Compose([
-        transforms.Resize((img_h, img_w)),
-        transforms.RandomRotation(15, fill=0),  # 0 is black in PIL
+        # Pad 28x28 MNIST image to the target dimensions (e.g. 40x30)
+        # Pad takes (left/right, top/bottom). We fill with 0 (MNIST background).
+        transforms.Pad(((img_w - 28) // 2, (img_h - 28) // 2), fill=0),
+        transforms.RandomRotation(15, fill=0),
         transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), fill=0),
         transforms.ToTensor(), # Converts to [0.0, 1.0]
         # FIX: Map binary {0, 1} to {-1.0, 1.0} to match the FPGA exactly
@@ -20,7 +22,7 @@ def get_transforms(img_h: int, img_w: int) -> Tuple[Callable, Callable]:
     ])
 
     test_tfm = transforms.Compose([
-        transforms.Resize((img_h, img_w)),
+        transforms.Pad(((img_w - 28) // 2, (img_h - 28) // 2), fill=0),
         transforms.ToTensor(),
         # FIX: Map binary {0, 1} to {-1.0, 1.0} to match the FPGA exactly
         transforms.Lambda(lambda x: (x > 0.5).float() * 2.0 - 1.0),

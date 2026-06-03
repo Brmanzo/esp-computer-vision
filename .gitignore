@@ -21,6 +21,7 @@ __pycache__/
 !sim/unit_testing/*/*.csv
 !sim/integration_testing/*/*.csv
 *.png
+nn/sweep/*.html
 
 # FPGA / EDA outputs
 *.json

@@ -55,6 +55,7 @@ static esp_err_t frame_handler(httpd_req_t *req)
     if (!s_frame_available || s_frame_buf == NULL || s_frame_len == 0) {
         xSemaphoreGive(s_frame_mux);
         httpd_resp_send_err(req, 503, "No frame ready");
+        return ESP_FAIL;
     }
 
     // Cache frame in case freed while sending.
