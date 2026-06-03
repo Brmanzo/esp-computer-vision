@@ -17,12 +17,12 @@ void gpio_init(void) {
 
     gpio_config(&io);
 
-    // Init Recalibrate Button (Boot Button)
+    // Init Buttons
     gpio_config_t btn_io = {
-        .pin_bit_mask = 1ULL << GPIO_RECALIBRATE,
+        .pin_bit_mask = (1ULL << GPIO_PUSH_BTN) | (1ULL << GPIO_BOOT_BTN),
         .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_ENABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
     gpio_config(&btn_io);

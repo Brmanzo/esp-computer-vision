@@ -30,7 +30,7 @@ enum packet_contents {
 };
 
 void encapsulate(uint8_t *packet, uint16_t packet_len, char *mode, uint16_t w,
-                 uint16_t h, uint8_t decision) {
+                 uint16_t h, uint8_t decision, uint8_t threshold) {
   if (strcmp(mode, "header") == 0) {
     packet[HEADER_START_H] = 0xFF;
     packet[HEADER_START_L] = 0x01;
@@ -44,9 +44,10 @@ void encapsulate(uint8_t *packet, uint16_t packet_len, char *mode, uint16_t w,
     packet[PACKET_LEN_H] = (packet_len) >> 8;
     packet[PACKET_LEN_L] = (packet_len) & 0xFF;
   } else if (strcmp(mode, "footer") == 0) {
-    packet[DATA_START + packet_len + 0] = (uint8_t)(decision & 0xFF);
-    packet[DATA_START + packet_len + 1] = 0xFF;
-    packet[DATA_START + packet_len + 2] = 0xFD;
+    packet[DATA_START + packet_len + 0] = decision;
+    packet[DATA_START + packet_len + 1] = threshold;
+    packet[DATA_START + packet_len + 2] = 0xFF;
+    packet[DATA_START + packet_len + 3] = 0xFD;
   }
 }
 
@@ -128,12 +129,30 @@ bool singleCapture(void) {
   arducam_set_capture();
   arducam_reset_fifo();
   arducam_start_capture();
-  capture_num++;
-  // If the external button (GPIO_RECALIBRATE) is pressed, force a recalibration
+
+  static bool last_push = false;
+  static bool last_boot = false;
   
-  if (gpio_get_level(GPIO_RECALIBRATE) == 1) {
-    capture_num = RECALIBRATE_INTERVAL;
+  bool push_pressed = (gpio_get_level(GPIO_PUSH_BTN) == 1);
+  bool boot_pressed = (gpio_get_level(GPIO_BOOT_BTN) == 0);
+
+  if (push_pressed && boot_pressed) {
+      capture_num = RECALIBRATE_INTERVAL;
+  } else {
+      if (push_pressed && !last_push) {
+          int new_th = adaptive_th + 5;
+          adaptive_th = (new_th > 255) ? 255 : new_th;
+          ESP_LOGI("cam", "Manual TH up: %u", adaptive_th);
+      }
+      if (boot_pressed && !last_boot) {
+          int new_th = adaptive_th - 5;
+          adaptive_th = (new_th < 0) ? 0 : new_th;
+          ESP_LOGI("cam", "Manual TH down: %u", adaptive_th);
+      }
   }
+  
+  last_push = push_pressed;
+  last_boot = boot_pressed;
 
   const TickType_t t0 = xTaskGetTickCount();
   while (!spi_get_bit(ARDUCHIP_TRIG, CAP_DONE_MASK)) {
@@ -223,7 +242,7 @@ bool singleCapture(void) {
   /* ---------------------- Package and Publish Frame ---------------------- */
   const size_t raw_bytes = tx_bytes - HEADER_SIZE;
   const size_t payload_bytes =
-      raw_bytes + 1; // Raw image data + 1 decision byte
+      raw_bytes + 2; // Raw image data + 1 decision byte + 1 threshold byte
 
   size_t packet_len =
       DATA_START + payload_bytes + 2; // header + payload + 0xFF + 0xFD
@@ -238,15 +257,15 @@ bool singleCapture(void) {
   uint8_t decision = gray_q_rx[0];
 
   // Encode Image dimensions in header
-  encapsulate(packet, 0, "header", W, H, 0);
+  encapsulate(packet, 0, "header", W, H, 0, 0);
   // Encode Data length in header
-  encapsulate(packet, (uint16_t)payload_bytes, "data len", W, H, 0);
+  encapsulate(packet, (uint16_t)payload_bytes, "data len", W, H, 0, 0);
 
   // Package raw 1bpp data within packet body (always send raw image data)
   memcpy(packet + DATA_START, gray_q_tx + HEADER_SIZE, raw_bytes);
 
-  // Encode footer with decision byte and packet end markers
-  encapsulate(packet, (uint16_t)raw_bytes, "footer", W, H, decision);
+  // Encode footer with decision byte, threshold byte, and packet end markers
+  encapsulate(packet, (uint16_t)raw_bytes, "footer", W, H, decision, adaptive_th);
 
   free(gray_q_tx);
   free(gray_q_rx);
