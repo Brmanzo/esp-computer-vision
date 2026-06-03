@@ -1,7 +1,7 @@
 %% accuracy_regression.m — Predict model accuracy
 %%
 %% This script fits a multiple linear regression model:
-%%   float_acc = C0 + C1 * channel_bits + C2 * pct_ternary
+%%   ln(float_acc) = C0 + C1 * pct_ternary + C2 * lc + C3 * depth + C4 * depth_squared
 %%
 
 csv_path = '../profiles/accuracy_features.csv';
@@ -9,13 +9,15 @@ csv_path = '../profiles/accuracy_features.csv';
 %% ── Read data ────────────────────────────────────────────────────────────────
 data = readtable(csv_path);
 
-channel_bits = data.channel_bits;
 pct_ternary = data.pct_ternary;
-acc = data.float_acc;
+lc = data.lc;
+depth = data.depth;
+depth_squared = depth .^ 2;
+acc = log(data.float_acc);
 
 %% ── Regression ───────────────────────────────────────────────────────────────
-% Predictors: [1, channel_bits, pct_ternary]
-X = [ones(length(acc), 1), channel_bits, pct_ternary];
+% Predictors: [1, pct_ternary, lc, depth, depth_squared]
+X = [ones(length(acc), 1), pct_ternary, lc, depth, depth_squared];
 y = acc;
 
 % Fit linear model
@@ -24,24 +26,26 @@ y = acc;
 C0 = b(1);
 C1 = b(2);
 C2 = b(3);
+C3 = b(4);
+C4 = b(5);
 R_squared = stats(1);
 F_stat = stats(2);
 p_value = stats(3);
 
 fprintf('\n=== Multiple Linear Regression Results ===\n');
-fprintf('Formula: float_acc = %.4f + %.4f * channel_bits + %.4f * pct_ternary\n', C0, C1, C2);
+fprintf('Formula: ln(float_acc) = %.4f + %.4f * pct_ternary + %.4f * lc + %.4f * depth + %.4f * depth^2\n', C0, C1, C2, C3, C4);
 fprintf('R-squared: %.4f\n', R_squared);
 fprintf('F-statistic: %.2f\n', F_stat);
 fprintf('p-value: %e\n\n', p_value);
 
 % Detailed summary
-mdl = fitlm([channel_bits, pct_ternary], y, 'PredictorVars', {'ChannelBits', 'PctTernary'}, 'ResponseVar', 'Accuracy');
+mdl = fitlm([pct_ternary, lc, depth, depth_squared], y, 'PredictorVars', {'PctTernary', 'LC', 'Depth', 'DepthSquared'}, 'ResponseVar', 'LogAccuracy');
 disp(mdl);
 
 %% ── Visualization ────────────────────────────────────────────────────────────
 figure;
-scatter3(channel_bits, pct_ternary, acc, 'filled');
-xlabel('Channel * Input Bits');
+scatter3(depth, pct_ternary, acc, 'filled');
+xlabel('Depth');
 ylabel('% Ternary Datapath');
 zlabel('Accuracy (float_acc)');
 title('Accuracy vs. Architecture');

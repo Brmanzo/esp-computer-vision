@@ -118,7 +118,7 @@ def plot_networks(
         yaxis=dict(title="FPS"),
         hovermode="closest",
     )
-    fig.write_html(out_html)
+    fig.write_html(out_html, include_plotlyjs='cdn')
     print(f"Plot saved → {out_html}")
 
 
@@ -135,12 +135,12 @@ def plot_accuracy(
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=[r["lc"] for r in aborted],
-        y=[r["hw_acc"] for r in aborted],
+        y=[r["float_acc"] for r in aborted],
         mode="markers",
         name="aborted",
         text=[
             f"<b>{r['lc']} LC  {r['fps']:.1f} fps</b>  [aborted]<br>"
-            f"hw_acc=0 (random chance)<br>{r['arch']}"
+            f"float_acc=0.10 (random chance)<br>{r['arch']}"
             for r in aborted
         ],
         hoverinfo="text",
@@ -152,12 +152,12 @@ def plot_accuracy(
     ))
     fig.add_trace(go.Scatter(
         x=[r["lc"] for r in trained],
-        y=[r["hw_acc"] for r in trained],
+        y=[r["float_acc"] for r in trained],
         mode="markers",
         name="trained",
         text=[
             f"<b>{r['lc']} LC  {r['fps']:.1f} fps</b><br>"
-            f"hw_acc={r['hw_acc']:.4f}  float_acc={r['float_acc']:.4f}<br>{r['arch']}"
+            f"float_acc={r['float_acc']:.4f}  hw_acc={r['hw_acc']:.4f}<br>{r['arch']}"
             for r in trained
         ],
         hoverinfo="text",
@@ -170,12 +170,12 @@ def plot_accuracy(
         ),
     ))
     fig.update_layout(
-        title="Trained Networks: LUT4 Utilization vs Hardware Accuracy",
-        xaxis=dict(title="LUT4 Utilization"),
-        yaxis=dict(title="Hardware Accuracy", tickformat=".0%"),
+        title="Trained Networks: LC Utilization vs Float Accuracy",
+        xaxis=dict(title="LC Utilization"),
+        yaxis=dict(title="Float Accuracy", tickformat=".0%"),
         hovermode="closest",
     )
-    fig.write_html(out_html)
+    fig.write_html(out_html, include_plotlyjs='cdn')
     print(f"Accuracy plot saved → {out_html}  ({len(trained)} trained, {len(aborted)} aborted)")
 
 
@@ -343,12 +343,12 @@ def plot_accuracy_by_bandwidth(
         ))
 
     fig.update_layout(
-        title="Accuracy vs Total Bandwidth",
-        xaxis=dict(title="Σ (Output Channels × Input Bits)"),
+        title="Accuracy vs Total Bandwidth (Log Scale)",
+        xaxis=dict(title="Σ (Output Channels × Input Bits)", type="log"),
         yaxis=dict(title="Float Accuracy", tickformat=".0%"),
         hovermode="closest",
     )
-    fig.write_html(out_html)
+    fig.write_html(out_html, include_plotlyjs='cdn')
     print(f"Bandwidth plot saved → {out_html}")
 
 def plot_accuracy_by_ternary(
@@ -410,8 +410,118 @@ def plot_accuracy_by_ternary(
         yaxis=dict(title="Float Accuracy", tickformat=".0%"),
         hovermode="closest",
     )
-    fig.write_html(out_html)
+    fig.write_html(out_html, include_plotlyjs='cdn')
     print(f"Ternary plot saved → {out_html}")
+
+def plot_lc_vs_fps(
+    results_path: str = str(RESULTS_PATH),
+    out_html: str = str(Path("nn") / "sweep" / "lc_vs_fps_plot.html"),
+) -> None:
+    """Scatter plot of LC utilization vs FPS."""
+    records = _parse_results(results_path)
+    
+    # Exclude aborted runs as they have 0 FPS, or maybe include them but colored differently.
+    # Actually, the user wants to see LC vs FPS. Aborted runs don't have valid FPS, so we should filter them out.
+    trained = [r for r in records if not r["aborted"]]
+
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=[r["lc"] for r in trained],
+        y=[r["fps"] for r in trained],
+        mode="markers",
+        name="trained",
+        text=[
+            f"<b>{r['lc']} LC  {r['fps']:.1f} fps</b><br>"
+            f"float_acc={r['float_acc']:.4f}<br>{r['arch']}"
+            for r in trained
+        ],
+        hoverinfo="text",
+        marker=dict(
+            size=8, opacity=0.85,
+            color=[r["float_acc"] for r in trained],
+            colorscale="Viridis",
+            colorbar=dict(title="Float Acc"),
+            showscale=True,
+        ),
+    ))
+
+    fig.update_layout(
+        title="Logic Cell Utilization vs FPS",
+        xaxis=dict(title="Logic Cell (LC) Utilization"),
+        yaxis=dict(title="Frames Per Second (FPS)"),
+        hovermode="closest",
+    )
+    fig.write_html(out_html, include_plotlyjs='cdn')
+    print(f"LC vs FPS plot saved → {out_html}")
+
+def plot_depth_vs_fps(
+    results_path: str = str(RESULTS_PATH),
+    out_html: str = str(Path("nn") / "sweep" / "depth_vs_fps_plot.html"),
+) -> None:
+    """Scatter plot of Network Depth vs FPS, with average accuracy trend."""
+    import re
+    from plotly.subplots import make_subplots
+    records = _parse_results(results_path)
+    
+    trained = [r for r in records if not r["aborted"]]
+    
+    depth_accs = {}
+    for r in trained:
+        arch_str = r["arch"]
+        channels = [int(x) for x in re.findall(r'(\d+)ch', arch_str)]
+        r["depth"] = len(channels)
+        depth_accs.setdefault(r["depth"], []).append(r["float_acc"])
+
+    # Calculate average accuracy per depth
+    depths = sorted(depth_accs.keys())
+    avg_accs = [sum(depth_accs[d])/len(depth_accs[d]) for d in depths]
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    
+    fig.add_trace(go.Scatter(
+        x=[r["depth"] for r in trained],
+        y=[r["fps"] for r in trained],
+        mode="markers",
+        name="Networks",
+        text=[
+            f"<b>Depth: {r['depth']} layers  {r['fps']:.1f} fps</b><br>"
+            f"float_acc={r['float_acc']:.4f}<br>{r['arch']}"
+            for r in trained
+        ],
+        hoverinfo="text",
+        marker=dict(
+            size=8, opacity=0.85,
+            color=[r["float_acc"] for r in trained],
+            colorscale="Viridis",
+            colorbar=dict(title="Float Acc", x=1.1),
+            showscale=True,
+        ),
+    ), secondary_y=False)
+
+    # Add trend line for average accuracy
+    fig.add_trace(go.Scatter(
+        x=depths,
+        y=avg_accs,
+        mode="lines+markers",
+        name="Avg Accuracy",
+        line=dict(color="red", width=3, dash="dash"),
+        marker=dict(size=10, symbol="diamond"),
+        text=[f"Avg Acc: {acc:.4f} at Depth {d}" for d, acc in zip(depths, avg_accs)],
+        hoverinfo="text"
+    ), secondary_y=True)
+
+    fig.update_layout(
+        title="Network Depth vs FPS (with Average Accuracy Trend)",
+        xaxis=dict(title="Network Depth (Number of Conv Layers)"),
+        hovermode="closest",
+    )
+    
+    fig.update_yaxes(title_text="Frames Per Second (FPS)", secondary_y=False)
+    fig.update_yaxes(title_text="Average Float Accuracy", tickformat=".0%", secondary_y=True)
+    
+    fig.write_html(out_html, include_plotlyjs='cdn')
+    print(f"Depth vs FPS plot saved → {out_html}")
 
 if __name__ == "__main__":
     from nn.sweep.generate import generate_networks
@@ -421,3 +531,5 @@ if __name__ == "__main__":
     plot_accuracy_by_bits()
     plot_accuracy_by_bandwidth()
     plot_accuracy_by_ternary()
+    plot_lc_vs_fps()
+    plot_depth_vs_fps()

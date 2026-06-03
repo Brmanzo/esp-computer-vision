@@ -20,9 +20,11 @@ def export_features():
         
         if float_acc_str == "aborted":
             float_acc = 0.10
+            lc = int(parts[2].lstrip("["))
         else:
             try:
                 float_acc = float(float_acc_str)
+                lc = int(parts[3].lstrip("["))
             except ValueError:
                 continue
             
@@ -56,10 +58,15 @@ def export_features():
         
         pct_ternary = sum(1 for b in bits if b == 2) / len(bits)
         
-        valid_data.append(f"{idx},{depth},{growth_rate:.4f},{total_channels},{final_conv_ib},{classifier_ib},{channel_bits},{pct_ternary:.4f},{float_acc:.4f}\n")
+        ternary_bandwidth = sum(c * b for c, b in zip(channels, in_bits_list) if b == 2)
+        pct_ternary_bw = ternary_bandwidth / channel_bits if channel_bits > 0 else 0
+        
+        bandwidth_density = channel_bits / depth
+        
+        valid_data.append(f"{idx},{depth},{growth_rate:.4f},{total_channels},{final_conv_ib},{classifier_ib},{channel_bits},{bandwidth_density:.4f},{pct_ternary:.4f},{pct_ternary_bw:.4f},{lc},{float_acc:.4f}\n")
         
     with open(CSV_PATH, "w", encoding="utf-8") as f:
-        f.write("idx,depth,growth_rate,total_channels,final_conv_ib,classifier_ib,channel_bits,pct_ternary,float_acc\n")
+        f.write("idx,depth,growth_rate,total_channels,final_conv_ib,classifier_ib,channel_bits,bandwidth_density,pct_ternary,pct_ternary_bw,lc,float_acc\n")
         f.writelines(valid_data)
         
     print(f"Exported {len(valid_data)} networks to {CSV_PATH}")
