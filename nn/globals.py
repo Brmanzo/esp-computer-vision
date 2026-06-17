@@ -37,9 +37,39 @@ elif CURRENT_TASK == "mnist":
     _DEFAULT_PATH  = MNIST_NET_PATH
 
 if SWEEP_IDX is not None:
-    from nn.sweep.generate import generate_networks
+    from nn.sweep.generate import generate_networks, _fmt
     configs = generate_networks(_BASE_CFG)
-    NN_CFG = configs[SWEEP_IDX][1]
+    
+    # Because LC predictions might slightly shift the sort order of generated configs,
+    # we must resolve the SWEEP_IDX against results.txt to guarantee we load the exact 
+    # architecture that corresponds to the saved .pth weights.
+    results_path = Path("profiling/nn_acc_pred/profiles/results.txt")
+    target_arch_str = None
+    
+    if results_path.exists():
+        with open(results_path, "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split()
+                if parts and parts[0] == str(SWEEP_IDX):
+                    if "]" in line:
+                        target_arch_str = line.split("]")[1].strip()
+                    break
+                    
+    if target_arch_str:
+        found_cfg = None
+        for lc, cfg in configs:
+            cfg_arch_str = _fmt(lc, cfg).split("]")[1].strip()
+            if cfg_arch_str.replace(" ", "") == target_arch_str.replace(" ", ""):
+                found_cfg = cfg
+                break
+                
+        if found_cfg is None:
+            raise ValueError(f"Could not find matching architecture for idx {SWEEP_IDX} ('{target_arch_str}') in current search space.")
+        NN_CFG = found_cfg
+    else:
+        # Fallback if results.txt is missing or idx not found
+        NN_CFG = configs[SWEEP_IDX][1]
+
     NET_PATH = GENERATE_NET_PATHS / f"network_{SWEEP_IDX:04d}.pth"
 else:
     NN_CFG   = _BASE_CFG

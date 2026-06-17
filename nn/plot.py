@@ -42,4 +42,4 @@ def plot_training(cfg: NNConfig, train_acc_history: List[float], test_acc_histor
     plt.savefig(plot_path)
     print(f"\nSaved training plot to {plot_path}")
 
-    plt.show()
+    # plt.show()

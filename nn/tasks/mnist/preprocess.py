@@ -15,7 +15,7 @@ def get_transforms(img_h: int, img_w: int) -> Tuple[Callable, Callable]:
         # Pad takes (left/right, top/bottom). We fill with 0 (MNIST background).
         transforms.Pad(((img_w - 28) // 2, (img_h - 28) // 2), fill=0),
         transforms.RandomRotation(15, fill=0),
-        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1), fill=0),
+        transforms.RandomAffine(degrees=0, translate=(0.15, 0.03), fill=0),
         transforms.ToTensor(), # Converts to [0.0, 1.0]
         # FIX: Map binary {0, 1} to {-1.0, 1.0} to match the FPGA exactly
         transforms.Lambda(lambda x: (x > 0.5).float() * 2.0 - 1.0),

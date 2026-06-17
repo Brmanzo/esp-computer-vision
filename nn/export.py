@@ -201,8 +201,11 @@ def export_nn_to_csv(nn_path: Path, config: NNConfig, output_csv: Path, random_w
                 qmax = (2 ** (module.bits - 1)) - 1
                 if module.clip_val is not None:
                     clip = float(module.clip_val.abs().item())
-                    current_act_scale = clip / qmax
-                    print(f"  Detected Activation Scaling: {current_act_scale:.6f} (clip={clip:.3f}, qmax={qmax})")
+                    raw_scale = clip / qmax
+                    # Match QuantizeActivationSTE exactly: must snap to power of 2!
+                    pow2_scale = 2.0 ** round(math.log2(max(raw_scale, 1e-4)))
+                    current_act_scale = pow2_scale
+                    print(f"  Detected Activation Scaling: {current_act_scale:.6f} (raw={raw_scale:.3f}, clip={clip:.3f}, qmax={qmax})")
                     if all_hardware_data:
                         all_hardware_data[-1]["layer_shift"] = 0
                 else:

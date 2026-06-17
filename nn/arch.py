@@ -8,6 +8,12 @@ from nn.config   import NNConfig, ConvConfig, PoolConfig
 from nn.globals  import NN_CFG, BRAM_CAP, DSP_CAP, CLK_FREQ_HZ
 from nn.quantize import QuantConv2d, QuantizeActivation, LearnedShiftQuantizer
 
+from profiling.LUT4_FF_pred.conv_layer.conv_profile             import predict_conv_layer
+from profiling.LUT4_FF_pred.pool_layer.pool_profile             import predict_pool_layer
+from profiling.LUT4_FF_pred.classifier_layer.classifier_profile import predict_classifier_layer
+from profiling.LUT4_FF_pred.overhead.overhead_profile           import predict_overhead
+from profiling.LC_pred.lc_profile                               import predict_lc
+
 class cnn(torch.nn.Module):
     '''Construct the Pytorch CNN based on provided NNConfig.'''
     def __init__(self, config: NNConfig):
@@ -211,6 +217,67 @@ class cnn(torch.nn.Module):
         used = DSP_CAP - dsp
         utilization = (used / DSP_CAP) * 100
         print(f"DSPs: {dsp} remaining / {DSP_CAP} total ({utilization:.1f}% utilization)")
+
+    def resource_breakdown(self) -> None:
+        print("\n--- PER-MODULE RESOURCE CONSUMPTION ---")
+        total_ff = 0
+        total_lut4 = 0
+        total_bram = 0
+        total_dsp = 0
+
+        for i, layer_cfg in enumerate(self.config.layers):
+            # Conv Layer
+            c = layer_cfg.ConvLayer
+            lut4, ff = predict_conv_layer(c._in_ch, c._out_ch, c._in_bits, c._q_schedule._q_min_bits, c._dsp_count)
+            bram = self.rams_per_layer_feature(c)
+            if c._dsp_count > 0:
+                addr_width = c._dsp_count * c._q_schedule._q_min_bits
+                rom_depth  = c._kernel_width**2 * c._in_ch * (c._out_ch // c._dsp_count)
+                bram += ((addr_width + 15) // 16) * ((rom_depth + 255) // 256)
+            dsp = min(c._dsp_count, c._out_ch) if c._dsp_count > 0 else 0
+            
+            print(f"Layer {i} Conv: {predict_lc(ff):>4.0f} LC (LUT4: {lut4:>4.0f}, FF: {ff:>4.0f}) | DSP: {dsp:>2} | BRAM: {bram:>2}")
+            total_ff += ff
+            total_lut4 += lut4
+            total_bram += bram
+            total_dsp += dsp
+
+            # Pool Layer
+            p = layer_cfg.PoolLayer
+            if p is not None:
+                lut4, ff = predict_pool_layer(p._in_bits, p._in_ch, p._mode)
+                bram = self.rams_per_layer_feature(p)
+                print(f"Layer {i} Pool: {predict_lc(ff):>4.0f} LC (LUT4: {lut4:>4.0f}, FF: {ff:>4.0f}) | DSP:  0 | BRAM: {bram:>2}")
+                total_ff += ff
+                total_lut4 += lut4
+                total_bram += bram
+
+        # Classifier
+        c_cfg = self.config.classifier_config
+        lut4, ff = predict_classifier_layer(c_cfg._in_bits, c_cfg._in_ch, c_cfg._num_classes, c_cfg._q_schedule._q_min_bits, c_cfg._dsp_count)
+        bram = 0
+        if c_cfg._dsp_count > 0:
+            addr_width = c_cfg._dsp_count * c_cfg._q_schedule._q_min_bits
+            rom_depth  = c_cfg._in_ch * (c_cfg._num_classes // c_cfg._dsp_count)
+            bram += ((addr_width + 15) // 16) * ((rom_depth + 255) // 256)
+        dsp = min(c_cfg._dsp_count, c_cfg._num_classes) if c_cfg._dsp_count > 0 else 0
+        print(f"Classifier  : {predict_lc(ff):>4.0f} LC (LUT4: {lut4:>4.0f}, FF: {ff:>4.0f}) | DSP: {dsp:>2} | BRAM: {bram:>2}")
+        total_ff += ff
+        total_lut4 += lut4
+        total_bram += bram
+        total_dsp += dsp
+
+        # Overhead
+        lut4, ff = predict_overhead(uw=self.config.layers[0].ConvLayer._in_bits, pn=self.config._bus_width, ple=self.config.in_dims.term_count)
+        print(f"Overhead    : {predict_lc(ff):>4.0f} LC (LUT4: {lut4:>4.0f}, FF: {ff:>4.0f}) | DSP:  0 | BRAM:  0")
+        total_ff += ff
+        total_lut4 += lut4
+
+        final_lc = predict_lc(total_ff)
+        print(f"--------------------------------------------------------------------------------")
+        print(f"TOTAL Est. LC: {final_lc:.0f} (Sum LUT4: {total_lut4:.0f}, Sum FF: {total_ff:.0f})")
+        print(f"TOTAL DSPs   : {total_dsp} / {DSP_CAP}")
+        print(f"TOTAL BRAMs  : {total_bram} / {BRAM_CAP}")
     
     def cycle_count(self) -> None:
         total_latency, max_effective_cycles = self.config.cycle_count()
@@ -219,9 +286,7 @@ class cnn(torch.nn.Module):
         print("\n--- PERFORMANCE ANALYSIS ---")
         for i, layer_cfg in enumerate(self.config.layers):
             c_cycles  = layer_cfg.ConvLayer._cycle_count
-            dsp       = layer_cfg.ConvLayer._dsp_count
-            dsps_used = min(dsp, layer_cfg.ConvLayer._out_ch) if dsp > 0 else 0
-            print(f"Layer {i} Conv: {c_cycles:>3} cycles ({c_cycles/decimation:>5.1f} eff) DSPs Used: {dsps_used}")
+            print(f"Layer {i} Conv: {c_cycles:>3} cycles ({c_cycles/decimation:>5.1f} eff)")
 
             if layer_cfg.PoolLayer is not None:
                 p_cycles = layer_cfg.PoolLayer._cycle_count
@@ -230,9 +295,8 @@ class cnn(torch.nn.Module):
 
         cls         = self.config.classifier_config
         cls_cycles  = cls._cycle_count
-        dsps_used   = min(cls._dsp_count, cls._num_classes) if cls._dsp_count > 0 else 0
         linear_cyc  = cls_cycles - cls._term_count
-        print(f"Classifier  : {cls_cycles:>5} cycles ({cls_cycles/decimation:>5.1f} eff) DSPs Used: {dsps_used}  [GlobalMax: {cls._term_count}, Linear: {linear_cyc}]")
+        print(f"Classifier  : {cls_cycles:>5} cycles ({cls_cycles/decimation:>5.1f} eff)  [GlobalMax: {cls._term_count}, Linear: {linear_cyc}]")
 
         print(f"\nTotal Pipeline Latency: {total_latency} cycles")
         print(f"Bottleneck (Cycles/Pixel): {max_effective_cycles:.1f}")
@@ -245,8 +309,6 @@ if __name__ == "__main__":
     network = cnn(NN_CFG)
     print("\n--- Network ARCHITECTURE ---")
     print(network)
-    print("\n--- RESOURCE UTILIZATION ---")
-    network.ram_utilization()
-    network.dsp_utilization()
+    network.resource_breakdown()
     network.cycle_count()
     print("")

@@ -335,9 +335,10 @@ def generate_networks(
                         class_lc, class_ff = None, None
 
                 if class_lc is not None:
-                    _cff = class_ff or 0
+                    _class_lc = int(class_lc)
+                    _cff = int(class_ff or 0)
                     total_ff_pool = base_ff  + _cff + overhead_ff
-                    total_lc_pool = base_lc  + class_lc + overhead_lc
+                    total_lc_pool = base_lc  + _class_lc + overhead_lc
                     if _lc_ok(total_ff_pool, total_lc_pool, has_dsp0):
                         lc_val = _predict_lc_ff(total_ff_pool) if has_dsp0 else total_lc_pool
                         try:
@@ -346,7 +347,7 @@ def generate_networks(
                             pass
                     else:
                         total_ff_nopool = conv_ff  + _cff + overhead_ff
-                        total_lc_nopool = conv_lc  + class_lc + overhead_lc
+                        total_lc_nopool = conv_lc  + _class_lc + overhead_lc
                         if _lc_ok(total_ff_nopool, total_lc_nopool, has_dsp0):
                             lc_val = _predict_lc_ff(total_ff_nopool) if has_dsp0 else total_lc_nopool
                             try:

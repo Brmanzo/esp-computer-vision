@@ -155,20 +155,29 @@ def main():
                 print(f"  (no OC values divisible by DSP={args.dsp} in this corner, skipping)")
                 continue
             lut4_vals = [p[2] for p in pts]
-            samples = select_samples(pts, lut4_vals, args.samples)
+            # HARDCODED MISSING POINTS LOGIC
+            # Now targeting InCh=1 and InCh=4 to fill out their missing curves
+            samples = [p for p in pts if p[1] == 24 and p[0] in [1, 4]]
 
             print(f"\n--- IB={ib} WB={wb} OB={ob}  "
-                  f"({len(pts)} baseline pts, {len(samples)} sampled) ---")
+                  f"({len(pts)} baseline pts, {len(samples)} missing targets) ---")
+
+            missing_dsps = {
+                1: [1, 2, 3, 4, 6],
+                4: [1, 2, 3, 4, 6]
+            }
 
             for ic, oc, lut4_dsp0, ff_dsp0 in samples:
                 if not append:
-                    # Write DSP=0 baseline row only in fresh mode; already present when appending
                     writer.writerow([ic, oc, ib, wb, ob, 0, lut4_dsp0, ff_dsp0, lut4_dsp0])
 
                 for dsp in valid_dsp_counts(oc):
                     if dsp == 0:
                         continue
                     if args.dsp is not None and dsp != args.dsp:
+                        continue
+                    # Only synthesize the exact missing DSP counts
+                    if dsp not in missing_dsps.get(ic, []):
                         continue
                     lut4, ff = synthesize(repo, sources, ic, oc, ib, wb, ob, dsp, args.yosys)
                     runs += 1

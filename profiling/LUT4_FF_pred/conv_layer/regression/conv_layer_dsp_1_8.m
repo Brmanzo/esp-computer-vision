@@ -47,6 +47,45 @@ end
 
 dsp_rows = dsp_rows(1:row_idx);
 
+%% FF fit per IB — pools all DSP>0 rows (Zero-Bias / No Intercept)
+%% FF = A*(OC*log2(IC)) + B*OC + C*IC + D*DSP
+%% DSPCount=-1 in CSV signals "applies to all DSP>0" for this IB corner
+ff_rows = cell(numel(ib_vals), 1);
+ff_idx = 0;
+
+for i = ib_vals
+    mask  = T.InBits == i;
+    if sum(mask) < 4, continue; end
+    
+    ic_s  = T.InCh(mask);
+    oc_s  = T.OutCh(mask);
+    dsp_s = T.DSPCount(mask);
+    ff_s  = T.FF(mask);
+
+    % X = [OC*log2(IC), OC, IC, DSP]  --> NO 'ones' column!
+    X_ff  = [oc_s .* log2(max(ic_s, 1)), oc_s, ic_s, dsp_s];
+    
+    % Least squares fit (forced through zero)
+    c_ff  = X_ff \ ff_s;
+    
+    % R^2 Score
+    ss_res = sum((ff_s - (X_ff * c_ff)).^2);
+    ss_tot = sum((ff_s - mean(ff_s)).^2);
+    r2_ff = 1 - ss_res / ss_tot;
+    
+    fprintf('IB=%d  FF = %.2f·(OC·log2(IC)) + %.2f·OC + %.2f·IC + %.2f·DSP  R²=%.3f  (N=%d)\n', ...
+        i, c_ff(1), c_ff(2), c_ff(3), c_ff(4), r2_ff, sum(mask));
+        
+    ff_idx = ff_idx + 1;
+    % Maps perfectly to A, B, C, D
+    ff_rows{ff_idx} = {i, -1, -1, 'FF', c_ff(1), c_ff(2), c_ff(3), c_ff(4), r2_ff};
+end
+
+ff_rows = ff_rows(1:ff_idx);
+
+% Be sure to update your cell2table call at the end of the script to include both:
+% dsp_T = cell2table(vertcat(dsp_rows{:}, ff_rows{:}), 'VariableNames', ...
+
 %% Append DSP>0 corners to profile_coeffs.csv
 dsp_T = cell2table(vertcat(dsp_rows{:}), 'VariableNames', ...
     {'InBits','WeightBits','DSPCount','Model','A','B','C','D','R2'});
